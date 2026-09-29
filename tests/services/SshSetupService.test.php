@@ -217,3 +217,14 @@ test('SshService refuses a password login before connecting when it is not allow
         ->toThrow(ServerConnectionException::class, 'no password was tried')
         ->and(microtime(true) - $started)->toBeLessThan(1);
 });
+
+test('a server with SSH turned off is never contacted', function () {
+    $server = $this->servers->create($this->admin, ['name' => 'site', 'hostname' => '192.0.2.1', 'ssh_enabled' => '', 'ssl_enabled' => '1']);
+    $real = new SshService($this->keys, $this->servers);
+    $started = microtime(true);
+
+    expect(fn () => $real->presentedHostKey($server))->toThrow(ServerConnectionException::class, 'turned off')
+        ->and(fn () => $real->connectWithKey($server))->toThrow(ServerConnectionException::class, 'turned off')
+        ->and($this->setup->setUp($this->admin, $server, null, null)->ok)->toBeFalse()
+        ->and(microtime(true) - $started)->toBeLessThan(1);
+});

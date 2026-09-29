@@ -19,7 +19,7 @@
                 <form method="post" action="/admin/servers/{{ $server->id }}/test">
                     @csrf
                     <button type="submit">Test the connection</button>
-                    <a href="/servers">Back to servers</a>
+                    <a href="/admin/servers">Back to configuration</a>
                 </form>
             @endif
         @endif
@@ -56,7 +56,7 @@
 
                 <div class="actions">
                     <button type="submit" @if (!$hostKey && $server->ssh_host_key === null) disabled @endif>Continue</button>
-                    <a href="/servers">Cancel</a>
+                    <a href="/admin/servers">Cancel</a>
                 </div>
             </form>
         @endif

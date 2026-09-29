@@ -1,4 +1,6 @@
-# Servers the app monitors (ServerService).
+# Servers the app monitors (ServerService). Each has one or more of SSH,
+# MariaDB/MySQL and SSL monitoring.
+# ssh_enabled: SSH checks on; ssh_username is '' when off.
 # ssh_host_key: the server's trusted SSH host key ("type base64"); null until
 #   an admin trusts it. Cleared when hostname or ssh_port changes.
 # ssh_auth: "key" (the app's key) or "password" (fallback for servers that refuse key login).
@@ -13,6 +15,9 @@ columns:
     type: string
     unique: true
   hostname: string
+  ssh_enabled:
+    type: boolean
+    default: true
   ssh_port:
     type: integer
     default: 22
@@ -58,6 +63,19 @@ columns:
     nullable: true
   last_test_message:
     type: text
+    nullable: true
+  # SSL monitoring (SslMonitorService): hostnames, one per line, "host" or "host:port".
+  ssl_enabled:
+    type: boolean
+    default: false
+  ssl_hosts:
+    type: text
+    nullable: true
+  last_ssl_checked_at:
+    type: timestamp
+    nullable: true
+  last_ssl_status:
+    type: string
     nullable: true
   # Health checks (HealthCheckService). The interval is for a future scheduler.
   check_interval_minutes:

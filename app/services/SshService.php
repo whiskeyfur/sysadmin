@@ -35,6 +35,7 @@ class SshService
      */
     public function presentedHostKey(Server $server): HostKey
     {
+        $this->requireSshEnabled($server);
         $ssh = $this->open($server);
 
         try {
@@ -123,6 +124,8 @@ class SshService
      */
     private function connectVerified(Server $server, callable $login, string $refusedMessage): SSH2
     {
+        $this->requireSshEnabled($server);
+
         $trusted = $server->ssh_host_key !== null ? HostKey::fromString($server->ssh_host_key) : null;
         $ssh = $this->open($server, $trusted);
         $presented = $this->hostKeyOf($ssh);
@@ -171,6 +174,13 @@ class SshService
             return $this->exec($ssh, $command);
         } finally {
             $ssh->disconnect();
+        }
+    }
+
+    private function requireSshEnabled(Server $server): void
+    {
+        if (!$server->ssh_enabled) {
+            throw new ServerConnectionException("SSH is turned off for {$server->name}; it wasn't contacted.");
         }
     }
 

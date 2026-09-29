@@ -14,33 +14,43 @@
 
         <form method="post" action="{{ $editing ? '/admin/servers/' . $server->id : '/admin/servers' }}">
             @csrf
-            <label for="name">Name</label>
-            <input type="text" id="name" name="name" value="{{ $server->name }}" maxlength="64" required autofocus>
+            <div class="grid-2">
+                <div>
+                    <label for="name">Name</label>
+                    <input type="text" id="name" name="name" value="{{ $server->name }}" maxlength="64" required autofocus>
+                </div>
+                <div>
+                    <label for="hostname">Hostname or IP</label>
+                    <input type="text" id="hostname" name="hostname" value="{{ $server->hostname }}" autocapitalize="none" required>
+                </div>
+            </div>
+            <p class="hint">Turn on one or more of SSH, MariaDB and SSL below.</p>
 
             <fieldset>
                 <legend>SSH</legend>
+                <label class="check"><input type="checkbox" id="ssh_enabled" name="ssh_enabled" value="1" {{ $server->ssh_enabled ? 'checked' : '' }}> Monitor disk, load and memory over SSH</label>
+                <div id="ssh_fields">
                 <div class="grid-2">
                     <div>
-                        <label for="hostname">Hostname or IP</label>
-                        <input type="text" id="hostname" name="hostname" value="{{ $server->hostname }}" autocapitalize="none" required>
+                        <label for="ssh_username">Username</label>
+                        <input type="text" id="ssh_username" name="ssh_username" value="{{ $server->ssh_username }}" autocapitalize="none">
                     </div>
                     <div>
                         <label for="ssh_port">Port</label>
-                        <input type="text" id="ssh_port" name="ssh_port" value="{{ $server->ssh_port }}" inputmode="numeric" required>
+                        <input type="text" id="ssh_port" name="ssh_port" value="{{ $server->ssh_port }}" inputmode="numeric">
                     </div>
                 </div>
-                <label for="ssh_username">Username</label>
-                <input type="text" id="ssh_username" name="ssh_username" value="{{ $server->ssh_username }}" autocapitalize="none" required>
                 <label class="check"><input type="checkbox" name="ssh_password_allowed" value="1" {{ $server->ssh_password_allowed ? 'checked' : '' }}> Allow password login</label>
                 <p class="hint">Off by default: the app then never tries a password on this server, which matters for servers that ban password attempts (e.g. fail2ban). When on, a password can install the app's key during setup, and is kept (encrypted) only if the server refuses key login.</p>
                 @if ($server->exists)
                     <p class="hint">Currently logs in with {{ $server->ssh_auth === 'password' ? 'a stored password' : "the app's key" }}. <a href="/admin/servers/{{ $server->id }}/ssh-setup">Set up SSH again</a>.</p>
                 @endif
                 <p class="hint">Changing the hostname, port or username means SSH must be set up again.</p>
+                </div>
             </fieldset>
 
             <fieldset>
-                <legend>MySQL / MariaDB</legend>
+                <legend>MariaDB / MySQL</legend>
                 <label class="check"><input type="checkbox" id="mysql_enabled" name="mysql_enabled" value="1" {{ $server->mysql_enabled ? 'checked' : '' }}> Monitor this server's database</label>
                 <div id="mysql_fields">
                     <div class="grid-2">
@@ -79,9 +89,19 @@
                 </div>
             </fieldset>
 
+            <fieldset>
+                <legend>SSL</legend>
+                <label class="check"><input type="checkbox" id="ssl_enabled" name="ssl_enabled" value="1" {{ $server->ssl_enabled ? 'checked' : '' }}> Monitor HTTPS certificates</label>
+                <div id="ssl_fields">
+                    <label for="ssl_hosts">Sites <span class="muted">(optional)</span></label>
+                    <textarea id="ssl_hosts" name="ssl_hosts" rows="4" spellcheck="false" placeholder="example.com&#10;shop.example.com&#10;mail.example.com:8443">{{ $server->ssl_hosts }}</textarea>
+                    <p class="hint">One hostname per line, with <code>:port</code> if it isn't 443. Leave empty to check the hostname above. The certificate is downloaded straight from each site and checked like a browser would.</p>
+                </div>
+            </fieldset>
+
             <div class="actions">
                 <button type="submit">{{ $editing ? 'Save' : 'Add server' }}</button>
-                <a href="/servers">Cancel</a>
+                <a href="/admin/servers">Cancel</a>
             </div>
         </form>
     </div>
@@ -91,12 +111,15 @@
             var toggle = document.getElementById('mysql_enabled');
             var fields = document.getElementById('mysql_fields');
             var tls = document.getElementById('mysql_tls');
+            var sections = [['ssh_enabled', 'ssh_fields'], ['ssl_enabled', 'ssl_fields']];
             function sync() {
                 fields.hidden = !toggle.checked;
+                sections.forEach(function (pair) { document.getElementById(pair[1]).hidden = !document.getElementById(pair[0]).checked; });
                 document.querySelectorAll('[data-tls]').forEach(function (el) { el.hidden = el.dataset.tls !== tls.value; });
             }
             toggle.addEventListener('change', sync);
             tls.addEventListener('change', sync);
+            sections.forEach(function (pair) { document.getElementById(pair[0]).addEventListener('change', sync); });
             sync();
         })();
     </script>

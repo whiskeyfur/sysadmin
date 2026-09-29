@@ -98,9 +98,15 @@ Every route that hashes or checks a password (POST `/login`, `/setup`, `/passwor
 - `UserAdminService`: create accounts, reset passwords (new temporary password, authenticator removed, sessions ended), promote/demote, delete. Every method re-checks that the acting user is an admin.
 - `LoginThrottleService`: the attempt limits above.
 
+## Navigation
+
+The navbar has monitoring on the left (**Servers** `/servers`, **SSL** `/ssl`; everyone signed in) and configuration/account on the right (**Configure** `/admin/servers` and **Users** for admins, **Password**, sign out). Keep new monitoring views on the left and settings on the right.
+
 ## Servers
 
-Monitored servers are configured at `/servers` (everyone sees the list; admins manage them under `/admin/servers`). `ServerService` validates input and owns the `servers` table.
+A server is a name and hostname plus **one or more** of SSH (`ssh_enabled`), MariaDB/MySQL (`mysql_enabled`) and SSL (`ssl_enabled`). `ServerService` validates input (at least one must be on) and owns the `servers` table. Configuration lives in `ServerConfigController` (`/admin/servers`); monitoring in `ServerController` (`/servers`, `/servers/{id}`, "Run checks now" runs health and SSL checks) and `SslController` (`/ssl`).
+
+- With SSH off, `ssh_username` is `''` and the host key and any stored password are forgotten. `SshService` and `SshSetupService` refuse to contact such a server, before any network traffic; `Server::sshReady()` is `ssh_enabled && host key trusted`. `ServerService` treats a *missing* `ssh_enabled` input key as on, for callers that predate optional SSH.
 
 - **SSH login uses the app's own key.** `SshKeyService` generates one Ed25519 keypair on first use (`ssh_keypairs` table). The private key is encrypted with `SecretCipher` (`ssh-private-key:<id>`) and never shown or downloadable; admins copy the public key (shown on `/servers`) into each server user's `~/.ssh/authorized_keys`.
 - **Host keys are verified before logging in** (`SshService`). A different host key from the trusted one stops the connection before any credentials are sent (`HostKeyMismatchException`). Keys are compared by blob (`HostKey::sameKeyAs`), and the trusted key's algorithm is pinned when connecting. Changing a server's hostname or SSH port forgets its trusted key; changing hostname, port or SSH user also forgets any stored SSH password.
@@ -133,4 +139,13 @@ Monitored servers are configured at `/servers` (everyone sees the list; admins m
 - Current checks: server status (a restart within the last hour is a warning), connections (80 % / 95 % of `max_connections`), crashed tables, replication (MariaDB multi-source and MySQL, old and new column names; lag 60 s / 600 s), InnoDB buffer pool hit ratio (warning below 95 %).
 - The monitoring user needs `SELECT, PROCESS, SLAVE MONITOR` (`REPLICATION CLIENT` on MySQL and MariaDB before 10.5).
 - **Limit of the crashed-table check (verified against real MariaDB):** it reads `information_schema` (tables MariaDB can't open) and runs `CHECK TABLE ... FAST QUICK` on MyISAM/Aria. That catches tables MariaDB has already flagged, but **misses** an index corrupted while the server was down and a MyISAM table interrupted mid bulk insert by a crash, because MyISAM's "not closed properly" flag wasn't set; only a full `CHECK TABLE` (MEDIUM) found those. The server-status check's "restarted recently" warning is the indirect signal. Test crashed tables with a throwaway `mariadbd --myisam-recover-options=OFF --aria-recover-options=OFF`, or MariaDB auto-repairs them on open.
+
+## SSL monitoring
+
+`SslCheckService::check($host, $port)` downloads the certificate straight from the site and judges it; `SslMonitorService` runs it for each of a server's `sslTargets()` (the `ssl_hosts` list, one `host` or `host:port` per line, normalised by `ServerService`; empty means the server hostname on 443), stores results in `ssl_checks` (30 days) and the worst status in `servers.last_ssl_status`.
+
+- Two TLS connections via `stream_socket_client` with SNI: one fully verified (system CA bundle, or a CA file passed to the constructor, which tests use) gives the verdict; when that fails, one unverified connection reads the certificate to explain why. The judgement is a pure `evaluate()`.
+- Verified PHP behaviour: a hostname mismatch gives a specific "Peer certificate CN=... did not match" warning, but expired, self-signed and untrusted certificates all give only "certificate verify failed", so `evaluate()` works out the reason from the certificate itself. TLS errors arrive as PHP warnings; `SslCheckService` collects them with a temporary error handler (Leaf would otherwise turn them into 500s).
+- Valid certificates: warning under 21 days left, critical under 7. Checked against badssl.com (valid, expired, wrong host, self-signed, untrusted root, incomplete chain) with the expected verdicts.
+- Test certificates made with PHP's `openssl_csr_sign` need `'digest_alg' => 'sha256'`, or OpenSSL servers refuse them ("ca md too weak"). `tests/checks/SslCheck.test.php` starts real `openssl s_server` instances.
 

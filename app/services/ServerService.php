@@ -6,6 +6,7 @@ use App\DTOs\HostKey;
 use App\Exceptions\AuthorizationException;
 use App\Models\HealthCheck;
 use App\Models\Server;
+use App\Models\SslCheck;
 use App\Models\User;
 use Carbon\Carbon;
 use DomainException;
@@ -65,6 +66,7 @@ class ServerService
 
         $server->getConnection()->transaction(function () use ($server) {
             HealthCheck::query()->where('server_id', $server->id)->delete();
+            SslCheck::query()->where('server_id', $server->id)->delete();
             $server->delete();
         });
     }
@@ -131,9 +133,10 @@ class ServerService
     {
         $name = trim((string) ($input['name'] ?? ''));
         $hostname = strtolower(trim((string) ($input['hostname'] ?? '')));
-        $sshPort = $this->port($input['ssh_port'] ?? 22, 'SSH port');
-        $sshUsername = trim((string) ($input['ssh_username'] ?? ''));
+        // The form always sends ssh_enabled; callers that predate optional SSH don't.
+        $sshEnabled = array_key_exists('ssh_enabled', $input) ? filter_var($input['ssh_enabled'], FILTER_VALIDATE_BOOL) : true;
         $mysqlEnabled = filter_var($input['mysql_enabled'] ?? false, FILTER_VALIDATE_BOOL);
+        $sslEnabled = filter_var($input['ssl_enabled'] ?? false, FILTER_VALIDATE_BOOL);
         $mysqlPassword = '';
 
         if ($name === '' || mb_strlen($name) > 64) {
@@ -146,25 +149,42 @@ class ServerService
 
         $this->requireHost($hostname, 'Hostname');
 
-        if (preg_match('/^[a-z_][a-z0-9_.-]{0,31}$/i', $sshUsername) !== 1) {
-            throw new DomainException('Enter the SSH username (letters, numbers, dots, dashes and underscores).');
+        if (!$sshEnabled && !$mysqlEnabled && !$sslEnabled) {
+            throw new DomainException('Turn on at least one of SSH, MariaDB/MySQL or SSL.');
         }
 
-        if (!$creating && ($server->hostname !== $hostname || $server->ssh_port !== $sshPort)) {
+        if ($sshEnabled) {
+            $sshPort = $this->port($input['ssh_port'] ?? 22, 'SSH port');
+            $sshUsername = trim((string) ($input['ssh_username'] ?? ''));
+
+            if (preg_match('/^[a-z_][a-z0-9_.-]{0,31}$/i', $sshUsername) !== 1) {
+                throw new DomainException('Enter the SSH username (letters, numbers, dots, dashes and underscores).');
+            }
+        } else {
+            $sshPort = $server->ssh_port ?? 22;
+            $sshUsername = '';
+        }
+
+        $sslHosts = $sslEnabled ? $this->sslHosts((string) ($input['ssl_hosts'] ?? '')) : null;
+
+        if (!$creating && (!$sshEnabled || $server->hostname !== $hostname || $server->ssh_port !== $sshPort)) {
             $server->ssh_host_key = null;
         }
 
         // A stored SSH password belongs to one user on one server; start setup over.
-        if (!$creating && ($server->hostname !== $hostname || $server->ssh_port !== $sshPort || $server->ssh_username !== $sshUsername)) {
+        if (!$creating && (!$sshEnabled || $server->hostname !== $hostname || $server->ssh_port !== $sshPort || $server->ssh_username !== $sshUsername)) {
             $server->ssh_auth = Server::SSH_AUTH_KEY;
             $server->ssh_password = null;
         }
 
         $server->name = $name;
         $server->hostname = $hostname;
+        $server->ssh_enabled = $sshEnabled;
         $server->ssh_port = $sshPort;
         $server->ssh_username = $sshUsername;
-        $server->ssh_password_allowed = filter_var($input['ssh_password_allowed'] ?? false, FILTER_VALIDATE_BOOL);
+        $server->ssh_password_allowed = $sshEnabled && filter_var($input['ssh_password_allowed'] ?? false, FILTER_VALIDATE_BOOL);
+        $server->ssl_enabled = $sslEnabled;
+        $server->ssl_hosts = $sslHosts;
 
         if (!$server->ssh_password_allowed) {
             $server->ssh_auth = Server::SSH_AUTH_KEY;
@@ -219,6 +239,36 @@ class ServerService
             $server->mysql_password = $this->cipher->encrypt($mysqlPassword, $this->passwordContext($server));
             $server->save();
         }
+    }
+
+    /**
+     * Validate the SSL host list: one "host" or "host:port" per line.
+     * Normalised: lower case, no duplicates, ":443" left out. Empty means
+     * the server's own hostname.
+     */
+    private function sslHosts(string $input): ?string
+    {
+        $hosts = [];
+
+        foreach (preg_split('/[\s,]+/', strtolower(trim($input))) ?: [] as $entry) {
+            if ($entry === '') {
+                continue;
+            }
+
+            $entry = preg_replace('#^https://|/.*$#', '', $entry) ?? $entry;
+            [$host, $port] = array_pad(explode(':', $entry, 2), 2, '443');
+            $this->requireHost($host, "SSL host \"$host\"");
+            $port = $this->port($port, "The port for $host");
+            $hosts[] = $port === 443 ? $host : "$host:$port";
+        }
+
+        $hosts = array_values(array_unique($hosts));
+
+        if (count($hosts) > 50) {
+            throw new DomainException('Monitor at most 50 SSL hosts per server.');
+        }
+
+        return $hosts === [] ? null : implode("\n", $hosts);
     }
 
     private function port(mixed $value, string $label): int

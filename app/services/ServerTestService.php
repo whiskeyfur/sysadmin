@@ -29,15 +29,17 @@ class ServerTestService
             throw new AuthorizationException('Only admins can test servers.');
         }
 
-        $untrusted = null;
+        [$sshOk, $sshMessage, $untrusted] = [null, null, null];
 
-        try {
-            $output = trim($this->ssh->run($server, 'uname -srm'));
-            [$sshOk, $sshMessage] = [true, "connected ($output)."];
-        } catch (HostKeyUnknownException $e) {
-            [$sshOk, $sshMessage, $untrusted] = [false, 'the host key needs to be trusted first.', $e->presented];
-        } catch (ServerConnectionException $e) {
-            [$sshOk, $sshMessage] = [false, $e->getMessage()];
+        if ($server->ssh_enabled) {
+            try {
+                $output = trim($this->ssh->run($server, 'uname -srm'));
+                [$sshOk, $sshMessage] = [true, "connected ($output)."];
+            } catch (HostKeyUnknownException $e) {
+                [$sshOk, $sshMessage, $untrusted] = [false, 'the host key needs to be trusted first.', $e->presented];
+            } catch (ServerConnectionException $e) {
+                [$sshOk, $sshMessage] = [false, $e->getMessage()];
+            }
         }
 
         [$mysqlOk, $mysqlMessage] = [null, null];

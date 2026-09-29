@@ -23,7 +23,9 @@
         body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
         header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
         header .brand { font-weight: 700; letter-spacing: .02em; color: inherit; text-decoration: none; }
-        header nav { display: flex; align-items: center; gap: 16px; }
+        header nav { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+        header nav.primary .brand { margin-right: 8px; }
+        header nav a[aria-current="page"] { font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
         main { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
         main.narrow { max-width: 440px; }
         .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 24px; }
@@ -87,15 +89,22 @@
     </style>
 </head>
 <body>
+    @php($path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/')
     <header>
-        <a class="brand" href="/">sys</a>
+        <nav class="primary" aria-label="Monitoring">
+            <a class="brand" href="/">sys</a>
+            @isset($auth)
+                <a href="/servers" @if (str_starts_with($path, '/servers')) aria-current="page" @endif>Servers</a>
+                <a href="/ssl" @if (str_starts_with($path, '/ssl')) aria-current="page" @endif>SSL</a>
+            @endisset
+        </nav>
         @isset($auth)
-            <nav>
-                <a href="/servers">Servers</a>
+            <nav class="secondary" aria-label="Configuration and account">
                 @if ($auth->isAdmin())
-                    <a href="/admin/users">Users</a>
+                    <a href="/admin/servers" @if (str_starts_with($path, '/admin/servers')) aria-current="page" @endif>Configure</a>
+                    <a href="/admin/users" @if (str_starts_with($path, '/admin/users')) aria-current="page" @endif>Users</a>
                 @endif
-                <a href="/password">Password</a>
+                <a href="/password" @if ($path === '/password') aria-current="page" @endif>Password</a>
                 <span class="muted">{{ $auth->user->username }}</span>
                 <form method="post" action="/logout">
                     @csrf

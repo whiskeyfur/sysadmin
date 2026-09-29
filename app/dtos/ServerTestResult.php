@@ -8,8 +8,9 @@ namespace App\DTOs;
 class ServerTestResult
 {
     public function __construct(
-        public readonly bool $sshOk,
-        public readonly string $sshMessage,
+        // Null when SSH is turned off for the server.
+        public readonly ?bool $sshOk,
+        public readonly ?string $sshMessage,
         public readonly ?bool $mysqlOk,
         public readonly ?string $mysqlMessage,
         // Set when the host key isn't trusted yet: the key to show the admin.
@@ -19,12 +20,12 @@ class ServerTestResult
 
     public function ok(): bool
     {
-        return $this->sshOk && $this->mysqlOk !== false;
+        return $this->sshOk !== false && $this->mysqlOk !== false;
     }
 
     public function summary(): string
     {
-        $parts = ['SSH: ' . $this->sshMessage];
+        $parts = $this->sshMessage === null ? [] : ['SSH: ' . $this->sshMessage];
 
         if ($this->mysqlMessage !== null) {
             $parts[] = 'MySQL: ' . $this->mysqlMessage;

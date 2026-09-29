@@ -46,6 +46,10 @@ class SshSetupService
         $result = new SshSetupResult();
         $password = $password === '' ? null : $password;
 
+        if (!$server->ssh_enabled) {
+            return $result->step(false, 'SSH is turned off for this server. Turn it on in the server settings first.')->finish(false);
+        }
+
         if ($server->ssh_host_key === null && !$this->trustHostKey($admin, $server, $confirmedFingerprint, $result)) {
             return $result->finish(false);
         }

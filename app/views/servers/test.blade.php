@@ -7,8 +7,10 @@
     <div class="card">
         <h1>Test {{ $server->name }}</h1>
 
-        <h2>SSH <span class="badge {{ $result->sshOk ? 'ok' : 'failed' }}">{{ $result->sshOk ? 'OK' : 'Failed' }}</span></h2>
-        <p>{{ ucfirst($result->sshMessage) }}</p>
+        @if ($result->sshMessage !== null)
+            <h2>SSH <span class="badge {{ $result->sshOk ? 'ok' : 'failed' }}">{{ $result->sshOk ? 'OK' : 'Failed' }}</span></h2>
+            <p>{{ ucfirst($result->sshMessage) }}</p>
+        @endif
 
         @if ($result->untrustedHostKey)
             <div class="alert warn" role="status">
@@ -23,7 +25,7 @@
         @endif
 
         <div class="actions">
-            <a href="/servers">Back to servers</a>
+            <a href="/admin/servers">Back to configuration</a>
         </div>
     </div>
 @endsection

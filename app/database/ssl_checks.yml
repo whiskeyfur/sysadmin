@@ -1,0 +1,21 @@
+# One row per certificate per check (SslMonitorService). Kept SslMonitorService::RETENTION_DAYS.
+# status: "ok", "warning", "critical" or "unknown"; days_left: until the certificate expires.
+# details: JSON (subject, issuer, names, validity dates, TLS version, verification error).
+timestamps: false
+columns:
+  server_id:
+    type: integer
+    index: true
+  host: string
+  port: integer
+  status: string
+  summary: text
+  days_left:
+    type: float
+    nullable: true
+  details:
+    type: text
+    nullable: true
+  checked_at:
+    type: timestamp
+    index: true

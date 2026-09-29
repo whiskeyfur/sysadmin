@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — SSL monitoring (certificates downloaded from each site, several per server) and optional SSH; servers have one or more of SSH/MariaDB/SSL; navbar split into monitoring (left) and configuration (right) (`SslCheckService`, `SslMonitorService`, `ServerConfigController`, `SslController`).
 * 2026-09-29 — SSH health checks: disk (space + inodes), load per core, memory/swap, all in one SSH session per run (`DiskCheck`, `LoadCheck`, `MemoryCheck`, `HealthCheckService::sshScript()`).
 * 2026-09-29 — MariaDB health checks, run on demand: server status, connections, crashed tables (metadata + CHECK FAST QUICK), replication, buffer pool; 30-day history (`HealthCheckService`, `app/services/Checks/*`, `servers/show.blade.php`).
 * 2026-09-29 — SSH setup flow: trust host key, try the app key, optionally install it with a one-time password, fall back to a stored password only for servers refusing keys; password login is opt-in per server (`SshSetupService`, `servers/setup.blade.php`).
 * 2026-09-29 — MySQL TLS per server: verify (default, pasted CA or system CAs), encrypt-only, or off (`MysqlService`, `CaCertificateService`, `servers.yml`).
-* 2026-09-29 — Server configurations: app SSH keypair, host key trust, MySQL over direct TCP, connection test (`ServerService`, `SshService`, `SshKeyService`, `MysqlService`, `ServerController`, `app/views/servers/*`).
 
 ---
 
@@ -110,6 +110,8 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * Per-username lockouts (10 failures / 15 min) are accepted even though they let anyone lock an account out briefly.
 * Client IP comes from `REMOTE_ADDR`, not Leaf's `getIp()` — Leaf trusts spoofable forwarding headers and there is no proxy in front of Apache.
 * SSH uses phpseclib (user's preference) with one app-generated Ed25519 key; admins add its public key to servers — the private key never leaves the app.
+* Navbar: monitoring on the left (Servers, SSL), configuration and account on the right — the user's layout.
+* A server has one or more of SSH, MariaDB and SSL; SSL covers several hostnames per server — the user's choice.
 * Health checks run only on demand for now — the user's choice; the 5-minute interval and 30-day retention are stored/applied for a later scheduler.
 * Crashed-table detection is the quick kind (information_schema + CHECK TABLE FAST QUICK on MyISAM/Aria) — the user's choice; its verified blind spots are documented in CLAUDE.md.
 * Password login is opt-in per server and off by default — this machine's fail2ban bans on the first password attempt; the user said "no passwords, period" for it.

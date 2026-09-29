@@ -11,8 +11,9 @@ use Carbon\Carbon;
  * @property int $id
  * @property string $name
  * @property string $hostname
+ * @property bool $ssh_enabled
  * @property int $ssh_port
- * @property string $ssh_username
+ * @property string $ssh_username '' when SSH is off
  * @property string|null $ssh_host_key trusted host key, "type base64"
  * @property string $ssh_auth SSH_AUTH_KEY or SSH_AUTH_PASSWORD
  * @property string|null $ssh_password encrypted with SecretCipher; only for SSH_AUTH_PASSWORD
@@ -30,6 +31,10 @@ use Carbon\Carbon;
  * @property int $check_interval_minutes
  * @property Carbon|null $last_checked_at
  * @property string|null $last_health_status worst status of the last health check run
+ * @property bool $ssl_enabled
+ * @property string|null $ssl_hosts one per line, "host" or "host:port"
+ * @property Carbon|null $last_ssl_checked_at
+ * @property string|null $last_ssl_status worst status of the last SSL check
  */
 class Server extends Model
 {
@@ -52,10 +57,11 @@ class Server extends Model
      * @var list<string>
      */
     protected $fillable = [
-        'name', 'hostname', 'ssh_port', 'ssh_username', 'ssh_host_key', 'ssh_auth', 'ssh_password', 'ssh_password_allowed',
+        'name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_username', 'ssh_host_key', 'ssh_auth', 'ssh_password', 'ssh_password_allowed',
         'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca',
         'last_tested_at', 'last_test_ok', 'last_test_message',
         'check_interval_minutes', 'last_checked_at', 'last_health_status',
+        'ssl_enabled', 'ssl_hosts', 'last_ssl_checked_at', 'last_ssl_status',
     ];
 
     /**
@@ -67,7 +73,10 @@ class Server extends Model
      * @var array<string, string>
      */
     protected $casts = [
+        'ssh_enabled' => 'boolean',
         'ssh_port' => 'integer',
+        'ssl_enabled' => 'boolean',
+        'last_ssl_checked_at' => 'datetime',
         'ssh_password_allowed' => 'boolean',
         'mysql_enabled' => 'boolean',
         'mysql_port' => 'integer',
@@ -82,7 +91,33 @@ class Server extends Model
      */
     public function sshReady(): bool
     {
-        return $this->ssh_host_key !== null;
+        return $this->ssh_enabled && $this->ssh_host_key !== null;
+    }
+
+    /**
+     * The HTTPS endpoints to monitor: the configured hosts, or the server's
+     * hostname on 443 when the list is empty.
+     *
+     * @return list<array{host: string, port: int}>
+     */
+    public function sslTargets(): array
+    {
+        if (!$this->ssl_enabled) {
+            return [];
+        }
+
+        $targets = [];
+
+        foreach (preg_split('/\R/', trim((string) $this->ssl_hosts)) ?: [] as $line) {
+            if (trim($line) === '') {
+                continue;
+            }
+
+            [$host, $port] = array_pad(explode(':', trim($line), 2), 2, '443');
+            $targets[] = ['host' => $host, 'port' => (int) $port];
+        }
+
+        return $targets !== [] ? $targets : [['host' => $this->hostname, 'port' => 443]];
     }
 
     public function mysqlHost(): string

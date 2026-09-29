@@ -1,0 +1,6 @@
+# The app's own SSH keypair, used to log in to every server (SshKeyService).
+# private_key is encrypted with SecretCipher; it is never shown or downloadable.
+columns:
+  public_key: text
+  private_key: text
+  fingerprint: string

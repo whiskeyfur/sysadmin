@@ -15,6 +15,8 @@ touch /tmp/e2e.sqlite && DB_DATABASE=/tmp/e2e.sqlite php leaf db:migrate
 DB_DATABASE=/tmp/e2e.sqlite php -S localhost:5599 -t public public/index.php
 ```
 
+To test SSH and MySQL code for real, run a throwaway `sshd` and MariaDB as your own user on high ports (never touch the system ones): `ssh-keygen` a host key into a scratch dir and start `/usr/sbin/sshd -D -e -f <config>` with `ListenAddress 127.0.0.1`, `Port 2299`, `HostKey`/`AuthorizedKeysFile`/`PidFile` in the scratch dir, `UsePAM no`, `StrictModes no`; and `mariadb-install-db --no-defaults --datadir=<dir>` then `mariadbd --no-defaults --datadir=<dir> --socket=<dir>/mysql.sock --port=3399 --bind-address=127.0.0.1`, creating a user over the socket with `mariadb -S <sock> -u $(whoami)`.
+
 Apache runs as `www-data`: `storage/` must stay group `www-data`, group-writable, with setgid on its directories, or the database and Blade cache writes fail with a 500.
 
 ## Framework: Leaf MVC
@@ -37,6 +39,7 @@ The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice
   - Leaf turns PHP warnings into exceptions (500s), so check `is_writable()` and similar before calls that may warn.
   - `Leaf\Controller` has public `render()` and `auth()` methods; don't name controller helpers that.
 - Write everything as object-oriented as possible, within Leaf's conventions. Don't add global functions, global variables or procedural logic beyond what Leaf's own entry points (`public/index.php`, `leaf`) and route files require.
+- SSH uses **phpseclib 3** (the user's preference). It has no port forwarding, so MySQL is reached over direct TCP only; don't add SSH tunnels without asking.
 - Target the server's current PHP (8.3.6 at the time of writing; check with `php -v`). The `sodium`, `pdo_sqlite` and `pdo_mysql` extensions are required.
 
 ### Commands
@@ -92,3 +95,12 @@ Every route that hashes or checks a password (POST `/login`, `/setup`, `/passwor
 - `SecretCipher`: `APP_KEY`-based XChaCha20-Poly1305 for authenticator secrets.
 - `UserAdminService`: create accounts, reset passwords (new temporary password, authenticator removed, sessions ended), promote/demote, delete. Every method re-checks that the acting user is an admin.
 - `LoginThrottleService`: the attempt limits above.
+
+## Servers
+
+Monitored servers are configured at `/servers` (everyone sees the list; admins manage them under `/admin/servers`). `ServerService` validates input and owns the `servers` table.
+
+- **SSH login uses the app's own key.** `SshKeyService` generates one Ed25519 keypair on first use (`ssh_keypairs` table). The private key is encrypted with `SecretCipher` (`ssh-private-key:<id>`) and never shown or downloadable; admins copy the public key (shown on `/servers`) into each server user's `~/.ssh/authorized_keys`.
+- **Host keys are verified before logging in** (`SshService`). A server's first test stops before login and shows the presented key's `SHA256:` fingerprint (same format as `ssh-keygen -lf`); the admin checks it on the server and trusts it. Trusting re-fetches the key and requires it to still match the fingerprint the admin saw. After that, a different host key stops the connection before any credentials are sent (`HostKeyMismatchException`). Keys are compared by blob (`HostKey::sameKeyAs`), and the trusted key's algorithm is pinned when connecting. Changing a server's hostname or SSH port forgets its trusted key.
+- **MySQL** (`MysqlService`) is PDO over direct TCP with a 5-second timeout. The password is encrypted with `SecretCipher` (`mysql-password:<server id>`), write-only in the UI (blank on edit keeps it), and cleared when MySQL is turned off for a server.
+- **Connection test** (`ServerTestService`, admin only): SSH runs `uname -srm`, MySQL runs `SELECT VERSION()`; the outcome is stored in `last_tested_at` / `last_test_ok` / `last_test_message`.

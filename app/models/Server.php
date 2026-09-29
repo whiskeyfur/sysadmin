@@ -1,0 +1,57 @@
+<?php
+
+namespace App\Models;
+
+use Carbon\Carbon;
+
+/**
+ * A monitored server. Use ServerService to create or change one; it
+ * validates input and encrypts the MySQL password.
+ *
+ * @property int $id
+ * @property string $name
+ * @property string $hostname
+ * @property int $ssh_port
+ * @property string $ssh_username
+ * @property string|null $ssh_host_key trusted host key, "type base64"
+ * @property bool $mysql_enabled
+ * @property string|null $mysql_host null means the SSH hostname
+ * @property int $mysql_port
+ * @property string|null $mysql_username
+ * @property string|null $mysql_password encrypted with SecretCipher
+ * @property Carbon|null $last_tested_at
+ * @property bool|null $last_test_ok
+ * @property string|null $last_test_message
+ */
+class Server extends Model
+{
+    /**
+     * @var list<string>
+     */
+    protected $fillable = [
+        'name', 'hostname', 'ssh_port', 'ssh_username', 'ssh_host_key',
+        'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_password',
+        'last_tested_at', 'last_test_ok', 'last_test_message',
+    ];
+
+    /**
+     * @var list<string>
+     */
+    protected $hidden = ['mysql_password'];
+
+    /**
+     * @var array<string, string>
+     */
+    protected $casts = [
+        'ssh_port' => 'integer',
+        'mysql_enabled' => 'boolean',
+        'mysql_port' => 'integer',
+        'last_tested_at' => 'datetime',
+        'last_test_ok' => 'boolean',
+    ];
+
+    public function mysqlHost(): string
+    {
+        return $this->mysql_host ?: $this->hostname;
+    }
+}

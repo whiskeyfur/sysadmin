@@ -49,6 +49,14 @@
         .inline-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
         .inline-form label { margin-top: 0; }
         .badge.user { background: var(--code-bg); }
+        .badge.ok { background: var(--notice-bg); color: var(--notice); }
+        .badge.failed { background: var(--error-bg); color: var(--error); }
+        .badge.untested { background: var(--warn-bg); color: var(--warn); }
+        .pubkey { display: block; padding: 10px; background: var(--code-bg); border-radius: 6px; font: 12px/1.5 ui-monospace, monospace; word-break: break-all; }
+        fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 4px 16px 16px; margin: 20px 0 0; }
+        legend { font-weight: 600; padding: 0 6px; }
+        .check { display: flex; gap: 8px; align-items: center; font-weight: 600; margin-top: 12px; }
+        .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 0 12px; }
         .actions { margin-top: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; }
         .alert.error { background: var(--error-bg); color: var(--error); }
@@ -70,6 +78,7 @@
         <a class="brand" href="/">sys</a>
         @isset($auth)
             <nav>
+                <a href="/servers">Servers</a>
                 @if ($auth->isAdmin())
                     <a href="/admin/users">Users</a>
                 @endif

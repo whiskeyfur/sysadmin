@@ -1,0 +1,40 @@
+# Servers the app monitors (ServerService).
+# ssh_host_key: the server's trusted SSH host key ("type base64"); null until
+#   an admin trusts it. Cleared when hostname or ssh_port changes.
+# mysql_password: encrypted with SecretCipher; write-only in the UI.
+columns:
+  name:
+    type: string
+    unique: true
+  hostname: string
+  ssh_port:
+    type: integer
+    default: 22
+  ssh_username: string
+  ssh_host_key:
+    type: text
+    nullable: true
+  mysql_enabled:
+    type: boolean
+    default: false
+  mysql_host:
+    type: string
+    nullable: true
+  mysql_port:
+    type: integer
+    default: 3306
+  mysql_username:
+    type: string
+    nullable: true
+  mysql_password:
+    type: text
+    nullable: true
+  last_tested_at:
+    type: timestamp
+    nullable: true
+  last_test_ok:
+    type: boolean
+    nullable: true
+  last_test_message:
+    type: text
+    nullable: true

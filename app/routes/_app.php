@@ -1,5 +1,5 @@
 <?php
 
-declare(strict_types=1);
+use App\Middleware\Authenticate;
 
-app()->view('/', 'index');
+app()->get('/', ['middleware' => Authenticate::class, 'DashboardController@index']);

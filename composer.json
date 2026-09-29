@@ -12,7 +12,12 @@
         "leafs/mvc-core": "^5.0",
         "leafs/leaf": "^5.0",
         "leafs/logger": "^5.0",
-        "leafs/schema": "^5.0"
+        "leafs/schema": "^5.0",
+        "leafs/csrf": "^5.0",
+        "leafs/session": "^5.0",
+        "leafs/cookie": "^5.0",
+        "spomky-labs/otphp": "^11.5",
+        "chillerlan/php-qrcode": "^6.0"
     },
     "require-dev": {
         "fakerphp/faker": "^1.24",

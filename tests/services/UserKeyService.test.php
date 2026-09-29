@@ -41,16 +41,18 @@ test('a wrong password is rejected', function () {
     $this->keys->unlock($this->admin, 'wrong');
 })->throws(InvalidCredentialsException::class);
 
-test('registering with the key file creates a regular user', function () {
-    $user = $this->keys->register('alice', 'alice-pass', $this->masterKey);
+test('registering with the key file creates a pending user with an authenticator', function () {
+    $user = $this->keys->register('alice', 'alice-pass', $this->masterKey, 'SECRET');
     $dataKey = $this->vault->unwrapDataKey($this->masterKey);
+    $unlocked = $this->keys->unlock($user, 'alice-pass');
 
-    expect($this->keys->getMasterKeyFromUserDataField($user, 'alice-pass'))->toBe($this->masterKey)
-        ->and($this->keys->isAdmin($user, $dataKey))->toBeFalse();
+    expect($unlocked->masterKey)->toBe($this->masterKey)
+        ->and($unlocked->totpSecret)->toBe('SECRET')
+        ->and($this->keys->role($user, $dataKey))->toBe('pending');
 });
 
 test('registering with the wrong key is rejected', function () {
-    $this->keys->register('alice', 'alice-pass', $this->crypto->generateKey());
+    $this->keys->register('alice', 'alice-pass', $this->crypto->generateKey(), 'SECRET');
 })->throws(InvalidMasterKeyException::class);
 
 test('changing the password re-wraps the master key', function () {
@@ -60,33 +62,52 @@ test('changing the password re-wraps the master key', function () {
         ->and(fn () => $this->keys->unlock($this->admin, 'admin-pass'))->toThrow(InvalidCredentialsException::class);
 });
 
-test('an admin reset sets a temporary password that must be changed', function () {
-    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey);
+test('an admin reset forces a new password and a new authenticator', function () {
+    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey, 'SECRET');
     $this->keys->resetPassword($this->admin, $this->masterKey, $alice, 'temp-pass');
+    $unlocked = $this->keys->unlock($alice, 'temp-pass');
 
-    expect($this->keys->unlock($alice, 'temp-pass')->mustChangePassword)->toBeTrue();
+    expect($unlocked->mustChangePassword)->toBeTrue()
+        ->and($unlocked->hasAuthenticator())->toBeFalse();
 
-    $this->keys->changePassword($alice, 'temp-pass', 'alice-new');
+    $this->keys->completeSetup($alice, 'temp-pass', 'alice-new', 'NEWSECRET', 5);
+    $unlocked = $this->keys->unlock($alice, 'alice-new');
 
-    expect($this->keys->unlock($alice, 'alice-new')->mustChangePassword)->toBeFalse();
+    expect($unlocked->mustChangePassword)->toBeFalse()
+        ->and($unlocked->totpSecret)->toBe('NEWSECRET')
+        ->and($alice->totp_last_step)->toBe(5);
+});
+
+test('setup cannot replace an enrolled authenticator', function () {
+    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey, 'SECRET');
+
+    $this->keys->completeSetup($alice, 'alice-pass', 'alice-new', 'ATTACKER', 5);
+})->throws(AuthorizationException::class);
+
+test('password changes and key replacement keep the authenticator', function () {
+    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey, 'SECRET');
+    $this->keys->changePassword($alice, 'alice-pass', 'alice-new');
+    $this->keys->replaceMasterKey($alice, 'alice-new', $this->masterKey);
+
+    expect($this->keys->unlock($alice, 'alice-new')->totpSecret)->toBe('SECRET');
 });
 
 test('a non-admin cannot reset passwords', function () {
-    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey);
-    $bob = $this->keys->register('bob', 'bob-pass', $this->masterKey);
+    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey, 'SECRET');
+    $bob = $this->keys->register('bob', 'bob-pass', $this->masterKey, 'SECRET');
 
     $this->keys->resetPassword($alice, $this->masterKey, $bob, 'temp-pass');
 })->throws(AuthorizationException::class);
 
 test('a role copied from another user is rejected', function () {
-    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey);
+    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey, 'SECRET');
     $alice->role = $this->admin->role;
 
     $this->keys->isAdmin($alice, $this->vault->unwrapDataKey($this->masterKey));
 })->throws(DecryptionException::class);
 
 test('rotation makes other users stale until they upload the new key file', function () {
-    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey);
+    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey, 'SECRET');
     $newMasterKey = $this->keys->rotateMasterKey($this->admin, 'admin-pass');
 
     expect($this->keys->getMasterKeyFromUserDataField($this->admin, 'admin-pass'))->toBe($newMasterKey)
@@ -99,7 +120,7 @@ test('rotation makes other users stale until they upload the new key file', func
 });
 
 test('a non-admin cannot rotate the master key', function () {
-    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey);
+    $alice = $this->keys->register('alice', 'alice-pass', $this->masterKey, 'SECRET');
 
     expect(fn () => $this->keys->rotateMasterKey($alice, 'alice-pass'))->toThrow(AuthorizationException::class)
         ->and($this->keys->getMasterKeyFromUserDataField($this->admin, 'admin-pass'))->toBe($this->masterKey);

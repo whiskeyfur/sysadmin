@@ -28,6 +28,16 @@ require "$appPath/vendor/autoload.php";
 
 /*
 |--------------------------------------------------------------------------
+| Harden the session cookie
+|--------------------------------------------------------------------------
+|
+| Must run before Leaf boots, because the CSRF module starts the session.
+|
+*/
+\App\Services\AuthSessionService::configureSessionCookie();
+
+/*
+|--------------------------------------------------------------------------
 | Load application paths
 |--------------------------------------------------------------------------
 |

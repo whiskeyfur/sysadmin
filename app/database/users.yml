@@ -1,6 +1,7 @@
-# Only lookup and KDF fields are plaintext (CLAUDE.md rule 4).
-# user_data: master key + flags, encrypted with the user's password-derived key.
-# role: "admin" or "user", encrypted with the data key so other admins can read it.
+# Only lookup, KDF and replay-protection fields are plaintext (CLAUDE.md rule 4).
+# user_data: master key, TOTP secret and flags, encrypted with the user's password-derived key.
+# role: "pending", "user" or "admin", encrypted with the data key so admins can read it.
+# totp_last_step: last accepted TOTP time step, so a code can't be reused.
 columns:
   username:
     type: string
@@ -10,3 +11,6 @@ columns:
   kdf_memlimit: integer
   user_data: text
   role: text
+  totp_last_step:
+    type: integer
+    nullable: true

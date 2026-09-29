@@ -36,7 +36,7 @@ When your work is complete:
 
 ## Current Goal
 
-Build the users schema and the key services (key derivation, master/data key wrapping, key files, session key sealing) that implement the encryption rules in `CLAUDE.md`.
+_agent: the login/registration goal is done; ask the user for the next goal and replace this line._
 
 ---
 
@@ -88,6 +88,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — Login, setup, registration with admin approval, required TOTP authenticator, default admin, key file download (`app/controllers/*`, `app/services/Auth*`, `TotpService`, `UserAdminService`, `app/views/*`).
 * 2026-09-29 — Built the users/vaults schemas and key services with tests (`app/database/*.yml`, `app/services/*`, `tests/services/*`); added Alchemy for test/lint/analyse.
 * 2026-09-29 — Installed the Leaf MVC v5 skeleton and added the project's PHP extension requirements (`composer.json`, `.gitignore`, `CLAUDE.md`).
 
@@ -100,6 +101,9 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * App data lives in SQLite with application-level libsodium encryption — `pdo_sqlite` cannot encrypt the file, and data must be unreadable without a user's password.
 * Login is unwrapping the user's encrypted user-data field, not a password-hash check — so `scaffold:auth`/`leafs/auth` aren't used as-is.
 * The user's role is encrypted with the data key, not inside the password-wrapped user-data field — other admins must read it without that user's password.
+* An authenticator (TOTP, Google Authenticator defaults) is required for every login; its secret lives inside the password-encrypted user-data field — the user asked for "no authenticator = no access", and this keeps the secret unreadable without the password.
+* New registrations are `pending` until an admin approves them — the user's requirement; stored in the encrypted role so it can't be flipped without the data key.
+* Default admin `admin`/`changeme` on a fresh install, forced to set a new password and authenticator — the user asked for default credentials at start.
 * Only admins can rotate the master key — rotation locks every other user out until they upload the new key file.
 * Two-tier keys (master key wraps a data key) — rotating the master key after removing a user only re-wraps one row instead of re-encrypting all data.
 * MariaDB targets are reached through `pdo_mysql` — matches the PDO-based SQLite side.

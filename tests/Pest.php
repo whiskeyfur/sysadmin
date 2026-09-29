@@ -20,9 +20,10 @@
 use App\Services\CryptoService;
 use Illuminate\Database\Capsule\Manager;
 use Leaf\Schema;
+use Psr\Clock\ClockInterface;
 
 /*
-| Key service tests run against a fresh in-memory SQLite database built
+| Service tests run against a fresh in-memory SQLite database built
 | from the real schema files, and use the cheapest Argon2id cost so the
 | suite stays fast. Production cost is set by CryptoService's defaults.
 */
@@ -41,4 +42,20 @@ uses()->beforeEach(function () {
     Schema::migrate('app/database/vaults.yml');
 
     $this->crypto = new CryptoService(1, 8192 * 8);
+
+    // A clock tests can move: $this->clock->advance(30) jumps one TOTP period.
+    $this->clock = new class () implements ClockInterface {
+        public int $time = 1_800_000_000;
+
+        public function now(): DateTimeImmutable
+        {
+            return (new DateTimeImmutable())->setTimestamp($this->time);
+        }
+
+        public function advance(int $seconds): void
+        {
+            $this->time += $seconds;
+        }
+    };
 })->in('services');
+

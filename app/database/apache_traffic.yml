@@ -1,0 +1,30 @@
+# Apache access logs summarised per 5 minutes (ApacheService); individual requests aren't stored.
+# Kept HealthCheckService::RETENTION_DAYS. One row per server, access log file and bucket (bucket_at: its start, UTC).
+# bytes: response bytes as logged (%O or %b). status_*: responses per status class.
+timestamps: false
+columns:
+  server_id:
+    type: integer
+    index: true
+  log: string
+  bucket_at:
+    type: timestamp
+    index: true
+  requests:
+    type: integer
+    default: 0
+  bytes:
+    type: bigInteger
+    default: 0
+  status_2xx:
+    type: integer
+    default: 0
+  status_3xx:
+    type: integer
+    default: 0
+  status_4xx:
+    type: integer
+    default: 0
+  status_5xx:
+    type: integer
+    default: 0

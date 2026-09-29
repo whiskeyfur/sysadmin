@@ -1,0 +1,21 @@
+# Apache error log entries imported over SSH (ApacheService). Kept HealthCheckService::RETENTION_DAYS.
+# level: "note" (notice), "warning", "error" (error, crit, alert, emerg) or "crash" (a child died on a signal,
+#   e.g. a segfault); info/debug/trace lines aren't kept.
+# source: the error log file. logged_at: UTC, converted from the server's own timezone.
+# hash: of server, source, time and message, so reading the same lines again adds nothing.
+timestamps: false
+columns:
+  server_id:
+    type: integer
+    index: true
+  source: string
+  level:
+    type: string
+    index: true
+  logged_at:
+    type: timestamp
+    index: true
+  message: text
+  hash:
+    type: string
+    unique: true

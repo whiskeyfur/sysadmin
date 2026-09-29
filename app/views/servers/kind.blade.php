@@ -15,10 +15,12 @@
         <div class="actions" style="margin-top: 0; justify-content: space-between">
             <h1>{{ $title }}</h1>
             @if ($auth->isAdmin())
-                <a class="button" href="/admin/{{ $kind === 'ssh' ? 'ssh' : 'mariadb' }}/new">Add server</a>
+                <a class="button" href="/admin{{ $page }}/new">Add server</a>
             @endif
         </div>
-        @if ($kind === 'ssh')
+        @if ($kind === 'apache')
+            <p class="muted">From each server's Apache configuration and log files, read over SSH: errors, requests and server errors (5xx) in the last hour, restarts, and busy workers (live from mod_status where the configuration has it, else from the error log). Hover a result for details.</p>
+        @elseif ($kind === 'ssh')
             <p class="muted">Disk, load and memory, read over one SSH login per run. Servers without SSH (e.g. reached with the database client only) are on <a href="/mariadb">MariaDB</a>.</p>
         @else
             <p class="muted">Database health, read with the MariaDB/MySQL client only: no SSH needed. Hover a result for details.</p>
@@ -45,7 +47,10 @@
                         <tr>
                             <td>
                                 <a href="/servers/{{ $server->id }}">{{ $server->name }}</a>
-                                @if ($kind === 'ssh')
+                                @if ($kind === 'apache')
+                                    @php($apache = $server->apache_config ?? [])
+                                    <div class="hint">{{ $apache['version'] ?? 'Not scanned yet' }}@if ($apache) · {{ count($apache['error_logs'] ?? []) }} error / {{ count($apache['access_logs'] ?? []) }} access log(s){{ !empty($apache['status_url']) ? ' · mod_status' : '' }}@endif</div>
+                                @elseif ($kind === 'ssh')
                                     {{-- Not "}}@{{": Blade treats @{{ as an escaped, literal {{. --}}
                                     <div class="hint"><code>{{ $server->ssh_username . '@' . $server->hostname . ':' . $server->ssh_port }}</code></div>
                                 @else
@@ -60,7 +65,7 @@
                                     </div>
                                 @endif
                             </td>
-                            @if ($kind === 'ssh' && !$server->sshReady())
+                            @if ($kind !== 'mysql' && !$server->sshReady())
                                 <td colspan="{{ count($columns) }}" class="muted">SSH isn't set up yet.@if ($auth->isAdmin()) <a href="/admin/servers/{{ $server->id }}/ssh-setup">Set it up</a>.@endif</td>
                             @elseif (isset($row[$connectionKey]))
                                 <td colspan="{{ count($columns) }}"><span class="badge {{ $row[$connectionKey]->status->value }}">{{ $row[$connectionKey]->status->label() }}</span> {{ $row[$connectionKey]->summary }}</td>
@@ -83,7 +88,7 @@
                                 @if ($kind === 'mysql' || $server->sshReady())
                                     <form method="post" action="/servers/{{ $server->id }}/checks">
                                         @csrf
-                                        <input type="hidden" name="back" value="/{{ $kind === 'ssh' ? 'ssh' : 'mariadb' }}">
+                                        <input type="hidden" name="back" value="{{ $page }}">
                                         <button type="submit">Check</button>
                                     </form>
                                 @endif
@@ -91,6 +96,12 @@
                                     @csrf
                                     <button type="submit" class="secondary">Test</button>
                                 </form>
+                                @if ($auth->isAdmin() && $kind === 'apache' && $server->sshReady())
+                                    <form method="post" action="/servers/{{ $server->id }}/apache-rescan">
+                                        @csrf
+                                        <button type="submit" class="secondary" title="Read Apache's configuration again (e.g. after adding a site or moving a log), then check">Rescan</button>
+                                    </form>
+                                @endif
                                 @if ($auth->isAdmin() && $kind === 'mysql' && $server->sshReady())
                                     <form method="post" action="/servers/{{ $server->id }}/import-log">
                                         @csrf
@@ -98,11 +109,11 @@
                                     </form>
                                 @endif
                                 @if ($auth->isAdmin())
-                                    <a class="button secondary-link" href="/admin/servers/{{ $server->id }}/edit?kind={{ $kind }}&amp;back=/{{ $kind === 'ssh' ? 'ssh' : 'mariadb' }}">Edit</a>
+                                    <a class="button secondary-link" href="/admin/servers/{{ $server->id }}/edit?kind={{ $kind }}&amp;back={{ $page }}">Edit</a>
                                     <form method="post" action="/admin/servers/{{ $server->id }}/remove" data-confirm="Stop monitoring {{ $title }} on {{ $server->name }}? Its other monitoring stays; a server left with nothing to monitor is deleted.">
                                         @csrf
                                         <input type="hidden" name="kind" value="{{ $kind }}">
-                                        <input type="hidden" name="back" value="/{{ $kind === 'ssh' ? 'ssh' : 'mariadb' }}">
+                                        <input type="hidden" name="back" value="{{ $page }}">
                                         <button type="submit" class="danger">Remove</button>
                                     </form>
                                 @endif

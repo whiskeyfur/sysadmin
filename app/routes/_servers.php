@@ -10,8 +10,10 @@ app()->get('/servers', ['middleware' => Authenticate::class, 'ServerController@i
 app()->get('/ssl/reports', ['middleware' => Authenticate::class, 'ReportController@ssl']);
 app()->get('/ssh/reports', ['middleware' => Authenticate::class, 'ReportController@ssh']);
 app()->get('/mariadb/reports', ['middleware' => Authenticate::class, 'ReportController@mariadb']);
+app()->get('/apache/reports', ['middleware' => Authenticate::class, 'ReportController@apache']);
 app()->get('/ssh', ['middleware' => Authenticate::class, 'ServerController@ssh']);
 app()->get('/mariadb', ['middleware' => Authenticate::class, 'ServerController@mariadb']);
+app()->get('/apache', ['middleware' => Authenticate::class, 'ServerController@apache']);
 app()->get('/servers/{id}', ['middleware' => Authenticate::class, 'ServerController@show']);
 app()->get('/ssl', ['middleware' => Authenticate::class, 'SslController@index']);
 app()->get('/ssl/{id}', ['middleware' => Authenticate::class, 'SslController@show']);
@@ -21,6 +23,8 @@ app()->post('/servers/{id}/checks', ['middleware' => Authenticate::class, 'Serve
 app()->post('/servers/{id}/test', ['middleware' => Authenticate::class, 'ServerConfigController@test']);
 // Importing a MariaDB log reads the server's files over SSH: admins.
 app()->post('/servers/{id}/import-log', ['middleware' => RequireAdmin::class, 'ServerController@importLog']);
+// Rescanning Apache's configuration: admins.
+app()->post('/servers/{id}/apache-rescan', ['middleware' => RequireAdmin::class, 'ServerController@rescanApache']);
 app()->post('/ssl/check-all', ['middleware' => Authenticate::class, 'SslController@checkAll']);
 app()->post('/ssl/{id}/check', ['middleware' => Authenticate::class, 'SslController@check']);
 
@@ -38,6 +42,7 @@ app()->group('/admin/ssl', ['middleware' => RequireAdmin::class, function () {
 // Each module's Add menu item: that module's form for a new server (or one that lacks it).
 app()->get('/admin/ssh/new', ['middleware' => RequireAdmin::class, 'ServerConfigController@createSsh']);
 app()->get('/admin/mariadb/new', ['middleware' => RequireAdmin::class, 'ServerConfigController@createMariadb']);
+app()->get('/admin/apache/new', ['middleware' => RequireAdmin::class, 'ServerConfigController@createApache']);
 
 // Adding, editing and deleting servers, and SSH setup: admins, from the monitoring pages.
 app()->group('/admin/servers', ['middleware' => RequireAdmin::class, function () {

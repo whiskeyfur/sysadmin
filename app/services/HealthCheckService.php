@@ -44,6 +44,8 @@ class HealthCheckService
 
     public const KIND_SSH = 'ssh';
 
+    public const KIND_APACHE = 'apache';
+
     private const SECTION_MARKER = '@@sys-check:';
 
     /**
@@ -66,6 +68,7 @@ class HealthCheckService
         private readonly ClockInterface $clock = new SystemClock(),
         private readonly SshService $ssh = new SshService(),
         ?array $sshChecks = null,
+        private ?ApacheService $apache = null,
     ) {
         $settings = fn () => new SettingsService();
         $this->sshChecks = $sshChecks ?? self::defaultSshChecks($settings());
@@ -140,6 +143,7 @@ class HealthCheckService
         $results = array_merge(
             $server->sshReady() ? $this->runSshChecks($server) : [],
             $server->mysql_enabled ? $this->runChecks($server) : [],
+            $server->apache_enabled && $server->sshReady() ? $this->apache()->run($server) : [],
         );
         $this->store($server, $results);
 
@@ -157,9 +161,14 @@ class HealthCheckService
             }
         }
 
+        if (isset(ApacheService::CHECKS[$key])) {
+            return ApacheService::CHECKS[$key];
+        }
+
         return match ($key) {
             'connection' => 'MySQL connection',
             'ssh' => 'SSH connection',
+            'apache' => 'Apache',
             default => ucfirst(str_replace('_', ' ', $key)),
         };
     }
@@ -170,12 +179,34 @@ class HealthCheckService
     }
 
     /**
+     * Which kind a stored check key belongs to: SSH (disk, load, memory, the
+     * SSH connection), Apache, or MariaDB/MySQL.
+     */
+    public function kindOf(string $key): string
+    {
+        return match (true) {
+            $key === 'apache' || isset(ApacheService::CHECKS[$key]) => self::KIND_APACHE,
+            $this->isSshCheck($key) => self::KIND_SSH,
+            default => self::KIND_MYSQL,
+        };
+    }
+
+    private function apache(): ApacheService
+    {
+        return $this->apache ??= new ApacheService($this->ssh, clock: $this->clock);
+    }
+
+    /**
      * The checks of one kind, key => label, in run order.
      *
      * @return array<string, string>
      */
     public function columns(string $kind): array
     {
+        if ($kind === self::KIND_APACHE) {
+            return ApacheService::CHECKS;
+        }
+
         $columns = [];
 
         foreach ($kind === self::KIND_SSH ? $this->sshChecks : $this->checks as $check) {
@@ -205,17 +236,17 @@ class HealthCheckService
     }
 
     /**
-     * The latest run split into its MariaDB and SSH results.
+     * The latest run split into its MariaDB, SSH and Apache results.
      *
      * @param list<StoredCheck>|null $latest the latest run, if already loaded
-     * @return array{mysql: list<StoredCheck>, ssh: list<StoredCheck>}
+     * @return array<string, list<StoredCheck>> keyed mysql, ssh, apache
      */
     public function latestByKind(Server $server, ?array $latest = null): array
     {
-        $split = [self::KIND_MYSQL => [], self::KIND_SSH => []];
+        $split = [self::KIND_MYSQL => [], self::KIND_SSH => [], self::KIND_APACHE => []];
 
         foreach ($latest ?? $this->latest($server) as $check) {
-            $split[$this->isSshCheck($check->check_key) ? self::KIND_SSH : self::KIND_MYSQL][] = $check;
+            $split[$this->kindOf($check->check_key)][] = $check;
         }
 
         return $split;
@@ -225,11 +256,11 @@ class HealthCheckService
      * For the servers list: per kind, the worst status of the latest run and
      * the checks that weren't OK (as "Label: summary").
      *
-     * @return array{mysql: array{status: HealthStatus, issues: list<string>, count: int}|null, ssh: array{status: HealthStatus, issues: list<string>, count: int}|null}
+     * @return array<string, array{status: HealthStatus, issues: list<string>, count: int}|null> per kind (mysql, ssh, apache)
      */
     public function summary(Server $server): array
     {
-        $summary = [self::KIND_MYSQL => null, self::KIND_SSH => null];
+        $summary = [self::KIND_MYSQL => null, self::KIND_SSH => null, self::KIND_APACHE => null];
 
         foreach ($this->latestByKind($server) as $kind => $checks) {
             if ($checks === []) {

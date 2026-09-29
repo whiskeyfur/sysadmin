@@ -26,6 +26,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string|null $mysql_host null means the SSH hostname
  * @property int $mysql_port
  * @property int|null $mysql_account_id the Account used for the database login
+ * @property bool $apache_enabled Apache monitoring from its configuration and logs, over SSH
+ * @property array<string, mixed>|null $apache_config what the last configuration scan found
+ * @property Carbon|null $apache_scanned_at
+ * @property array<string, array{inode: string, offset: int}>|null $apache_import_state per log file, how far the last read got
  * @property string|null $mysql_username
  * @property string|null $mysql_password legacy (before accounts), encrypted with SecretCipher
  * @property string $mysql_tls one of the TLS_* constants
@@ -68,7 +72,7 @@ class Server extends Model
      */
     protected $fillable = [
         'name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_host_key', 'ssh_auth', 'ssh_platform', 'ssh_password', 'ssh_password_allowed',
-        'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca',
+        'apache_enabled', 'apache_config', 'apache_scanned_at', 'apache_import_state', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca',
         'last_tested_at', 'last_test_ok', 'last_test_message',
         'check_interval_minutes', 'last_checked_at', 'log_imported_at', 'log_import_state', 'log_import_message', 'last_health_status',
         'ssl_enabled', 'ssl_hosts', 'last_ssl_checked_at', 'last_ssl_status',
@@ -87,6 +91,10 @@ class Server extends Model
         'ssh_port' => 'integer',
         'ssh_account_id' => 'integer',
         'mysql_account_id' => 'integer',
+        'apache_enabled' => 'boolean',
+        'apache_config' => 'array',
+        'apache_scanned_at' => 'datetime',
+        'apache_import_state' => 'array',
         'ssl_enabled' => 'boolean',
         'last_ssl_checked_at' => 'datetime',
         'ssh_password_allowed' => 'boolean',

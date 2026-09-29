@@ -92,6 +92,22 @@ columns:
   last_ssl_status:
     type: string
     nullable: true
+  # Apache monitoring over SSH, from its own configuration and log files (ApacheService); needs SSH set up.
+  # apache_config: JSON of what the last configuration scan found (control program, ServerRoot, log files,
+  #   mod_status location if any) and apache_scanned_at when; rescanned hourly.
+  # apache_import_state: JSON, per log file, how far the last read got (inode and byte offset).
+  apache_enabled:
+    type: boolean
+    default: false
+  apache_config:
+    type: text
+    nullable: true
+  apache_scanned_at:
+    type: timestamp
+    nullable: true
+  apache_import_state:
+    type: text
+    nullable: true
   # Health checks (HealthCheckService). The interval is for a future scheduler.
   check_interval_minutes:
     type: integer

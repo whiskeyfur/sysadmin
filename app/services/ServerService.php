@@ -71,26 +71,35 @@ class ServerService
     public const MODULE_FIELDS = [
         'ssh' => ['ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed'],
         'mysql' => ['mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca'],
+        // Apache is read over SSH: its form has no settings of its own (a new server brings SSH's).
+        'apache' => [],
     ];
 
     /**
-     * Turn on and configure one module (SSH or MariaDB) from that module's
-     * own form: on a new server (name and hostname from $input, the other
-     * module off) or on an existing one, whose other settings stay as they are.
+     * Turn on and configure one module (SSH, MariaDB or Apache) from that
+     * module's own form: on a new server (name and hostname from $input, the
+     * other modules off; for Apache, SSH on with its fields) or on an existing
+     * one, whose other settings stay as they are.
      *
-     * @param 'ssh'|'mysql' $module
+     * @param 'ssh'|'mysql'|'apache' $module
      * @param array<string, mixed> $input
      *
      * @throws DomainException with a user-facing message
      */
     public function saveModule(User $admin, ?Server $server, string $module, array $input): Server
     {
-        $settings = $server === null ? ['ssh_enabled' => '', 'mysql_enabled' => ''] : $this->settingsAsInput($server);
+        $settings = $server === null ? ['ssh_enabled' => '', 'mysql_enabled' => '', 'apache_enabled' => ''] : $this->settingsAsInput($server);
+        // Apache is read over SSH: a new Apache server gets SSH from the same form.
+        $fields = $module === 'apache' && $server === null ? self::MODULE_FIELDS['ssh'] : self::MODULE_FIELDS[$module];
 
         // The module's own fields always count (an unticked checkbox arrives as null);
         // name and hostname only when given (adding a module to an existing server doesn't).
-        foreach (self::MODULE_FIELDS[$module] as $field) {
+        foreach ($fields as $field) {
             $settings[$field] = $input[$field] ?? null;
+        }
+
+        if ($module === 'apache' && $server === null) {
+            $settings['ssh_enabled'] = '1';
         }
 
         foreach (['name', 'hostname'] as $field) {
@@ -112,9 +121,10 @@ class ServerService
 
     /**
      * Turn one module off. A server left with nothing to monitor (no SSH,
-     * no MariaDB, no SSL certificates) is deleted.
+     * MariaDB, Apache or SSL certificates) is deleted. Turning SSH off turns
+     * Apache off too (it's read over SSH).
      *
-     * @param 'ssh'|'mysql' $module
+     * @param 'ssh'|'mysql'|'apache' $module
      *
      * @return bool whether the server was deleted
      */
@@ -122,9 +132,14 @@ class ServerService
     {
         $settings = $this->settingsAsInput($server);
         $settings[$module . '_enabled'] = '';
+
+        if ($module === 'ssh') {
+            $settings['apache_enabled'] = '';
+        }
+
         $this->update($admin, $server, $settings);
 
-        if (!$server->ssh_enabled && !$server->mysql_enabled && !SslBinding::query()->where('server_id', $server->id)->exists()) {
+        if (!$server->ssh_enabled && !$server->mysql_enabled && !$server->apache_enabled && !SslBinding::query()->where('server_id', $server->id)->exists()) {
             $this->delete($admin, $server);
 
             return true;
@@ -157,6 +172,7 @@ class ServerService
             'mysql_password' => '',
             'mysql_tls' => $server->mysql_tls,
             'mysql_tls_ca' => $server->mysql_tls_ca ?? '',
+            'apache_enabled' => $server->apache_enabled ? '1' : '',
         ];
     }
 
@@ -386,6 +402,20 @@ class ServerService
             $server->ssh_password = null;
         }
         $server->mysql_enabled = $mysqlEnabled;
+        $apacheEnabled = filter_var($input['apache_enabled'] ?? false, FILTER_VALIDATE_BOOL);
+
+        if ($apacheEnabled && !$sshEnabled) {
+            throw new DomainException('Apache monitoring reads its configuration and logs over SSH: turn on SSH too.');
+        }
+
+        if ($server->apache_enabled && !$apacheEnabled) {
+            // Forget the scan and read positions; a later re-enable scans afresh.
+            $server->apache_config = null;
+            $server->apache_scanned_at = null;
+            $server->apache_import_state = null;
+        }
+
+        $server->apache_enabled = $apacheEnabled;
 
         $mysqlAccountId = filter_var($input['mysql_account_id'] ?? null, FILTER_VALIDATE_INT) ?: null;
         $mysqlUsername = '';

@@ -13,7 +13,7 @@ use DomainException;
  */
 class SettingsController extends Controller
 {
-    private const TITLES = ['app' => 'App settings', 'ssl' => 'SSL settings', 'ssh' => 'SSH settings', 'mariadb' => 'MariaDB settings'];
+    private const TITLES = ['app' => 'App settings', 'ssl' => 'SSL settings', 'ssh' => 'SSH settings', 'mariadb' => 'MariaDB settings', 'apache' => 'Apache settings'];
 
     /**
      * The old single settings page.

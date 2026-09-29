@@ -1,7 +1,7 @@
 @extends('layouts.app')
 
 @php($editing = $server->exists)
-@php($module = ['ssh' => 'SSH', 'mysql' => 'MariaDB'][$kind] ?? null)
+@php($module = ['ssh' => 'SSH', 'mysql' => 'MariaDB', 'apache' => 'Apache'][$kind] ?? null)
 @php($heading = $editing ? 'Edit ' . $server->name . ($module ? ": $module" : '') : ($module ? "Add a server to $module" : 'Add server'))
 @section('title', $heading)
 @section('width', 'narrow')
@@ -43,13 +43,17 @@
                 </div>
             </div>
             @unless ($kind)
-                <p class="hint">Turn on SSH and/or MariaDB below; SSL certificates are attached on the SSL page.</p>
+                <p class="hint">Turn on SSH, MariaDB and/or Apache below; SSL certificates are attached on the SSL page.</p>
             @endunless
 
-            @if ($kind !== 'mysql')
-            <fieldset>
+            {{-- SSH: its own form, the full form, and a new Apache server (Apache is read over SSH). --}}
+            @if ($kind === null || $kind === 'ssh' || ($kind === 'apache' && !$editing))
+            <fieldset id="ssh_fieldset">
                 <legend>SSH</legend>
-                @if ($kind === 'ssh')
+                @if ($kind === 'apache')
+                    <p class="hint">Apache is monitored from its configuration and log files, read over SSH.</p>
+                @endif
+                @if ($kind === 'ssh' || $kind === 'apache')
                     <input type="checkbox" id="ssh_enabled" name="ssh_enabled" value="1" checked hidden>
                 @else
                     <label class="check"><input type="checkbox" id="ssh_enabled" name="ssh_enabled" value="1" {{ $server->ssh_enabled ? 'checked' : '' }}> Monitor disk, load and memory over SSH</label>
@@ -84,7 +88,7 @@
             </fieldset>
             @endif
 
-            @if ($kind !== 'ssh')
+            @if ($kind === null || $kind === 'mysql')
             <fieldset>
                 <legend>MariaDB / MySQL</legend>
                 @if ($kind === 'mysql')
@@ -142,6 +146,22 @@
 
             @endif
 
+            @if ($kind === null || $kind === 'apache')
+            <fieldset>
+                <legend>Apache</legend>
+                @if ($kind === 'apache')
+                    <input type="checkbox" id="apache_enabled" name="apache_enabled" value="1" checked hidden>
+                    <p>Apache will be monitored from its own configuration and log files, over SSH.</p>
+                @else
+                    <label class="check"><input type="checkbox" id="apache_enabled" name="apache_enabled" value="1" {{ $server->apache_enabled ? 'checked' : '' }}> Monitor Apache from its configuration and log files (needs SSH)</label>
+                @endif
+                <p class="hint">Nothing about locations is assumed: Apache's control program (apache2ctl, apachectl or httpd) lists its configuration files, which say where the error and access logs are. mod_status adds live worker figures if the configuration has it; without it, the error log is used. The SSH user needs read access to the logs (e.g. the adm group).</p>
+                @if ($server->exists && $server->apache_config)
+                    <p class="hint">Last scan {{ \App\Utils\LocalTime::format($server->apache_scanned_at) }}: {{ $server->apache_config['version'] ?? 'Apache' }}, {{ count($server->apache_config['error_logs'] ?? []) }} error log(s), {{ count($server->apache_config['access_logs'] ?? []) }} access log(s){{ !empty($server->apache_config['status_url']) ? ', mod_status' : '' }}.</p>
+                @endif
+            </fieldset>
+            @endif
+
             @unless ($kind)
             <fieldset>
                 <legend>SSL</legend>
@@ -181,8 +201,9 @@
                     document.querySelectorAll('[data-tls]').forEach(function (el) { el.hidden = el.dataset.tls !== byId('mysql_tls').value; });
                 }
                 if (existing) {
-                    // An existing server keeps its name and hostname.
+                    // An existing server keeps its name, hostname and (for Apache) SSH settings.
                     byId('identity_fields').hidden = existing.value !== '';
+                    if (byId('ssh_fieldset') && byId('apache_enabled') && byId('apache_enabled').hidden) { byId('ssh_fieldset').hidden = existing.value !== ''; }
                     ['name', 'hostname'].forEach(function (id) { byId(id).required = existing.value === ''; });
                 }
             }

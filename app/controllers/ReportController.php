@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\DTOs\AuthContext;
 use App\Models\Server;
 use App\Models\SslCertificate;
+use App\Services\ApacheReportService;
 use App\Services\HistoryReport;
 use App\Services\MariadbLogService;
 use App\Services\MariadbReportService;
@@ -19,6 +20,22 @@ use App\Services\SslReportService;
  */
 class ReportController extends Controller
 {
+    /**
+     * ?server=<id>&range=24h|7d|30d
+     */
+    public function apache()
+    {
+        [$servers, $server, $range] = $this->pick(fn (Server $s) => $s->apache_enabled);
+
+        $this->response->view('reports.apache', [
+            'auth' => $this->authContext(),
+            'servers' => $servers,
+            'server' => $server,
+            'range' => $range,
+            'report' => $server === null ? null : (new ApacheReportService())->report($server, $range),
+        ]);
+    }
+
     /**
      * ?certificate=<id> (else all)&range=24h|7d|30d
      */

@@ -56,6 +56,38 @@
                     <input type="text" id="account_warning_days" name="account_warning_days" value="{{ $value('account_warning_days') }}" inputmode="numeric" required>
                     <p class="hint">An account with a rotation period shows as "due soon" this many days before its password is due (1–365, default {{ $default('account_warning_days') }}).</p>
                 </fieldset>
+            @elseif ($section === 'apache')
+                <fieldset>
+                    <legend>Server errors (5xx)</legend>
+                    <label for="apache_5xx_warning_percent">Warning at (% of requests in the last hour)</label>
+                    <input type="text" id="apache_5xx_warning_percent" name="apache_5xx_warning_percent" value="{{ $value('apache_5xx_warning_percent') }}" inputmode="numeric" required>
+                    <label for="apache_5xx_critical_percent">Critical at (% of requests in the last hour)</label>
+                    <input type="text" id="apache_5xx_critical_percent" name="apache_5xx_critical_percent" value="{{ $value('apache_5xx_critical_percent') }}" inputmode="numeric" required>
+                    <p class="hint">From the access logs; only judged with at least 20 requests in the hour (1–100, warning below critical; defaults {{ $default('apache_5xx_warning_percent') }} and {{ $default('apache_5xx_critical_percent') }}).</p>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Error log</legend>
+                    <label for="apache_errors_warning">Warn at (errors in the last hour)</label>
+                    <input type="text" id="apache_errors_warning" name="apache_errors_warning" value="{{ $value('apache_errors_warning') }}" inputmode="numeric" required>
+                    <p class="hint">A crashed child process (e.g. a segfault) is always critical (default {{ $default('apache_errors_warning') }}).</p>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Workers</legend>
+                    <label for="apache_workers_warning_percent">Warning at (% of workers busy)</label>
+                    <input type="text" id="apache_workers_warning_percent" name="apache_workers_warning_percent" value="{{ $value('apache_workers_warning_percent') }}" inputmode="numeric" required>
+                    <label for="apache_workers_critical_percent">Critical at (% of workers busy)</label>
+                    <input type="text" id="apache_workers_critical_percent" name="apache_workers_critical_percent" value="{{ $value('apache_workers_critical_percent') }}" inputmode="numeric" required>
+                    <p class="hint">Live figures need mod_status in the configuration; without it, "reached MaxRequestWorkers" in the error log is a warning (defaults {{ $default('apache_workers_warning_percent') }} and {{ $default('apache_workers_critical_percent') }}).</p>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Restarts</legend>
+                    <label for="apache_restart_warning_minutes">Warn after a restart for (minutes)</label>
+                    <input type="text" id="apache_restart_warning_minutes" name="apache_restart_warning_minutes" value="{{ $value('apache_restart_warning_minutes') }}" inputmode="numeric" required>
+                    <p class="hint">1–10080, default {{ $default('apache_restart_warning_minutes') }}.</p>
+                </fieldset>
             @else
                 <fieldset>
                     <legend>Connections</legend>

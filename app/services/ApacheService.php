@@ -1,0 +1,580 @@
+<?php
+
+namespace App\Services;
+
+use App\DTOs\CheckResult;
+use App\Enums\HealthStatus;
+use App\Enums\ServerPlatform;
+use App\Exceptions\ServerConnectionException;
+use App\Models\ApacheLogEntry;
+use App\Models\ApacheTraffic;
+use App\Models\Server;
+use App\Utils\SystemClock;
+use Carbon\Carbon;
+use DateTimeZone;
+use DomainException;
+use phpseclib3\Net\SSH2;
+use Psr\Clock\ClockInterface;
+
+/**
+ * Apache monitoring over SSH, from Apache's own configuration and log
+ * files. Nothing about locations is assumed:
+ *
+ * 1. The control program is found by name (apache2ctl, apachectl, httpd).
+ *    `-S` gives ServerRoot and the main error log, `-t -D DUMP_INCLUDES`
+ *    every configuration file in use; those are read for ErrorLog,
+ *    CustomLog and TransferLog. ${VARIABLES} are resolved from Define
+ *    lines and from the main error log as `-S` reports it; relative paths
+ *    are under ServerRoot. The scan is kept for SCAN_MINUTES.
+ * 2. Each run reads only what's new in each log (RemoteLogs): error log
+ *    entries go to apache_log_entries, access log lines are summarised per
+ *    5 minutes into apache_traffic.
+ * 3. mod_status is used only if the configuration loads it and has a
+ *    server-status location, fetched from the server itself over SSH (curl
+ *    or wget). Without it, worker figures come from the error log's
+ *    "reached MaxRequestWorkers" instead.
+ *
+ * Each part degrades on its own: an unreadable log or a missing tool is
+ * reported in that check's result, and the rest still works.
+ */
+class ApacheService
+{
+    public const SCAN_MINUTES = 60;
+
+    public const BUCKET_SECONDS = 300;
+
+    /**
+     * The checks, key => label (the Apache page's columns).
+     */
+    public const CHECKS = [
+        'apache_server' => 'Server',
+        'apache_errors' => 'Errors',
+        'apache_requests' => 'Requests',
+        'apache_workers' => 'Workers',
+    ];
+
+    private ?RemoteLogs $remote = null;
+
+    public function __construct(
+        private readonly SshService $ssh = new SshService(),
+        private readonly ApacheConfigParser $config = new ApacheConfigParser(),
+        private readonly ApacheLogParser $logs = new ApacheLogParser(),
+        private readonly SettingsService $settings = new SettingsService(),
+        private readonly ClockInterface $clock = new SystemClock(),
+    ) {
+    }
+
+    public function canCheck(Server $server): bool
+    {
+        return $server->apache_enabled && $server->sshReady();
+    }
+
+    /**
+     * Scan (when due), read what's new in the logs, and judge.
+     *
+     * @param bool $rescan scan the configuration even if the last scan is recent
+     * @return list<CheckResult>
+     */
+    public function run(Server $server, bool $rescan = false): array
+    {
+        try {
+            $connection = $this->ssh->connect($server);
+        } catch (ServerConnectionException $e) {
+            return [new CheckResult('apache', 'Apache', HealthStatus::Critical, "Can't connect over SSH: {$e->getMessage()}")];
+        }
+
+        try {
+            if ($this->ssh->platformOf($connection) === ServerPlatform::Windows) {
+                return [new CheckResult('apache', 'Apache', HealthStatus::Unknown, 'Apache monitoring works on Linux/Unix servers only so far.')];
+            }
+
+            $now = Carbon::instance($this->clock->now());
+            $config = $server->apache_config;
+
+            if ($rescan || $config === null || $server->apache_scanned_at === null || $server->apache_scanned_at->copy()->addMinutes(self::SCAN_MINUTES)->lessThan($now)) {
+                $config = $this->scan($connection);
+                $server->apache_config = $config;
+                $server->apache_scanned_at = $now;
+            }
+
+            $zone = $this->remote()->zone($connection);
+            $state = $server->apache_import_state ?? [];
+            $problems = ['error' => [], 'access' => []];
+
+            foreach (array_keys($config['error_logs'] ?? []) as $path) {
+                $this->importErrorLog($connection, $server, (string) $path, $zone, $state, $problems);
+            }
+
+            foreach (array_keys($config['access_logs'] ?? []) as $path) {
+                $this->importAccessLog($connection, $server, (string) $path, $state, $problems);
+            }
+
+            $status = isset($config['status_url']) ? $this->status($connection, (string) $config['status_url']) : null;
+        } catch (DomainException $e) {
+            return [new CheckResult('apache', 'Apache', HealthStatus::Unknown, $e->getMessage())];
+        } finally {
+            $connection->disconnect();
+        }
+
+        $server->apache_import_state = $state;
+        $server->save();
+        $this->prune();
+
+        return $this->evaluate($server, $config, $status, $problems);
+    }
+
+    /**
+     * What Apache's configuration says: its control program and version,
+     * ServerRoot, error and access logs (path => virtual hosts), and the
+     * mod_status location if there is one.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws DomainException when Apache's control program isn't found
+     */
+    public function scan(SSH2 $connection): array
+    {
+        $binary = trim(strtok($this->remote()->run($connection, 'for b in apache2ctl apachectl httpd; do command -v "$b" && break; done'), "\n") ?: '');
+
+        if ($binary === '') {
+            throw new DomainException("Apache's control program (apache2ctl, apachectl or httpd) wasn't found in the SSH user's PATH.");
+        }
+
+        $bin = escapeshellarg($binary);
+        $notes = [];
+        $version = preg_match('/Server version:\s*(.+)/', $this->remote()->run($connection, "$bin -v 2>&1"), $m) === 1 ? trim($m[1]) : null;
+        $runtime = $this->config->runtime($this->remote()->run($connection, "$bin -S 2>&1"));
+        $files = $this->config->includedFiles($this->remote()->run($connection, "$bin -t -D DUMP_INCLUDES 2>&1"));
+
+        if ($files === []) {
+            $notes[] = "Couldn't list Apache's configuration files ($binary -t -D DUMP_INCLUDES); only the main error log is known.";
+        }
+
+        $directives = [];
+
+        foreach ($files as $file) {
+            try {
+                $text = $this->ssh->exec($connection, 'cat -- ' . escapeshellarg($file) . ' 2>&1');
+            } catch (ServerConnectionException $e) {
+                $notes[] = "Couldn't read $file.";
+
+                continue;
+            }
+
+            foreach ($this->config->directives($text) as $directive) {
+                $directives[] = $directive + ['file' => $file];
+            }
+        }
+
+        $variables = $this->variables($directives, $runtime['main_error_log']);
+        $resolve = function (string $path) use ($variables, $runtime, &$notes): ?string {
+            if (str_starts_with($path, '|') || str_starts_with(strtolower($path), 'syslog')) {
+                $notes[] = "$path: piped or syslog logging can't be read as a file.";
+
+                return null;
+            }
+
+            $path = (string) preg_replace_callback('/\$\{(\w+)\}/', fn ($m) => $variables[$m[1]] ?? $m[0], $path);
+
+            if (str_contains($path, '${')) {
+                $notes[] = "$path: couldn't resolve the variable.";
+
+                return null;
+            }
+
+            return str_starts_with($path, '/') || $runtime['server_root'] === null ? $path : rtrim($runtime['server_root'], '/') . '/' . $path;
+        };
+
+        $errorLogs = [];
+        $accessLogs = [];
+
+        if ($runtime['main_error_log'] !== null && str_starts_with($runtime['main_error_log'], '/')) {
+            $errorLogs[$runtime['main_error_log']] = ['main server'];
+        }
+
+        $statusLocation = null;
+        $statusLoaded = false;
+        $port = null;
+
+        foreach ($directives as $d) {
+            $where = $d['vhost'] ?? 'main server';
+
+            switch ($d['name']) {
+                case 'errorlog':
+                    $path = isset($d['args'][0]) ? $resolve($d['args'][0]) : null;
+
+                    if ($path !== null) {
+                        $errorLogs[$path] = array_values(array_unique([...($errorLogs[$path] ?? []), $where]));
+                    }
+
+                    break;
+
+                case 'customlog':
+                case 'transferlog':
+                    $path = isset($d['args'][0]) ? $resolve($d['args'][0]) : null;
+
+                    if ($path !== null) {
+                        $accessLogs[$path] = array_values(array_unique([...($accessLogs[$path] ?? []), $where]));
+                    }
+
+                    break;
+
+                case 'sethandler':
+                    if (strtolower($d['args'][0] ?? '') === 'server-status' && $d['location'] !== null && $d['vhost'] === null) {
+                        $statusLocation = $d['location'];
+                    }
+
+                    break;
+
+                case 'loadmodule':
+                    $statusLoaded = $statusLoaded || ($d['args'][0] ?? '') === 'status_module';
+
+                    break;
+
+                case 'listen':
+                    if ($port === null && preg_match('/(?:^|:)(\d+)$/', $d['args'][0] ?? '', $m) === 1) {
+                        $port = (int) $m[1];
+                    }
+
+                    break;
+            }
+        }
+
+        $statusUrl = $statusLoaded && $statusLocation !== null && $port !== null ? "http://127.0.0.1:$port" . rtrim($statusLocation, '/') . '?auto' : null;
+        $notes[] = $statusUrl !== null
+            ? "mod_status: $statusLocation, read from the server itself."
+            : 'mod_status: not configured (' . ($statusLoaded ? 'no server-status location in the main server' : 'module not loaded') . '); worker figures come from the error log.';
+
+        return [
+            'binary' => $binary,
+            'version' => $version,
+            'server_root' => $runtime['server_root'],
+            'files' => count($files),
+            'error_logs' => $errorLogs,
+            'access_logs' => $accessLogs,
+            'status_url' => $statusUrl,
+            'notes' => $notes,
+        ];
+    }
+
+    /**
+     * ${VARIABLES} used in log paths: from Define lines, and from the main
+     * ErrorLog as written (e.g. ${APACHE_LOG_DIR}/error.log) against the
+     * path `-S` reports for it (/var/log/apache2/error.log).
+     *
+     * @param list<array<string, mixed>> $directives as from ApacheConfigParser::directives() (name, args, vhost)
+     * @return array<string, string>
+     */
+    public function variables(array $directives, ?string $mainErrorLog): array
+    {
+        $variables = [];
+
+        foreach ($directives as $d) {
+            if ($d['name'] === 'define' && isset($d['args'][0], $d['args'][1])) {
+                $variables[$d['args'][0]] = $d['args'][1];
+            }
+        }
+
+        if ($mainErrorLog === null) {
+            return $variables;
+        }
+
+        foreach ($directives as $d) {
+            $template = $d['args'][0] ?? '';
+
+            if ($d['name'] !== 'errorlog' || $d['vhost'] !== null || !str_contains($template, '${')) {
+                continue;
+            }
+
+            $names = [];
+            $pattern = (string) preg_replace_callback('/\\\\\$\\\\\{(\w+)\\\\\}/', function ($m) use (&$names) {
+                $names[] = $m[1];
+
+                return '(.+?)';
+            }, preg_quote($template, '#'));
+
+            if (preg_match("#^$pattern$#", $mainErrorLog, $m) === 1) {
+                foreach ($names as $i => $name) {
+                    $variables[$name] ??= $m[$i + 1];
+                }
+            }
+        }
+
+        return $variables;
+    }
+
+    /**
+     * @param array<string, array{inode: string, offset: int}> $state
+     * @param array{error: list<string>, access: list<string>} $problems
+     */
+    private function importErrorLog(SSH2 $connection, Server $server, string $path, DateTimeZone $zone, array &$state, array &$problems): void
+    {
+        try {
+            $text = $this->remote()->readNew($connection, $path, $state);
+        } catch (ServerConnectionException $e) {
+            $problems['error'][] = $this->readProblem($path, $e);
+
+            return;
+        }
+
+        $cutoff = Carbon::instance($this->clock->now())->subDays(HealthCheckService::RETENTION_DAYS);
+        $batch = [];
+        $repeats = ['second' => null, 'counts' => []];
+
+        foreach ($this->logs->errorEntries($text, $zone) as $entry) {
+            if ($entry['time']->greaterThanOrEqualTo($cutoff)) {
+                $batch[] = $entry;
+            }
+
+            if (count($batch) >= 500) {
+                $this->remote()->store(ApacheLogEntry::class, $server, $path, $batch, $repeats);
+                $batch = [];
+            }
+        }
+
+        $this->remote()->store(ApacheLogEntry::class, $server, $path, $batch, $repeats);
+    }
+
+    /**
+     * @param array<string, array{inode: string, offset: int}> $state
+     * @param array{error: list<string>, access: list<string>} $problems
+     */
+    private function importAccessLog(SSH2 $connection, Server $server, string $path, array &$state, array &$problems): void
+    {
+        try {
+            $text = $this->remote()->readNew($connection, $path, $state);
+        } catch (ServerConnectionException $e) {
+            $problems['access'][] = $this->readProblem($path, $e);
+
+            return;
+        }
+
+        $cutoff = Carbon::instance($this->clock->now())->subDays(HealthCheckService::RETENTION_DAYS)->getTimestamp();
+        $buckets = [];
+        $skipped = 0;
+
+        foreach ($this->logs->accessLines($text, $skipped) as $line) {
+            if ($line['time'] < $cutoff) {
+                continue;
+            }
+
+            $bucket = intdiv($line['time'], self::BUCKET_SECONDS) * self::BUCKET_SECONDS;
+            $counts = $buckets[$bucket] ?? ['requests' => 0, 'bytes' => 0, 'status_2xx' => 0, 'status_3xx' => 0, 'status_4xx' => 0, 'status_5xx' => 0];
+            $counts['requests']++;
+            $counts['bytes'] += $line['bytes'];
+            $class = 'status_' . intdiv($line['status'], 100) . 'xx';
+
+            if (isset($counts[$class])) {
+                $counts[$class]++;
+            }
+
+            $buckets[$bucket] = $counts;
+        }
+
+        if ($skipped > 0 && $buckets === []) {
+            $problems['access'][] = "$path: $skipped line(s) in a format without the usual [time] \"request\" status bytes.";
+        }
+
+        foreach ($buckets as $bucket => $counts) {
+            $at = Carbon::createFromTimestamp($bucket)->format('Y-m-d H:i:s');
+            $row = ApacheTraffic::query()->where('server_id', $server->id)->where('log', $path)->where('bucket_at', $at)->first();
+
+            if ($row instanceof ApacheTraffic) {
+                foreach ($counts as $field => $value) {
+                    $row->{$field} += $value;
+                }
+
+                $row->save();
+            } else {
+                ApacheTraffic::query()->insert(['server_id' => $server->id, 'log' => $path, 'bucket_at' => $at] + $counts);
+            }
+        }
+    }
+
+    /**
+     * mod_status's figures, fetched from the server itself; null if that fails.
+     *
+     * @return array<string, string>|null
+     */
+    private function status(SSH2 $connection, string $url): ?array
+    {
+        $quoted = escapeshellarg($url);
+
+        // The default virtual host may redirect (e.g. to https) or not allow it: also try as "localhost", then following redirects.
+        foreach (['', "-H 'Host: localhost'", '-L -k'] as $options) {
+            $body = $this->remote()->run($connection, "if command -v curl >/dev/null; then curl -s -m 5 $options $quoted; elif command -v wget >/dev/null; then wget -q -T 5 -O - $quoted; fi");
+            $status = [];
+
+            foreach (preg_split('/\R/', $body) ?: [] as $line) {
+                if (preg_match('/^([A-Za-z][A-Za-z0-9 _]*):\s?(.*)$/', trim($line), $m) === 1) {
+                    $status[$m[1]] = trim($m[2]);
+                }
+            }
+
+            if (isset($status['Scoreboard']) || isset($status['BusyWorkers'])) {
+                return $status;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @param array<string, string>|null $status
+     * @param array{error: list<string>, access: list<string>} $problems
+     * @return list<CheckResult>
+     */
+    public function evaluate(Server $server, array $config, ?array $status, array $problems): array
+    {
+        $now = Carbon::instance($this->clock->now());
+        $hourAgo = $now->copy()->subHour();
+        $recent = ApacheLogEntry::query()->where('server_id', $server->id)->where('logged_at', '>=', $hourAgo)->get();
+
+        return [
+            $this->serverResult($server, $config, $status, $now),
+            $this->errorsResult($config, $recent, $problems['error']),
+            $this->requestsResult($server, $config, $hourAgo, $problems['access']),
+            $this->workersResult($status, $recent),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @param array<string, string>|null $status
+     */
+    private function serverResult(Server $server, array $config, ?array $status, Carbon $now): CheckResult
+    {
+        $version = $status['ServerVersion'] ?? $config['version'] ?? 'Apache';
+        $window = $this->settings->integer(SettingsService::APACHE_RESTART_WARNING_MINUTES);
+        $details = ['version' => $version, 'binary' => $config['binary'] ?? null];
+
+        if (isset($status['ServerUptimeSeconds']) && is_numeric($status['ServerUptimeSeconds'])) {
+            $uptime = (int) $status['ServerUptimeSeconds'];
+            $started = $now->copy()->subSeconds($uptime);
+        } else {
+            // "AH00163: Apache/2.4.58 (Ubuntu) configured -- resuming normal operations" at each (re)start.
+            /** @var ApacheLogEntry|null $start */
+            $start = ApacheLogEntry::query()->where('server_id', $server->id)->where('message', 'like', '%resuming normal operations%')->orderByDesc('logged_at')->first();
+            $started = $start instanceof ApacheLogEntry ? $start->logged_at : null;
+            $uptime = $started === null ? null : $now->getTimestamp() - $started->getTimestamp();
+        }
+
+        if ($uptime === null) {
+            return new CheckResult('apache_server', 'Server', HealthStatus::Ok, "$version. No start in the error log in the last " . HealthCheckService::RETENTION_DAYS . ' days.', null, null, $details);
+        }
+
+        $summary = "$version, up " . Checks\ServerStatusCheck::duration($uptime) . ' (since ' . \App\Utils\LocalTime::format($started) . ').';
+
+        if ($uptime < $window * 60) {
+            return new CheckResult('apache_server', 'Server', HealthStatus::Warning, "$summary Restarted recently; check the error log.", (float) $uptime, 's', $details);
+        }
+
+        return new CheckResult('apache_server', 'Server', HealthStatus::Ok, $summary, (float) $uptime, 's', $details);
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @param \Illuminate\Support\Collection<int, ApacheLogEntry> $recent
+     * @param list<string> $problems
+     */
+    private function errorsResult(array $config, $recent, array $problems): CheckResult
+    {
+        if (($config['error_logs'] ?? []) === [] || count($problems) >= count($config['error_logs'] ?? [])) {
+            return new CheckResult('apache_errors', 'Errors', HealthStatus::Unknown, $problems === [] ? 'No error log found in the configuration.' : implode(' ', $problems));
+        }
+
+        $crashes = $recent->where('level', 'crash');
+        $errors = $recent->where('level', 'error');
+        $warnings = $recent->where('level', 'warning')->count();
+        $limit = $this->settings->integer(SettingsService::APACHE_ERRORS_WARNING);
+        $summary = count($errors) . ' error' . (count($errors) === 1 ? '' : 's') . ", $warnings warning" . ($warnings === 1 ? '' : 's') . ' in the last hour.';
+
+        if ($crashes->isNotEmpty()) {
+            $status = HealthStatus::Critical;
+            $summary = count($crashes) . ' crashed child process' . (count($crashes) === 1 ? '' : 'es') . ' in the last hour: ' . mb_substr((string) ($crashes->last()->message ?? ''), 0, 200) . ' ' . $summary;
+        } else {
+            $status = count($errors) >= $limit ? HealthStatus::Warning : HealthStatus::Ok;
+
+            if ($errors->isNotEmpty()) {
+                $summary .= ' Latest: ' . mb_substr((string) ($errors->sortBy('logged_at')->last()->message ?? ''), 0, 200);
+            }
+        }
+
+        return new CheckResult('apache_errors', 'Errors', $status, $summary . ($problems === [] ? '' : ' ' . implode(' ', $problems)), (float) (count($errors) + count($crashes)), 'errors', ['warnings' => $warnings]);
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @param list<string> $problems
+     */
+    private function requestsResult(Server $server, array $config, Carbon $since, array $problems): CheckResult
+    {
+        if (($config['access_logs'] ?? []) === [] || count($problems) >= count($config['access_logs'] ?? [])) {
+            return new CheckResult('apache_requests', 'Requests', HealthStatus::Unknown, $problems === [] ? 'No access log found in the configuration.' : implode(' ', $problems));
+        }
+
+        $rows = ApacheTraffic::query()->where('server_id', $server->id)->where('bucket_at', '>=', $since)->get();
+        $requests = (int) $rows->sum('requests');
+        $failed = (int) $rows->sum('status_5xx');
+        $percent = $requests === 0 ? 0.0 : round($failed / $requests * 100, 1);
+        $summary = number_format($requests) . ' request' . ($requests === 1 ? '' : 's') . ' in the last hour (' . Checks\FileIoCheck::size((int) $rows->sum('bytes')) . "), $percent% server errors (5xx).";
+        $warning = $this->settings->integer(SettingsService::APACHE_5XX_WARNING_PERCENT);
+        $critical = $this->settings->integer(SettingsService::APACHE_5XX_CRITICAL_PERCENT);
+        // Too few requests for a percentage to mean anything.
+        $status = $requests < 20 ? HealthStatus::Ok : match (true) {
+            $percent >= $critical => HealthStatus::Critical,
+            $percent >= $warning => HealthStatus::Warning,
+            default => HealthStatus::Ok,
+        };
+
+        return new CheckResult('apache_requests', 'Requests', $status, $summary . ($problems === [] ? '' : ' ' . implode(' ', $problems)), (float) $requests, 'requests', ['status_5xx' => $failed, 'percent_5xx' => $percent]);
+    }
+
+    /**
+     * @param array<string, string>|null $status
+     * @param \Illuminate\Support\Collection<int, ApacheLogEntry> $recent
+     */
+    private function workersResult(?array $status, $recent): CheckResult
+    {
+        $limitReached = $recent->filter(fn (ApacheLogEntry $e) => str_contains($e->message, 'MaxRequestWorkers') || str_contains($e->message, 'MaxClients'));
+
+        if ($status !== null && isset($status['BusyWorkers'], $status['Scoreboard']) && strlen($status['Scoreboard']) > 0) {
+            $busy = (int) $status['BusyWorkers'];
+            $slots = strlen($status['Scoreboard']);
+            $percent = round($busy / $slots * 100, 1);
+            $level = match (true) {
+                $percent >= $this->settings->integer(SettingsService::APACHE_WORKERS_CRITICAL_PERCENT) => HealthStatus::Critical,
+                $percent >= $this->settings->integer(SettingsService::APACHE_WORKERS_WARNING_PERCENT) || $limitReached->isNotEmpty() => HealthStatus::Warning,
+                default => HealthStatus::Ok,
+            };
+
+            return new CheckResult('apache_workers', 'Workers', $level, "$busy of $slots workers busy ($percent%)." . ($limitReached->isNotEmpty() ? ' The error log says the worker limit was reached in the last hour.' : ''), $percent, '%', ['busy' => $busy, 'slots' => $slots, 'idle' => isset($status['IdleWorkers']) ? (int) $status['IdleWorkers'] : null]);
+        }
+
+        if ($limitReached->isNotEmpty()) {
+            return new CheckResult('apache_workers', 'Workers', HealthStatus::Warning, 'All workers were busy in the last hour: ' . mb_substr((string) ($limitReached->last()->message ?? ''), 0, 200));
+        }
+
+        return new CheckResult('apache_workers', 'Workers', HealthStatus::Ok, 'Worker limit not reached in the last hour (from the error log; mod_status not available for live figures).');
+    }
+
+    private function readProblem(string $path, ServerConnectionException $e): string
+    {
+        $message = trim((string) preg_replace('/^The command exited with status \d+: /', '', $e->getMessage()));
+
+        return "Couldn't read $path" . (str_contains($message, 'ermission denied') ? ': the SSH user needs read access (e.g. the adm group).' : ": $message.");
+    }
+
+    private function prune(): void
+    {
+        $cutoff = Carbon::instance($this->clock->now())->subDays(HealthCheckService::RETENTION_DAYS);
+        ApacheLogEntry::query()->where('logged_at', '<', $cutoff)->delete();
+        ApacheTraffic::query()->where('bucket_at', '<', $cutoff)->delete();
+    }
+
+    private function remote(): RemoteLogs
+    {
+        return $this->remote ??= new RemoteLogs($this->ssh);
+    }
+}

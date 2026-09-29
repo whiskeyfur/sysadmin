@@ -23,9 +23,9 @@ use DomainException;
  */
 class ServerConfigController extends Controller
 {
-    private const BACK_PAGES = ['/', '/ssh', '/mariadb'];
+    private const BACK_PAGES = ['/', '/ssh', '/mariadb', '/apache'];
 
-    private const FIELDS = ['name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_tls', 'mysql_tls_ca'];
+    private const FIELDS = ['name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_tls', 'mysql_tls_ca', 'apache_enabled'];
 
     private readonly ServerService $servers;
 
@@ -65,19 +65,25 @@ class ServerConfigController extends Controller
     /**
      * MariaDB › Add.
      */
+    public function createApache()
+    {
+        $this->renderCreate('apache', '/apache');
+    }
+
     public function createMariadb()
     {
         $this->renderCreate('mysql', '/mariadb');
     }
 
     /**
-     * @param 'ssh'|'mysql'|null $kind
+     * @param 'ssh'|'mysql'|'apache'|null $kind
      */
     private function renderCreate(?string $kind, ?string $back = null): void
     {
         $this->renderForm(new Server([
             'ssh_enabled' => $kind !== 'mysql',
             'mysql_enabled' => $kind === 'mysql',
+            'apache_enabled' => $kind === 'apache',
             'ssh_port' => 22,
             'mysql_port' => 3306,
             'mysql_tls' => Server::TLS_VERIFY,
@@ -165,7 +171,7 @@ class ServerConfigController extends Controller
             return;
         }
 
-        $module = $kind === 'ssh' ? 'SSH' : 'MariaDB';
+        $module = ['ssh' => 'SSH', 'mysql' => 'MariaDB', 'apache' => 'Apache'][$kind];
 
         try {
             $deleted = $this->servers->removeModule($this->authContext()->user, $server, $kind);
@@ -226,7 +232,7 @@ class ServerConfigController extends Controller
     }
 
     /**
-     * @param 'ssh'|'mysql'|null $kind one module's form, or null for the full form
+     * @param 'ssh'|'mysql'|'apache'|null $kind one module's form, or null for the full form
      */
     private function renderForm(Server $server, ?string $error = null, ?string $kind = null, ?string $back = null): void
     {
@@ -236,7 +242,7 @@ class ServerConfigController extends Controller
             'kind' => $kind,
             // Adding a module: servers that don't have it yet can get it.
             'candidates' => $kind !== null && !$server->exists
-                ? array_values(array_filter($this->servers->all(), fn (Server $s) => !($kind === 'ssh' ? $s->ssh_enabled : $s->mysql_enabled)))
+                ? array_values(array_filter($this->servers->all(), fn (Server $s) => $this->canGain($s, $kind)))
                 : [],
             'back' => $back ?? $this->back(),
             'caCertificates' => $server->mysql_tls_ca ? (new CaCertificateService())->describe($server->mysql_tls_ca) : [],
@@ -320,26 +326,39 @@ class ServerConfigController extends Controller
     /**
      * The module a form or link is about: 'ssh', 'mysql', or null for all.
      *
-     * @return 'ssh'|'mysql'|null
+     * @return 'ssh'|'mysql'|'apache'|null
      */
     private function kind(): ?string
     {
         $kind = $this->request->get('kind', false);
 
-        return $kind === 'ssh' || $kind === 'mysql' ? $kind : null;
+        return in_array($kind, ['ssh', 'mysql', 'apache'], true) ? $kind : null;
     }
 
     /**
      * The existing server chosen to get a module, if any; it must not have it yet.
      *
-     * @param 'ssh'|'mysql' $kind
+     * @param 'ssh'|'mysql'|'apache' $kind
      */
     private function candidate(string $kind): ?Server
     {
         $id = filter_var($this->request->get('existing_id', false), FILTER_VALIDATE_INT);
         $server = $id === false ? null : Server::query()->find($id);
 
-        return $server instanceof Server && !($kind === 'ssh' ? $server->ssh_enabled : $server->mysql_enabled) ? $server : null;
+        return $server instanceof Server && $this->canGain($server, $kind) ? $server : null;
+    }
+
+    /**
+     * Whether a server can have a module added: it doesn't have it yet (and,
+     * for Apache, which is read over SSH, it has SSH).
+     */
+    private function canGain(Server $server, string $kind): bool
+    {
+        return match ($kind) {
+            'ssh' => !$server->ssh_enabled,
+            'mysql' => !$server->mysql_enabled,
+            default => $server->ssh_enabled && !$server->apache_enabled,
+        };
     }
 
     /**

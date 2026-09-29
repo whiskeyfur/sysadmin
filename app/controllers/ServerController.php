@@ -50,6 +50,40 @@ class ServerController extends Controller
     }
 
     /**
+     * Apache monitoring: from each server's Apache configuration and logs, over SSH.
+     */
+    public function apache()
+    {
+        $this->renderKind(HealthCheckService::KIND_APACHE);
+    }
+
+    /**
+     * Scan Apache's configuration again at the next check (admins), e.g.
+     * after adding a virtual host or moving a log; and check now.
+     */
+    public function rescanApache($id)
+    {
+        $server = $this->findOrRedirect($id);
+
+        if ($server === null) {
+            return;
+        }
+
+        $server->apache_scanned_at = null;
+        $server->save();
+
+        try {
+            (new HealthCheckService())->run($this->authContext()->user, $server);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect('/apache');
+
+            return;
+        }
+
+        $this->response->withFlash('notice', "Scanned Apache's configuration on {$server->name} again and checked it.")->redirect('/apache');
+    }
+
+    /**
      * MariaDB monitoring: every database check for every server with MariaDB/MySQL.
      */
     public function mariadb()
@@ -147,7 +181,7 @@ class ServerController extends Controller
     {
         $back = $this->request->get('back', false);
 
-        return in_array($back, ['/', '/ssh', '/mariadb'], true) ? $back : $default;
+        return in_array($back, ['/', '/ssh', '/mariadb', '/apache'], true) ? $back : $default;
     }
 
     private function renderKind(string $kind): void
@@ -155,7 +189,11 @@ class ServerController extends Controller
         $health = new HealthCheckService();
         $servers = array_values(array_filter(
             (new ServerService())->all(),
-            fn (Server $s) => $kind === HealthCheckService::KIND_SSH ? $s->ssh_enabled : $s->mysql_enabled,
+            fn (Server $s) => match ($kind) {
+                HealthCheckService::KIND_SSH => $s->ssh_enabled,
+                HealthCheckService::KIND_APACHE => $s->apache_enabled,
+                default => $s->mysql_enabled,
+            },
         ));
         $results = [];
 
@@ -166,9 +204,11 @@ class ServerController extends Controller
         $this->response->view('servers.kind', [
             'auth' => $this->authContext(),
             'kind' => $kind,
-            'title' => $kind === HealthCheckService::KIND_SSH ? 'SSH' : 'MariaDB',
+            'title' => [HealthCheckService::KIND_SSH => 'SSH', HealthCheckService::KIND_APACHE => 'Apache'][$kind] ?? 'MariaDB',
+            // The page's path, for links back to it.
+            'page' => [HealthCheckService::KIND_SSH => '/ssh', HealthCheckService::KIND_APACHE => '/apache'][$kind] ?? '/mariadb',
             'columns' => $health->columns($kind),
-            'connectionKey' => $kind === HealthCheckService::KIND_SSH ? 'ssh' : 'connection',
+            'connectionKey' => [HealthCheckService::KIND_SSH => 'ssh', HealthCheckService::KIND_APACHE => 'apache'][$kind] ?? 'connection',
             'servers' => $servers,
             'results' => $results,
             'health' => $health,

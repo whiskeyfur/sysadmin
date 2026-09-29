@@ -22,6 +22,7 @@
                     @else
                         off
                     @endif
+                    · Apache: {{ $server->apache_enabled ? ($server->apache_config['version'] ?? 'on') : 'off' }}
                     · SSL: {{ count($bindings) ? count($bindings) . ' certificate(s)' : 'none' }}
                 </p>
             </div>
@@ -55,11 +56,11 @@
         @elseif ($server->last_checked_at !== null)
             <p class="muted" style="margin-top: 16px">Last checked {{ \App\Utils\LocalTime::format($server->last_checked_at) }}. Checks run when an admin starts them; results are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days.</p>
 
-            @foreach (['mysql' => 'MariaDB', 'ssh' => 'SSH: disk, load and memory'] as $kind => $heading)
-            @continue($checks[$kind] === [] && !($kind === 'mysql' ? $server->mysql_enabled : $server->ssh_enabled))
+            @foreach (['mysql' => 'MariaDB', 'ssh' => 'SSH: disk, load and memory', 'apache' => 'Apache'] as $kind => $heading)
+            @continue($checks[$kind] === [] && !['mysql' => $server->mysql_enabled, 'ssh' => $server->ssh_enabled, 'apache' => $server->apache_enabled][$kind])
             <h2 style="margin-top: 16px">{{ $heading }}</h2>
             @if ($checks[$kind] === [])
-                <p class="muted">{{ $kind === 'ssh' && !$server->sshReady() ? "SSH isn't set up yet, so these checks don't run." : 'Not checked in the last run.' }}</p>
+                <p class="muted">{{ $kind !== 'mysql' && !$server->sshReady() ? "SSH isn't set up yet, so these checks don't run." : 'Not checked in the last run.' }}</p>
             @else
             <div class="table-wrap">
             <table>

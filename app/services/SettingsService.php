@@ -41,6 +41,18 @@ class SettingsService
 
     public const MYSQL_LOG_IMPORT_MINUTES = 'mysql_log_import_minutes';
 
+    public const APACHE_5XX_WARNING_PERCENT = 'apache_5xx_warning_percent';
+
+    public const APACHE_5XX_CRITICAL_PERCENT = 'apache_5xx_critical_percent';
+
+    public const APACHE_ERRORS_WARNING = 'apache_errors_warning';
+
+    public const APACHE_WORKERS_WARNING_PERCENT = 'apache_workers_warning_percent';
+
+    public const APACHE_WORKERS_CRITICAL_PERCENT = 'apache_workers_critical_percent';
+
+    public const APACHE_RESTART_WARNING_MINUTES = 'apache_restart_warning_minutes';
+
     /**
      * @var array<string, int>
      */
@@ -58,6 +70,12 @@ class SettingsService
         self::MYSQL_BUFFER_POOL_WARNING_PERCENT => 95,
         self::MYSQL_RESTART_WARNING_MINUTES => 60,
         self::MYSQL_LOG_IMPORT_MINUTES => 60,
+        self::APACHE_5XX_WARNING_PERCENT => 5,
+        self::APACHE_5XX_CRITICAL_PERCENT => 20,
+        self::APACHE_ERRORS_WARNING => 10,
+        self::APACHE_WORKERS_WARNING_PERCENT => 80,
+        self::APACHE_WORKERS_CRITICAL_PERCENT => 95,
+        self::APACHE_RESTART_WARNING_MINUTES => 60,
     ];
 
     /**
@@ -78,6 +96,14 @@ class SettingsService
             self::MYSQL_RESTART_WARNING_MINUTES,
             self::MYSQL_LOG_IMPORT_MINUTES,
         ],
+        'apache' => [
+            self::APACHE_5XX_WARNING_PERCENT,
+            self::APACHE_5XX_CRITICAL_PERCENT,
+            self::APACHE_ERRORS_WARNING,
+            self::APACHE_WORKERS_WARNING_PERCENT,
+            self::APACHE_WORKERS_CRITICAL_PERCENT,
+            self::APACHE_RESTART_WARNING_MINUTES,
+        ],
     ];
 
     /**
@@ -97,6 +123,12 @@ class SettingsService
         self::MYSQL_BUFFER_POOL_WARNING_PERCENT => ['min' => 1, 'max' => 100],
         self::MYSQL_RESTART_WARNING_MINUTES => ['min' => 1, 'max' => 10080],
         self::MYSQL_LOG_IMPORT_MINUTES => ['min' => 0, 'max' => 1440],
+        self::APACHE_5XX_WARNING_PERCENT => ['min' => 1, 'max' => 100],
+        self::APACHE_5XX_CRITICAL_PERCENT => ['min' => 1, 'max' => 100],
+        self::APACHE_ERRORS_WARNING => ['min' => 1, 'max' => 100000],
+        self::APACHE_WORKERS_WARNING_PERCENT => ['min' => 1, 'max' => 100],
+        self::APACHE_WORKERS_CRITICAL_PERCENT => ['min' => 1, 'max' => 100],
+        self::APACHE_RESTART_WARNING_MINUTES => ['min' => 1, 'max' => 10080],
     ];
 
     /**
@@ -108,6 +140,8 @@ class SettingsService
         self::DISK_WARNING_PERCENT => self::DISK_CRITICAL_PERCENT,
         self::MYSQL_CONNECTIONS_WARNING_PERCENT => self::MYSQL_CONNECTIONS_CRITICAL_PERCENT,
         self::MYSQL_LAG_WARNING_SECONDS => self::MYSQL_LAG_CRITICAL_SECONDS,
+        self::APACHE_5XX_WARNING_PERCENT => self::APACHE_5XX_CRITICAL_PERCENT,
+        self::APACHE_WORKERS_WARNING_PERCENT => self::APACHE_WORKERS_CRITICAL_PERCENT,
     ];
 
     /**
@@ -210,6 +244,12 @@ class SettingsService
             self::MYSQL_BUFFER_POOL_WARNING_PERCENT => 'Buffer pool warning level',
             self::MYSQL_RESTART_WARNING_MINUTES => 'Recent restart window',
             self::MYSQL_LOG_IMPORT_MINUTES => 'Log import interval',
+            self::APACHE_5XX_WARNING_PERCENT => '5xx warning level',
+            self::APACHE_5XX_CRITICAL_PERCENT => '5xx critical level',
+            self::APACHE_ERRORS_WARNING => 'Errors per hour warning',
+            self::APACHE_WORKERS_WARNING_PERCENT => 'workers warning level',
+            self::APACHE_WORKERS_CRITICAL_PERCENT => 'workers critical level',
+            self::APACHE_RESTART_WARNING_MINUTES => 'Apache restart window',
             default => $key,
         };
     }

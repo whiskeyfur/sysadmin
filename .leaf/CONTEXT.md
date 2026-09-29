@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — Apache module (menu, Test, Reports, Add, Settings): over SSH from Apache's own configuration (control program, DUMP_INCLUDES, log directives, variables resolved) and incremental log reads; mod_status used only when configured; error log history and 5-minute access totals (`ApacheService`, `ApacheConfigParser`, `ApacheLogParser`, `ApacheReportService`, `RemoteLogs`).
 * 2026-09-29 — App settings page (navbar right) with the sign-in idle timeout (default 30 min); sessions moved to storage/framework/sessions with the app's own GC, since Ubuntu's sessionclean ended them after 24 idle minutes regardless (`AuthSessionService::configureSessionStorage()/idleTooLong()`).
 * 2026-09-29 — Import MariaDB users ('name'@'%' only) as database accounts without passwords, unusable for logins until one is recorded; every account records its origin (manual, server settings, import) (`AccountService::importMysqlUsers()`, `Account::canLogIn()`, `accounts.origin*`).
 * 2026-09-29 — MariaDB data without SSH: disk space (DISKS plugin), file I/O (performance_schema) and database sizes as optional checks, charted on the MariaDB report; scheduled SSL checks add new SAN hostnames from valid certificates (setting) (`DisksCheck`, `FileIoCheck`, `DatabaseSizeCheck`, `SslMonitorService::addNames()`).
 * 2026-09-29 — MariaDB logs imported on a schedule (every 60 min by default, MariaDB setting), reading only new bytes per file (inode + offset) and still importing when only MariaDB is down; last outcome shown on the report (`ScheduledCheckService::importLogIfDue()`, `MariadbLogService::importNow()/readNew()`).
-* 2026-09-29 — SSL reports: days until expiry per certificate (or per place served) with a warning-period line and a checks table; log import streams and batches entries (a 5 MB log exhausted 128 MB before) (`SslReportService`, `MariadbLogParser::errorEntries()`, `MariadbLogService::store()`).
 
 ---
 
@@ -119,6 +119,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * Non-admins can test servers and run checks, with a per-server cooldown — the user wants everyone able to test; the cooldown keeps repeated clicks from tripping fail2ban on monitored servers.
 * Scheduled checks back off after connection failures (up to hourly) — this machine's sshd bans on failures (fail2ban) and MariaDB blocks hosts after max_connect_errors; a check every 5 minutes against a broken login would otherwise get the app banned.
 * Log locations are read from MariaDB's own option files, never assumed — the user's explicit instruction; only when `my_print_defaults` is missing does the import fall back to the documented /etc/my.cnf and /etc/mysql/my.cnf.
+* Apache is monitored from its configuration and log files over SSH, not via mod_status; mod_status only adds live worker figures when the configuration has it — the user's instruction ("don't assume mod_status or /server-status"; "if available, great, degrade gracefully").
 * Password login is opt-in per server and off by default — this machine's fail2ban bans on the first password attempt; the user said "no passwords, period" for it.
 * SSH passwords are kept (encrypted) only for servers that refuse key login after the key is installed — the user chose this fallback.
 * New servers default to verified MySQL TLS; existing ones were migrated to `off` so nothing broke — encrypt-only is offered with a warning for servers without a usable CA.

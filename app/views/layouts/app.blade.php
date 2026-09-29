@@ -133,6 +133,7 @@
                     'SSL' => ['/ssl/reports' => 'Reports', '/ssl' => 'Test', '/admin/ssl/new' => 'Add', '/admin/settings/ssl' => 'Settings'],
                     'SSH' => ['/ssh/reports' => 'Reports', '/ssh' => 'Test', '/admin/ssh/new' => 'Add', '/admin/accounts/ssh' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
                     'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/admin/settings/mariadb' => 'Settings'],
+                    'Apache' => ['/apache/reports' => 'Reports', '/apache' => 'Test', '/admin/apache/new' => 'Add', '/admin/settings/apache' => 'Settings'],
                 ])
                 @foreach ($menus as $menu => $items)
                     {{-- The most specific item under the current page: /ssh/reports is Reports, not also Test (/ssh). --}}
@@ -153,7 +154,6 @@
                         </div>
                     </details>
                 @endforeach
-                <span class="muted" title="Coming soon">Apache <small>(coming soon)</small></span>
             @endisset
         </nav>
         @isset($auth)

@@ -64,13 +64,13 @@
             <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>Check</th><th>Status</th><th>Result</th><th>Recent runs</th></tr>
+                    <tr><th>Check</th><th>Status</th><th>Result</th><th data-nosort>Recent runs</th></tr>
                 </thead>
                 <tbody>
                     @foreach ($checks[$kind] as $check)
                         <tr>
                             <td>{{ $health->label($check->check_key) }}</td>
-                            <td><span class="badge {{ $check->status->value }}">{{ $check->status->label() }}</span></td>
+                            <td data-sort="{{ $check->status->severity() }}"><span class="badge {{ $check->status->value }}">{{ $check->status->label() }}</span></td>
                             <td>{{ $check->summary }}</td>
                             <td>
                                 <span class="history" aria-label="Recent runs, oldest first">
@@ -95,14 +95,14 @@
         <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>Certificate</th><th>Port</th><th>Status</th><th>Result</th><th>Recent runs</th></tr>
+                <tr><th>Certificate</th><th>Port</th><th>Status</th><th>Result</th><th data-nosort>Recent runs</th></tr>
             </thead>
             <tbody>
                 @foreach ($bindings as $binding)
                     <tr>
                         <td><a href="/ssl/{{ $binding->certificate->id }}">{{ $binding->certificate->name }}</a><br><span class="hint">{{ $binding->certificate->primaryHostname() }}</span></td>
                         <td>{{ $binding->port }}</td>
-                        <td>
+                        <td data-sort="{{ \App\Enums\HealthStatus::tryFrom((string) $binding->last_status)?->severity() ?? '' }}">
                             @if ($binding->last_status)
                                 <span class="badge {{ $binding->last_status }}">{{ ucfirst($binding->last_status) }}</span>
                             @else

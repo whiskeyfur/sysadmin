@@ -1,6 +1,7 @@
 @extends('layouts.app')
 
 @section('title', $title)
+@section('width', 'wide')
 
 @section('content')
     @if ($notice)
@@ -27,7 +28,7 @@
             <p class="muted">No server has {{ $title }} monitoring turned on.{{ $auth->isAdmin() ? ' Add one, or turn it on when editing a server.' : '' }}</p>
         @else
             <div class="table-wrap">
-            <table>
+            <table class="top">
                 <thead>
                     <tr>
                         <th>Server</th>
@@ -35,7 +36,7 @@
                             <th>{{ $label }}</th>
                         @endforeach
                         <th>Last checked</th>
-                        <th><span class="muted">Actions</span></th>
+                        <th data-nosort><span class="muted">Actions</span></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -67,7 +68,7 @@
                                 <td colspan="{{ count($columns) }}" class="muted">Not checked yet.</td>
                             @else
                                 @foreach ($columns as $key => $label)
-                                    <td>
+                                    <td data-sort="{{ isset($row[$key]) ? $row[$key]->status->severity() : '' }}">
                                         @if (isset($row[$key]))
                                             <span class="badge {{ $row[$key]->status->value }}" title="{{ $row[$key]->summary }}">{{ $row[$key]->status->label() }}</span>
                                             <div class="hint">{{ \Illuminate\Support\Str::limit($row[$key]->summary, 80) }}</div>
@@ -91,11 +92,12 @@
                                     <button type="submit" class="secondary">Test</button>
                                 </form>
                                 @if ($auth->isAdmin())
-                                    <a class="button secondary-link" href="/admin/servers/{{ $server->id }}/edit?back=/{{ $kind === 'ssh' ? 'ssh' : 'mariadb' }}">Edit</a>
-                                    <form method="post" action="/admin/servers/{{ $server->id }}/delete" data-confirm="Delete {{ $server->name }} and its history? This removes all of its monitoring, not just {{ $title }}.">
+                                    <a class="button secondary-link" href="/admin/servers/{{ $server->id }}/edit?kind={{ $kind }}&amp;back=/{{ $kind === 'ssh' ? 'ssh' : 'mariadb' }}">Edit</a>
+                                    <form method="post" action="/admin/servers/{{ $server->id }}/remove" data-confirm="Stop monitoring {{ $title }} on {{ $server->name }}? Its other monitoring stays; a server left with nothing to monitor is deleted.">
                                         @csrf
+                                        <input type="hidden" name="kind" value="{{ $kind }}">
                                         <input type="hidden" name="back" value="/{{ $kind === 'ssh' ? 'ssh' : 'mariadb' }}">
-                                        <button type="submit" class="danger">Delete</button>
+                                        <button type="submit" class="danger">Remove</button>
                                     </form>
                                 @endif
                             </td>

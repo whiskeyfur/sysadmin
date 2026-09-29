@@ -2,9 +2,12 @@
 
 use App\Middleware\RequireAdmin;
 
-// Tracked accounts (right side of the navbar): admins.
+// Tracked accounts: admins. SSH accounts are under the SSH menu, database
+// accounts under MariaDB; the literal paths come before /{id}.
 app()->group('/admin/accounts', ['middleware' => RequireAdmin::class, function () {
-    app()->get('/', 'AccountController@index');
+    app()->get('/', 'AccountController@home');
+    app()->get('/ssh', 'AccountController@ssh');
+    app()->get('/mariadb', 'AccountController@mariadb');
     app()->get('/new', 'AccountController@create');
     app()->post('/', 'AccountController@store');
     app()->get('/{id}', 'AccountController@show');

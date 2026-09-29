@@ -46,7 +46,7 @@ test('the SSH user and a database user with the same name are separate accounts'
 
 test('a shared or LDAP account can be the database login, using its stored password', function () {
     $accounts = new AccountService($this->cipher);
-    $ldap = $accounts->create($this->admin, ['username' => 'CORP\\dbmon', 'type' => 'ldap', 'password' => 'ldap-db-pw!']);
+    $ldap = $accounts->create($this->admin, ['username' => 'CORP\\dbmon', 'type' => 'ldap', 'service' => 'mysql', 'password' => 'ldap-db-pw!']);
     $server = $this->servers->create($this->admin, array_merge($this->input, ['mysql_account_id' => (string) $ldap->id, 'mysql_username' => '', 'mysql_password' => '']));
 
     expect($server->mysql_account_id)->toBe($ldap->id)
@@ -56,7 +56,7 @@ test('a shared or LDAP account can be the database login, using its stored passw
 });
 
 test('a database account without a stored password needs one typed', function () {
-    $shared = (new AccountService($this->cipher))->create($this->admin, ['username' => 'dbmon', 'type' => 'shared']);
+    $shared = (new AccountService($this->cipher))->create($this->admin, ['username' => 'dbmon', 'type' => 'shared', 'service' => 'mysql']);
     $this->servers->create($this->admin, array_merge($this->input, ['mysql_account_id' => (string) $shared->id, 'mysql_password' => '']));
 })->throws(DomainException::class, 'none is stored');
 
@@ -77,9 +77,9 @@ test('database logins count as account use', function () {
 
 test('renaming an account renames the login on servers using it', function () {
     $accounts = new AccountService($this->cipher);
-    $shared = $accounts->create($this->admin, ['username' => 'dbmon', 'type' => 'shared', 'password' => 'pw!']);
+    $shared = $accounts->create($this->admin, ['username' => 'dbmon', 'type' => 'shared', 'service' => 'mysql', 'password' => 'pw!']);
     $server = $this->servers->create($this->admin, array_merge($this->input, ['mysql_account_id' => (string) $shared->id, 'mysql_password' => '']));
-    $accounts->update($this->admin, $shared, ['username' => 'dbmon2', 'type' => 'shared']);
+    $accounts->update($this->admin, $shared, ['username' => 'dbmon2', 'type' => 'shared', 'service' => 'mysql']);
 
     expect($server->fresh()->mysql_username)->toBe('dbmon2');
 });
@@ -200,4 +200,67 @@ test('SSH is optional: a server can exist just to serve SSL certificates', funct
     expect($server->ssh_enabled)->toBeFalse()
         ->and($server->ssh_username)->toBe('')
         ->and($server->ssh_account_id)->toBeNull();
+});
+
+test('SSH and database accounts don\'t mix: an SSH LDAP account can\'t be the database login', function () {
+    $ssh = (new AccountService($this->cipher))->create($this->admin, ['username' => 'CORP\\ops', 'type' => 'ldap', 'service' => 'ssh', 'password' => 'pw!']);
+
+    expect(fn () => $this->servers->create($this->admin, array_merge($this->input, ['mysql_account_id' => (string) $ssh->id, 'mysql_password' => ''])))
+        ->toThrow(DomainException::class, 'database account');
+});
+
+test('a module form turns on and configures only its module, on a new or an existing server', function () {
+    $db = $this->servers->saveModule($this->admin, null, 'mysql', [
+        'name' => 'db-only', 'hostname' => 'db.example.com', 'mysql_port' => '3306', 'mysql_username' => 'mon', 'mysql_password' => 'pw!', 'mysql_tls' => 'off',
+        // Fields of the other module are ignored.
+        'ssh_username' => 'ignored', 'ssh_enabled' => '1',
+    ]);
+
+    expect($db->mysql_enabled)->toBeTrue()
+        ->and($db->ssh_enabled)->toBeFalse()
+        ->and($this->servers->mysqlPassword($db))->toBe('pw!');
+
+    $web = $this->servers->create($this->admin, ['name' => 'web', 'hostname' => 'web.example.com', 'ssh_port' => '22', 'ssh_username' => 'deploy', 'ssh_password_allowed' => '1']);
+    $web->ssh_host_key = 'ssh-ed25519 AAAA';
+    $web->save();
+    $this->servers->saveModule($this->admin, $web, 'mysql', ['mysql_port' => '3307', 'mysql_username' => 'mon', 'mysql_password' => 'pw2!', 'mysql_tls' => 'off']);
+    $web = $web->fresh();
+
+    expect($web->mysql_enabled)->toBeTrue()
+        ->and($web->mysql_port)->toBe(3307)
+        ->and($web->name)->toBe('web')
+        ->and($web->ssh_username)->toBe('deploy')
+        ->and($web->ssh_password_allowed)->toBeTrue()
+        ->and($web->ssh_host_key)->toBe('ssh-ed25519 AAAA');
+});
+
+test('an unticked checkbox in a module form turns that setting off', function () {
+    $web = $this->servers->create($this->admin, ['name' => 'web', 'hostname' => 'web.example.com', 'ssh_port' => '22', 'ssh_username' => 'deploy', 'ssh_password_allowed' => '1']);
+    $this->servers->saveModule($this->admin, $web, 'ssh', ['ssh_port' => '22', 'ssh_username' => 'deploy', 'ssh_password_allowed' => null]);
+
+    expect($web->fresh()->ssh_password_allowed)->toBeFalse();
+});
+
+test('removing a module keeps the rest; a server left with nothing is deleted', function () {
+    $server = $this->servers->create($this->admin, $this->input);
+
+    expect($this->servers->removeModule($this->admin, $server, 'ssh'))->toBeFalse()
+        ->and($server->fresh()->ssh_enabled)->toBeFalse()
+        ->and($server->fresh()->mysql_enabled)->toBeTrue()
+        ->and($this->servers->mysqlPassword($server->fresh()))->toBe('s3cret!')
+        ->and($this->servers->removeModule($this->admin, $server->fresh(), 'mysql'))->toBeTrue()
+        ->and(Server::query()->find($server->id))->toBeNull();
+});
+
+test('a server that still serves a certificate is kept when its last module is removed; deleting it drops the link', function () {
+    $server = $this->servers->create($this->admin, array_merge($this->input, ['mysql_enabled' => '']));
+    $certificate = App\Models\SslCertificate::query()->create(['name' => 'Site', 'hostnames' => 'site.example.com']);
+    App\Models\SslBinding::query()->create(['certificate_id' => $certificate->id, 'server_id' => $server->id, 'port' => 443]);
+
+    expect($this->servers->removeModule($this->admin, $server, 'ssh'))->toBeFalse();
+
+    $this->servers->delete($this->admin, $server->fresh());
+
+    expect(App\Models\SslBinding::query()->where('server_id', $server->id)->exists())->toBeFalse()
+        ->and(App\Models\SslCertificate::query()->find($certificate->id))->not->toBeNull();
 });

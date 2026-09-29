@@ -36,7 +36,7 @@
         @else
             <div class="table-wrap">
             <table>
-                <thead><tr><th>Where</th><th>Status</th><th>Result</th><th>Recent runs</th>@if ($auth->isAdmin())<th></th>@endif</tr></thead>
+                <thead><tr><th>Where</th><th>Status</th><th>Result</th><th data-nosort>Recent runs</th>@if ($auth->isAdmin())<th data-nosort></th>@endif</tr></thead>
                 <tbody>
                     @foreach ($certificate->bindings as $binding)
                         <tr>
@@ -47,7 +47,7 @@
                                     Direct <span class="muted">{{ $certificate->primaryHostname() . ':' . $binding->port }} via DNS</span>
                                 @endif
                             </td>
-                            <td>
+                            <td data-sort="{{ \App\Enums\HealthStatus::tryFrom((string) $binding->last_status)?->severity() ?? '' }}">
                                 @if ($binding->last_status)
                                     <span class="badge {{ $binding->last_status }}">{{ ucfirst($binding->last_status) }}</span>
                                 @else

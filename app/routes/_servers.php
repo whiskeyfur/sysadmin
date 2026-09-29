@@ -6,6 +6,10 @@ use App\Middleware\RequireAdmin;
 // Monitoring (left side of the navbar: SSL, SSH, MariaDB): everyone signed in.
 // The overview of all servers is the home page; /servers shows it too.
 app()->get('/servers', ['middleware' => Authenticate::class, 'ServerController@index']);
+// Reports come first in each menu; registered before /ssl/{id}.
+app()->get('/ssl/reports', ['middleware' => Authenticate::class, 'ReportController@ssl']);
+app()->get('/ssh/reports', ['middleware' => Authenticate::class, 'ReportController@ssh']);
+app()->get('/mariadb/reports', ['middleware' => Authenticate::class, 'ReportController@mariadb']);
 app()->get('/ssh', ['middleware' => Authenticate::class, 'ServerController@ssh']);
 app()->get('/mariadb', ['middleware' => Authenticate::class, 'ServerController@mariadb']);
 app()->get('/servers/{id}', ['middleware' => Authenticate::class, 'ServerController@show']);
@@ -36,6 +40,7 @@ app()->group('/admin/servers', ['middleware' => RequireAdmin::class, function ()
     app()->get('/{id}/edit', 'ServerConfigController@edit');
     app()->post('/{id}', 'ServerConfigController@update');
     app()->post('/{id}/delete', 'ServerConfigController@delete');
+    app()->post('/{id}/remove', 'ServerConfigController@remove');
     app()->get('/{id}/ssh-setup', 'ServerConfigController@sshSetup');
     app()->post('/{id}/ssh-setup', 'ServerConfigController@runSshSetup');
 }]);

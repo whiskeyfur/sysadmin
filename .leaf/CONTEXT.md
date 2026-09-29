@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — Servers managed per module: SSH/MariaDB pages add (new or existing server), edit and remove only their module; MariaDB logins pick database accounts; deleting a server drops its certificate links; menu highlights only the current item (`ServerService::saveModule()`/`removeModule()`, `ServerConfigController`, `servers/form.blade.php`).
+* 2026-09-29 — Accounts split into SSH and database accounts (own menus; mixed legacy accounts split in two); Reports placeholders first in each menu; all tables sortable and filterable; SSL list wider with an Expires column; SSH/MariaDB/overview pages wide and top-aligned (`AccountService::assignServices()`, `ReportController`, `layouts/app.blade.php`, `SslCertificate::expiresAt()`).
+* 2026-09-29 — SSL list: hostnames fold out in a row under each certificate; `config/app.php` published so `VIEWS_CACHE_PATH` gives dev servers their own Blade cache (a shared one broke the live site with touch() errors) (`ssl/index.blade.php`, `config/app.php`).
 * 2026-09-29 — Left navbar items are dropdowns: SSL [Test, Settings], SSH [Test, Accounts, Settings], MariaDB [Test, Settings]; settings split per area (`/admin/settings/{section}`), with new MariaDB threshold settings (`SettingsService::SECTIONS`, `SettingsController`, `HealthCheckService::defaultChecks()`, `layouts/app.blade.php`).
 * 2026-09-29 — Navbar is SSL / SSH / MariaDB / Apache (soon); home is the all-servers overview with MariaDB and SSH shown separately; Configure removed, its tools on those pages (admins); everyone can test and run checks with a 30 s non-admin cooldown; deleting a certificate clears server SSL status (`ServerController`, `servers/kind.blade.php`, `CheckCooldown`, `SslMonitorService::deleteCertificate()`).
-* 2026-09-29 — Database logins are tracked accounts like SSH (local database users, or LDAP/shared picked per server; password on the account, legacy server passwords migrated); new certificates fill in their SAN hostnames from the served certificate (`AccountService`, `ServerService`, `SslMonitorService::addNamesFromCertificate()`, `SslCheckService::certificateNames()`).
-* 2026-09-29 — SSH setup can verify a new host key through the account: log in (app key, else allowed password), read the server's host key files, trust only a match; the same login installs the key (`SshSetupService::setUpByLogin()`, `SshService::connectForVerification()`, `hostKeysOnServer()`).
-* 2026-09-29 — Disk warning/critical levels are admin settings; SSH key install with a password falls back to the chosen account's stored password (`SettingsService`, `DiskCheck`, `HealthCheckService::defaultSshChecks()`, `SshSetupService`).
 
 ---
 

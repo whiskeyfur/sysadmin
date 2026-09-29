@@ -14,7 +14,7 @@
         <div class="actions" style="margin-top: 0; justify-content: space-between">
             <div>
                 <h1>{{ $account->username }}</h1>
-                <p class="muted">{{ $account->typeLabel() }} account{{ $account->homeServer ? ' on ' . $account->homeServer->name : '' }}</p>
+                <p class="muted">{{ $account->serviceLabel() }} · {{ $account->typeLabel() }} account{{ $account->homeServer ? ' on ' . $account->homeServer->name : '' }}</p>
             </div>
             <a class="button secondary-link" href="/admin/accounts/{{ $account->id }}/edit">Edit</a>
         </div>
@@ -109,7 +109,7 @@
     <form method="post" action="/admin/accounts/{{ $account->id }}/delete" data-confirm="Stop tracking {{ $account->username }}? Its stored password and reveal history are deleted.">
         @csrf
         <button type="submit" class="danger">Delete account</button>
-        <a href="/admin/accounts">Back to accounts</a>
+        <a href="{{ $account->serviceName() === 'mysql' ? '/admin/accounts/mariadb' : '/admin/accounts/ssh' }}">Back to {{ $account->serviceName() === 'mysql' ? 'database' : 'SSH' }} accounts</a>
     </form>
 
     <script>

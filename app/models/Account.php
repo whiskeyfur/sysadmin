@@ -15,7 +15,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  * @property string $username
  * @property string $type one of the TYPE_* constants
  * @property int|null $server_id the server a local account belongs to
- * @property string|null $service for local accounts, SERVICE_SSH (system user) or SERVICE_MYSQL (database user); null for LDAP/shared
+ * @property string|null $service SERVICE_SSH (SSH logins) or SERVICE_MYSQL (database logins); SSH and database accounts never mix. Null only on rows from before, see serviceName()
  * @property string|null $password encrypted with SecretCipher
  * @property Carbon|null $password_changed_at when the password was last reset
  * @property int|null $rotation_days change every N days; null = no rotation
@@ -80,20 +80,39 @@ class Account extends Model
     }
 
     /**
-     * Whether a server can log in with this account for $service: LDAP and
-     * shared accounts anywhere, a local one only on its own server and service.
+     * Whether a server can log in with this account for $service: accounts
+     * of that service only; LDAP and shared ones on any server, a local one
+     * only on its own. (LDAP/shared rows from before services existed fit
+     * either until AccountService::syncServers() assigns them.)
      */
     public function usableFor(Server $server, string $service): bool
     {
-        return $this->type !== self::TYPE_LOCAL || ($this->server_id === $server->id && $this->localService() === $service);
+        if ($this->type !== self::TYPE_LOCAL) {
+            return $this->service === null || $this->service === $service;
+        }
+
+        return $this->server_id === $server->id && $this->serviceName() === $service;
     }
 
     /**
-     * What a local account is on its server (rows from before services existed are SSH users).
+     * SSH or database account (rows from before services existed count as SSH).
+     */
+    public function serviceName(): string
+    {
+        return $this->service ?? self::SERVICE_SSH;
+    }
+
+    /**
+     * What a local account is on its server; see serviceName().
      */
     public function localService(): string
     {
-        return $this->service ?? self::SERVICE_SSH;
+        return $this->serviceName();
+    }
+
+    public function serviceLabel(): string
+    {
+        return $this->serviceName() === self::SERVICE_MYSQL ? 'Database' : 'SSH';
     }
 
     public function typeLabel(): string

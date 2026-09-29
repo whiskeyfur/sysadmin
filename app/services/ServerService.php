@@ -8,6 +8,7 @@ use App\Exceptions\AuthorizationException;
 use App\Models\Account;
 use App\Models\HealthCheck;
 use App\Models\Server;
+use App\Models\SslBinding;
 use App\Models\SslCheck;
 use App\Models\User;
 use Carbon\Carbon;
@@ -64,9 +65,105 @@ class ServerService
         $this->fill($server, $input, false);
     }
 
+    /**
+     * Settings of one monitoring module, as they arrive from its form.
+     */
+    public const MODULE_FIELDS = [
+        'ssh' => ['ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed'],
+        'mysql' => ['mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca'],
+    ];
+
+    /**
+     * Turn on and configure one module (SSH or MariaDB) from that module's
+     * own form: on a new server (name and hostname from $input, the other
+     * module off) or on an existing one, whose other settings stay as they are.
+     *
+     * @param 'ssh'|'mysql' $module
+     * @param array<string, mixed> $input
+     *
+     * @throws DomainException with a user-facing message
+     */
+    public function saveModule(User $admin, ?Server $server, string $module, array $input): Server
+    {
+        $settings = $server === null ? ['ssh_enabled' => '', 'mysql_enabled' => ''] : $this->settingsAsInput($server);
+
+        // The module's own fields always count (an unticked checkbox arrives as null);
+        // name and hostname only when given (adding a module to an existing server doesn't).
+        foreach (self::MODULE_FIELDS[$module] as $field) {
+            $settings[$field] = $input[$field] ?? null;
+        }
+
+        foreach (['name', 'hostname'] as $field) {
+            if (isset($input[$field]) && $input[$field] !== '') {
+                $settings[$field] = $input[$field];
+            }
+        }
+
+        $settings[$module . '_enabled'] = '1';
+
+        if ($server === null) {
+            return $this->create($admin, $settings);
+        }
+
+        $this->update($admin, $server, $settings);
+
+        return $server;
+    }
+
+    /**
+     * Turn one module off. A server left with nothing to monitor (no SSH,
+     * no MariaDB, no SSL certificates) is deleted.
+     *
+     * @param 'ssh'|'mysql' $module
+     *
+     * @return bool whether the server was deleted
+     */
+    public function removeModule(User $admin, Server $server, string $module): bool
+    {
+        $settings = $this->settingsAsInput($server);
+        $settings[$module . '_enabled'] = '';
+        $this->update($admin, $server, $settings);
+
+        if (!$server->ssh_enabled && !$server->mysql_enabled && !SslBinding::query()->where('server_id', $server->id)->exists()) {
+            $this->delete($admin, $server);
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * The server's current settings in form-input shape (passwords left
+     * blank, which keeps them).
+     *
+     * @return array<string, mixed>
+     */
+    public function settingsAsInput(Server $server): array
+    {
+        return [
+            'name' => $server->name,
+            'hostname' => $server->hostname,
+            'ssh_enabled' => $server->ssh_enabled ? '1' : '',
+            'ssh_port' => $server->ssh_port,
+            'ssh_account_id' => $server->ssh_account_id,
+            'ssh_username' => $server->ssh_username,
+            'ssh_password_allowed' => $server->ssh_password_allowed ? '1' : '',
+            'mysql_enabled' => $server->mysql_enabled ? '1' : '',
+            'mysql_host' => $server->mysql_host ?? '',
+            'mysql_port' => $server->mysql_port,
+            'mysql_account_id' => $server->mysql_account_id,
+            'mysql_username' => $server->mysql_username ?? '',
+            'mysql_password' => '',
+            'mysql_tls' => $server->mysql_tls,
+            'mysql_tls_ca' => $server->mysql_tls_ca ?? '',
+        ];
+    }
+
     public function delete(User $admin, Server $server): void
     {
         $this->requireAdmin($admin);
+        (new SslMonitorService())->forgetServer($server);
 
         $server->getConnection()->transaction(function () use ($server) {
             HealthCheck::query()->where('server_id', $server->id)->delete();

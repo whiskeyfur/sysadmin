@@ -1,6 +1,7 @@
 @extends('layouts.app')
 
 @section('title', 'Servers')
+@section('width', 'wide')
 
 @section('content')
     @if ($notice)
@@ -29,17 +30,17 @@
         @else
             <p class="muted">The latest result of each kind of monitoring. MariaDB and SSH are separate: a server can be monitored through its database only, over SSH only, or both.</p>
             <div class="table-wrap">
-            <table>
+            <table class="top">
                 <thead>
-                    <tr><th>Server</th><th><a href="/mariadb">MariaDB</a></th><th><a href="/ssh">SSH</a></th><th><a href="/ssl">SSL</a></th><th>Last checked</th></tr>
+                    <tr><th>Server</th><th>MariaDB</th><th>SSH</th><th>SSL</th><th>Last checked</th></tr>
                 </thead>
                 <tbody>
                     @foreach ($servers as $server)
                         <tr>
                             <td><a href="/servers/{{ $server->id }}">{{ $server->name }}</a></td>
-                            <td>@include('servers.summary', ['enabled' => $server->mysql_enabled, 'result' => $summaries[$server->id]['mysql'], 'pending' => 'Not checked yet'])</td>
-                            <td>@include('servers.summary', ['enabled' => $server->ssh_enabled, 'result' => $summaries[$server->id]['ssh'], 'pending' => $server->sshReady() ? 'Not checked yet' : 'Not set up yet'])</td>
-                            <td>
+                            <td data-sort="{{ $summaries[$server->id]['mysql'] ? $summaries[$server->id]['mysql']['status']->severity() : '' }}">@include('servers.summary', ['enabled' => $server->mysql_enabled, 'result' => $summaries[$server->id]['mysql'], 'pending' => 'Not checked yet'])</td>
+                            <td data-sort="{{ $summaries[$server->id]['ssh'] ? $summaries[$server->id]['ssh']['status']->severity() : '' }}">@include('servers.summary', ['enabled' => $server->ssh_enabled, 'result' => $summaries[$server->id]['ssh'], 'pending' => $server->sshReady() ? 'Not checked yet' : 'Not set up yet'])</td>
+                            <td data-sort="{{ ($sslCounts[$server->id] ?? 0) > 0 ? (\App\Enums\HealthStatus::tryFrom((string) $server->last_ssl_status)?->severity() ?? '') : '' }}">
                                 @if (($sslCounts[$server->id] ?? 0) > 0 && $server->last_ssl_status)
                                     <span class="badge {{ $server->last_ssl_status }}">{{ ucfirst($server->last_ssl_status) }}</span>
                                     <div class="hint">{{ $sslCounts[$server->id] }} certificate(s)</div>

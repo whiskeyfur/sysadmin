@@ -1,5 +1,6 @@
 @extends('layouts.app')
 
+@section('width', 'wide')
 @section('title', 'SSL certificates')
 
 @section('content')
@@ -30,20 +31,33 @@
             <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>Certificate</th><th>Status</th><th>Hostnames</th><th>Served on</th><th>Last checked</th></tr>
+                    <tr><th>Certificate</th><th>Status</th><th>Expires</th><th>Served on</th><th>Last checked</th></tr>
                 </thead>
                 <tbody>
                     @foreach ($certificates as $certificate)
+                        @php($hostnames = $certificate->hostnameList())
                         <tr>
-                            <td><a href="/ssl/{{ $certificate->id }}">{{ $certificate->name }}</a></td>
                             <td>
+                                <a href="/ssl/{{ $certificate->id }}">{{ $certificate->name }}</a>
+                                <div><button type="button" class="link fold" aria-expanded="false" aria-controls="hostnames-{{ $certificate->id }}">{{ count($hostnames) }} {{ count($hostnames) === 1 ? 'hostname' : 'hostnames' }}</button></div>
+                            </td>
+                            <td data-sort="{{ \App\Enums\HealthStatus::tryFrom((string) $certificate->last_status)?->severity() ?? -1 }}">
                                 @if ($certificate->last_status)
                                     <span class="badge {{ $certificate->last_status }}">{{ ucfirst($certificate->last_status) }}</span>
                                 @else
                                     <span class="muted">Not checked</span>
                                 @endif
                             </td>
-                            <td class="muted">{{ implode(', ', array_slice($certificate->hostnameList(), 0, 4)) }}{{ count($certificate->hostnameList()) > 4 ? ' +' . (count($certificate->hostnameList()) - 4) : '' }}</td>
+                            @php($expires = $certificate->expiresAt())
+                            <td data-sort="{{ $expires?->getTimestamp() ?? '' }}">
+                                @if ($expires)
+                                    {{ \App\Utils\LocalTime::format($expires, 'Y-m-d') }}
+                                    @php($days = (int) floor(\Carbon\Carbon::now()->diffInDays($expires, false)))
+                                    <div class="hint">{{ $days < 0 ? 'expired ' . abs($days) . (abs($days) === 1 ? ' day' : ' days') . ' ago' : ($days === 0 ? 'today' : 'in ' . $days . ($days === 1 ? ' day' : ' days')) }}</div>
+                                @else
+                                    <span class="muted">Not checked</span>
+                                @endif
+                            </td>
                             <td class="row-actions">
                                 @forelse ($certificate->bindings as $binding)
                                     <span class="badge {{ $binding->last_status ?? 'unknown' }}" title="{{ $binding->last_summary }}">{{ $binding->label() }}</span>
@@ -52,6 +66,15 @@
                                 @endforelse
                             </td>
                             <td class="muted">{{ \App\Utils\LocalTime::format($certificate->last_checked_at) ?: '—' }}</td>
+                        </tr>
+                        <tr id="hostnames-{{ $certificate->id }}" class="fold-row" hidden>
+                            <td colspan="5">
+                                <ul class="hostnames">
+                                    @foreach ($hostnames as $hostname)
+                                        <li><code>{{ $hostname }}</code>@if ($loop->first) <span class="hint">sent as SNI</span>@endif</li>
+                                    @endforeach
+                                </ul>
+                            </td>
                         </tr>
                     @endforeach
                 </tbody>
@@ -90,4 +113,15 @@
             </form>
         </div>
     @endif
+    <script>
+        // Hostnames fold out in a row under their certificate.
+        document.querySelectorAll('button.fold').forEach(function (button) {
+            var row = document.getElementById(button.getAttribute('aria-controls'));
+            button.addEventListener('click', function () {
+                var open = button.getAttribute('aria-expanded') !== 'true';
+                button.setAttribute('aria-expanded', open ? 'true' : 'false');
+                row.hidden = !open;
+            });
+        });
+    </script>
 @endsection

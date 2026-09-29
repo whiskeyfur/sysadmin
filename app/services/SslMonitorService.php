@@ -56,6 +56,25 @@ class SslMonitorService
     }
 
     /**
+     * A server is being deleted: drop where it served certificates, and
+     * recompute those certificates' status.
+     */
+    public function forgetServer(Server $server): void
+    {
+        $bindings = SslBinding::query()->where('server_id', $server->id);
+        $certificateIds = (clone $bindings)->pluck('certificate_id')->unique()->all();
+        SslCheck::query()->whereIn('binding_id', (clone $bindings)->pluck('id')->all())->delete();
+        $bindings->delete();
+
+        /** @var list<SslCertificate> $certificates */
+        $certificates = SslCertificate::query()->whereIn('id', $certificateIds)->get()->all();
+
+        foreach ($certificates as $certificate) {
+            $this->refreshSummaries($certificate, null);
+        }
+    }
+
+    /**
      * @return list<SslBinding>
      */
     public function bindingsFor(Server $server): array

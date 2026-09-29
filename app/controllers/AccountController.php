@@ -12,11 +12,18 @@ use DomainException;
 
 /**
  * Tracked accounts (admins): local, LDAP and shared logins with their
- * current password, reset date, rotation and where they're used.
+ * current password, reset date, rotation and where they're used. SSH
+ * accounts (/admin/accounts/ssh) and database accounts
+ * (/admin/accounts/mariadb) are listed and chosen separately.
  */
 class AccountController extends Controller
 {
     private const FIELDS = ['username', 'type', 'server_id', 'service', 'rotation_days', 'notes'];
+
+    /**
+     * List path per service.
+     */
+    private const LISTS = [Account::SERVICE_SSH => '/admin/accounts/ssh', Account::SERVICE_MYSQL => '/admin/accounts/mariadb'];
 
     private readonly AccountService $accounts;
 
@@ -27,22 +34,29 @@ class AccountController extends Controller
         $this->accounts = new AccountService();
     }
 
-    public function index()
+    public function home()
     {
-        $this->accounts->syncServers(new ServerService());
-
-        $this->response->view('accounts.index', [
-            'auth' => $this->authContext(),
-            'accounts' => $this->accounts->all(),
-            'service' => $this->accounts,
-            'notice' => $this->request->flash('notice'),
-            'error' => $this->request->flash('error'),
-        ]);
+        $this->response->redirect(self::LISTS[Account::SERVICE_SSH]);
     }
 
+    public function ssh()
+    {
+        $this->renderList(Account::SERVICE_SSH);
+    }
+
+    public function mariadb()
+    {
+        $this->renderList(Account::SERVICE_MYSQL);
+    }
+
+    /**
+     * ?service=mysql adds a database account; otherwise an SSH account.
+     */
     public function create()
     {
-        $this->renderForm(new Account(['type' => Account::TYPE_SHARED]));
+        $service = $this->request->get('service') === Account::SERVICE_MYSQL ? Account::SERVICE_MYSQL : Account::SERVICE_SSH;
+
+        $this->renderForm(new Account(['type' => Account::TYPE_SHARED, 'service' => $service]));
     }
 
     public function store()
@@ -168,7 +182,21 @@ class AccountController extends Controller
             return;
         }
 
-        $this->response->withFlash('notice', "Deleted {$account->username}.")->redirect('/admin/accounts');
+        $this->response->withFlash('notice', "Deleted {$account->username}.")->redirect(self::LISTS[$account->serviceName()]);
+    }
+
+    private function renderList(string $service): void
+    {
+        $this->accounts->syncServers(new ServerService());
+
+        $this->response->view('accounts.index', [
+            'auth' => $this->authContext(),
+            'accounts' => $this->accounts->all($service),
+            'area' => $service,
+            'service' => $this->accounts,
+            'notice' => $this->request->flash('notice'),
+            'error' => $this->request->flash('error'),
+        ]);
     }
 
     private function renderShow(Account $account, ?string $revealed = null, ?string $notice = null, ?string $error = null, int $status = 200): void
@@ -215,7 +243,7 @@ class AccountController extends Controller
         $account = Account::query()->find((int) $id);
 
         if (!$account instanceof Account) {
-            $this->response->withFlash('error', 'That account no longer exists.')->redirect('/admin/accounts');
+            $this->response->withFlash('error', 'That account no longer exists.')->redirect(self::LISTS[Account::SERVICE_SSH]);
 
             return null;
         }

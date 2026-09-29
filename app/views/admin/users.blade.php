@@ -40,7 +40,7 @@
         <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>Username</th><th>Role</th><th>Status</th><th><span class="muted">Actions</span></th></tr>
+                <tr><th>Username</th><th>Role</th><th>Status</th><th data-nosort><span class="muted">Actions</span></th></tr>
             </thead>
             <tbody>
                 @foreach ($users as $user)

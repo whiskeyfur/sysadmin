@@ -20,12 +20,19 @@
             }
         }
         * { box-sizing: border-box; }
+        /* Elements with their own display (grids, flex) must still hide. */
+        [hidden] { display: none !important; }
         body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
         header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
         header .brand { font-weight: 700; letter-spacing: .02em; color: inherit; text-decoration: none; }
         header nav { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
         header nav.primary .brand { margin-right: 8px; }
         header nav a[aria-current="page"], header nav summary.current { font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
+        button.link { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; }
+        button.fold::before { content: '▸ '; }
+        button.fold[aria-expanded="true"]::before { content: '▾ '; }
+        tr.fold-row td { background: var(--code-bg); padding-top: 6px; padding-bottom: 6px; }
+        ul.hostnames { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 16px; }
         details.menu { position: relative; }
         details.menu summary { cursor: pointer; list-style: none; color: var(--accent); }
         details.menu summary::-webkit-details-marker { display: none; }
@@ -35,6 +42,13 @@
         details.menu .menu-items a:hover { background: var(--code-bg); }
         main { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
         main.narrow { max-width: 440px; }
+        main.wide { max-width: 1440px; }
+        table.top td { vertical-align: top; }
+        input.table-filter { width: 100%; max-width: 280px; margin: 0 0 10px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+        th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+        th.sortable::after { content: ' ↕'; opacity: .35; }
+        th[aria-sort="ascending"]::after { content: ' ▲'; opacity: 1; }
+        th[aria-sort="descending"]::after { content: ' ▼'; opacity: 1; }
         .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 24px; }
         .card + .card { margin-top: 16px; }
         h1 { font-size: 22px; margin: 0 0 4px; }
@@ -55,6 +69,9 @@
         .button.danger-link:hover, .button.secondary-link:hover, button.secondary:hover, button.danger:hover { background: var(--bg); }
         .row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
         .row-actions button, .row-actions .button { padding: 5px 10px; font-size: 13px; }
+        /* A flex table cell loses its place in the row (misaligned borders): keep cells as cells. */
+        td.row-actions { display: table-cell; }
+        td.row-actions > * { display: inline-block; margin: 3px 6px 3px 0; vertical-align: middle; }
         .table-wrap { overflow-x: auto; }
         .inline-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
         .inline-form label { margin-top: 0; }
@@ -101,20 +118,22 @@
         <nav class="primary" aria-label="Monitoring">
             <a class="brand" href="/">sys</a>
             @isset($auth)
-                {{-- Each area is a menu: its test page, then (admins) its accounts and settings. --}}
+                {{-- Each area is a menu: reports and its test page (everyone), then accounts and settings (admins). --}}
                 @php($menus = [
-                    'SSL' => ['/ssl' => 'Test', '/admin/settings/ssl' => 'Settings'],
-                    'SSH' => ['/ssh' => 'Test', '/admin/accounts' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
-                    'MariaDB' => ['/mariadb' => 'Test', '/admin/settings/mariadb' => 'Settings'],
+                    'SSL' => ['/ssl/reports' => 'Reports', '/ssl' => 'Test', '/admin/settings/ssl' => 'Settings'],
+                    'SSH' => ['/ssh/reports' => 'Reports', '/ssh' => 'Test', '/admin/accounts/ssh' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
+                    'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/admin/accounts/mariadb' => 'Accounts', '/admin/settings/mariadb' => 'Settings'],
                 ])
                 @foreach ($menus as $menu => $items)
-                    @php($current = collect(array_keys($items))->contains(fn ($href) => $path === $href || str_starts_with($path, $href . '/')))
+                    {{-- The most specific item under the current page: /ssh/reports is Reports, not also Test (/ssh). --}}
+                    @php($active = collect(array_keys($items))->filter(fn ($href) => $path === $href || str_starts_with($path, $href . '/'))->sortByDesc(fn ($href) => strlen($href))->first())
+                    @php($current = $active !== null)
                     <details class="menu">
                         <summary @if ($current) class="current" @endif>{{ $menu }}</summary>
                         <div class="menu-items">
                             @foreach ($items as $href => $label)
-                                @if ($label === 'Test' || $auth->isAdmin())
-                                    <a href="{{ $href }}" @if ($path === $href || str_starts_with($path, $href . '/')) aria-current="page" @endif>{{ $label }}</a>
+                                @if (in_array($label, ['Reports', 'Test'], true) || $auth->isAdmin())
+                                    <a href="{{ $href }}" @if ($href === $active) aria-current="page" @endif>{{ $label }}</a>
                                 @endif
                             @endforeach
                         </div>
@@ -137,6 +156,85 @@
         @endisset
     </header>
     <script>
+        // Every table: a filter box above it and sortable column headers. A cell's
+        // data-sort overrides its text (status severity, timestamps); a header
+        // with data-nosort (or no text) isn't sortable. .fold-row rows stay with
+        // the row above them.
+        document.addEventListener('DOMContentLoaded', function () {
+            document.querySelectorAll('.table-wrap > table').forEach(function (table) {
+                var body = table.tBodies[0];
+                var header = table.tHead && table.tHead.rows[0];
+
+                if (!body || !header || body.rows.length === 0) { return; }
+
+                function groups() {
+                    var list = [];
+                    Array.prototype.forEach.call(body.rows, function (row) {
+                        if (row.classList.contains('fold-row') && list.length) { list[list.length - 1].push(row); } else { list.push([row]); }
+                    });
+                    return list;
+                }
+
+                // The cell under column $index, allowing for colspans.
+                function cellAt(row, index) {
+                    var column = 0;
+                    for (var i = 0; i < row.cells.length; i++) {
+                        column += row.cells[i].colSpan;
+                        if (column > index) { return row.cells[i]; }
+                    }
+                    return null;
+                }
+
+                function sortKey(row, index) {
+                    var cell = cellAt(row, index);
+                    if (!cell) { return ''; }
+                    var value = cell.getAttribute('data-sort');
+                    return value !== null ? value : cell.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+                }
+
+                function compare(a, b) {
+                    var numeric = /^-?\d+(\.\d+)?$/;
+                    if (a === '' || b === '') { return a === b ? 0 : (a === '' ? 1 : -1); }
+                    if (numeric.test(a) && numeric.test(b)) { return parseFloat(a) - parseFloat(b); }
+                    return a.localeCompare(b, undefined, { numeric: true });
+                }
+
+                var filter = document.createElement('input');
+                filter.type = 'search';
+                filter.className = 'table-filter';
+                filter.placeholder = 'Filter…';
+                filter.setAttribute('aria-label', 'Filter this table');
+                table.parentNode.parentNode.insertBefore(filter, table.parentNode);
+                filter.addEventListener('input', function () {
+                    var query = filter.value.trim().toLowerCase();
+                    groups().forEach(function (group) {
+                        var show = query === '' || group.some(function (row) { return row.textContent.toLowerCase().indexOf(query) !== -1; });
+                        var fold = group[0].querySelector('button.fold');
+                        group[0].hidden = !show;
+                        group.slice(1).forEach(function (row) { row.hidden = !show || !fold || fold.getAttribute('aria-expanded') !== 'true'; });
+                    });
+                });
+
+                Array.prototype.forEach.call(header.cells, function (th, index) {
+                    if (th.hasAttribute('data-nosort') || th.textContent.trim() === '') { return; }
+                    th.classList.add('sortable');
+                    th.tabIndex = 0;
+                    function sort() {
+                        var ascending = th.getAttribute('aria-sort') !== 'ascending';
+                        Array.prototype.forEach.call(header.cells, function (other) { other.removeAttribute('aria-sort'); });
+                        th.setAttribute('aria-sort', ascending ? 'ascending' : 'descending');
+                        groups()
+                            .sort(function (a, b) { var result = compare(sortKey(a[0], index), sortKey(b[0], index)); return ascending ? result : -result; })
+                            .forEach(function (group) { group.forEach(function (row) { body.appendChild(row); }); });
+                    }
+                    th.addEventListener('click', sort);
+                    th.addEventListener('keydown', function (event) {
+                        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); sort(); }
+                    });
+                });
+            });
+        });
+
         // One menu open at a time; close on outside click or Escape.
         (function () {
             var menus = document.querySelectorAll('details.menu');

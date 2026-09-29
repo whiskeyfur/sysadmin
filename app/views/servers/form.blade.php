@@ -1,12 +1,17 @@
 @extends('layouts.app')
 
 @php($editing = $server->exists)
-@section('title', $editing ? 'Edit ' . $server->name : 'Add server')
+@php($module = ['ssh' => 'SSH', 'mysql' => 'MariaDB'][$kind] ?? null)
+@php($heading = $editing ? 'Edit ' . $server->name . ($module ? ": $module" : '') : ($module ? "Add a server to $module" : 'Add server'))
+@section('title', $heading)
 @section('width', 'narrow')
 
 @section('content')
     <div class="card">
-        <h1>{{ $editing ? 'Edit ' . $server->name : 'Add server' }}</h1>
+        <h1>{{ $heading }}</h1>
+        @if ($module)
+            <p class="muted">Only {{ $module }} settings; the server's other monitoring isn't changed here.</p>
+        @endif
 
         @if ($error)
             <div class="alert error" role="alert">{{ $error }}</div>
@@ -14,8 +19,20 @@
 
         <form method="post" action="{{ $editing ? '/admin/servers/' . $server->id : '/admin/servers' }}">
             <input type="hidden" name="back" value="{{ $back }}">
+            @if ($kind)
+                <input type="hidden" name="kind" value="{{ $kind }}">
+            @endif
             @csrf
-            <div class="grid-2">
+            @if (count($candidates))
+                <label for="existing_id">Server</label>
+                <select id="existing_id" name="existing_id">
+                    <option value="">A new server</option>
+                    @foreach ($candidates as $candidate)
+                        <option value="{{ $candidate->id }}">{{ $candidate->name }} ({{ $candidate->hostname }}), add {{ $module }} to it</option>
+                    @endforeach
+                </select>
+            @endif
+            <div class="grid-2" id="identity_fields">
                 <div>
                     <label for="name">Name</label>
                     <input type="text" id="name" name="name" value="{{ $server->name }}" maxlength="64" required autofocus>
@@ -25,11 +42,18 @@
                     <input type="text" id="hostname" name="hostname" value="{{ $server->hostname }}" autocapitalize="none" required>
                 </div>
             </div>
-            <p class="hint">Turn on SSH and/or MariaDB below; SSL certificates are attached on the SSL page.</p>
+            @unless ($kind)
+                <p class="hint">Turn on SSH and/or MariaDB below; SSL certificates are attached on the SSL page.</p>
+            @endunless
 
+            @if ($kind !== 'mysql')
             <fieldset>
                 <legend>SSH</legend>
-                <label class="check"><input type="checkbox" id="ssh_enabled" name="ssh_enabled" value="1" {{ $server->ssh_enabled ? 'checked' : '' }}> Monitor disk, load and memory over SSH</label>
+                @if ($kind === 'ssh')
+                    <input type="checkbox" id="ssh_enabled" name="ssh_enabled" value="1" checked hidden>
+                @else
+                    <label class="check"><input type="checkbox" id="ssh_enabled" name="ssh_enabled" value="1" {{ $server->ssh_enabled ? 'checked' : '' }}> Monitor disk, load and memory over SSH</label>
+                @endif
                 <div id="ssh_fields">
                 @php($sharedSelected = collect($sharedAccounts)->firstWhere('id', $server->ssh_account_id))
                 <label for="ssh_account_id">Log in as</label>
@@ -39,7 +63,7 @@
                         <option value="{{ $shared->id }}" {{ $sharedSelected && $sharedSelected->id === $shared->id ? 'selected' : '' }}>{{ $shared->username }} ({{ $shared->typeLabel() }})</option>
                     @endforeach
                 </select>
-                <p class="hint">The account is tracked under <a href="/admin/accounts">Accounts</a>, with where it's used and its password if one is set up.</p>
+                <p class="hint">The account is tracked under <a href="/admin/accounts/ssh">SSH accounts</a>, with where it's used and its password if one is set up.</p>
                 <div class="grid-2">
                     <div id="ssh_username_field">
                         <label for="ssh_username">Username</label>
@@ -58,24 +82,30 @@
                 <p class="hint">Changing the hostname, port or username means SSH must be set up again.</p>
                 </div>
             </fieldset>
+            @endif
 
+            @if ($kind !== 'ssh')
             <fieldset>
                 <legend>MariaDB / MySQL</legend>
-                <label class="check"><input type="checkbox" id="mysql_enabled" name="mysql_enabled" value="1" {{ $server->mysql_enabled ? 'checked' : '' }}> Monitor this server's database</label>
+                @if ($kind === 'mysql')
+                    <input type="checkbox" id="mysql_enabled" name="mysql_enabled" value="1" checked hidden>
+                @else
+                    <label class="check"><input type="checkbox" id="mysql_enabled" name="mysql_enabled" value="1" {{ $server->mysql_enabled ? 'checked' : '' }}> Monitor this server's database</label>
+                @endif
                 <div id="mysql_fields">
-                    @php($mysqlShared = collect($sharedAccounts)->firstWhere('id', $server->mysql_account_id))
+                    @php($mysqlShared = collect($mysqlAccounts)->firstWhere('id', $server->mysql_account_id))
                     <label for="mysql_account_id">Log in as</label>
                     <select id="mysql_account_id" name="mysql_account_id">
                         <option value="">A database user on this server (username below)</option>
-                        @foreach ($sharedAccounts as $shared)
+                        @foreach ($mysqlAccounts as $shared)
                             <option value="{{ $shared->id }}" {{ $mysqlShared && $mysqlShared->id === $shared->id ? 'selected' : '' }}>{{ $shared->username }} ({{ $shared->typeLabel() }})</option>
                         @endforeach
                     </select>
-                    <p class="hint">Tracked under <a href="/admin/accounts">Accounts</a> like SSH logins, with its password, rotation and where it's used.</p>
+                    <p class="hint">Tracked under <a href="/admin/accounts/mariadb">database accounts</a>, with its password, rotation and where it's used.</p>
                     <div class="grid-2">
                         <div>
                             <label for="mysql_host">Host</label>
-                            <input type="text" id="mysql_host" name="mysql_host" value="{{ $server->mysql_host }}" autocapitalize="none" placeholder="Same as SSH hostname">
+                            <input type="text" id="mysql_host" name="mysql_host" value="{{ $server->mysql_host }}" autocapitalize="none" placeholder="Same as the server's hostname">
                         </div>
                         <div>
                             <label for="mysql_port">Port</label>
@@ -110,6 +140,9 @@
                 </div>
             </fieldset>
 
+            @endif
+
+            @unless ($kind)
             <fieldset>
                 <legend>SSL</legend>
                 @if (count($bindings))
@@ -124,9 +157,10 @@
                 @endif
                 <p class="hint">Certificates and the ports they're served on are managed on the <a href="/ssl">SSL page</a>.</p>
             </fieldset>
+            @endunless
 
             <div class="actions">
-                <button type="submit">{{ $editing ? 'Save' : 'Add server' }}</button>
+                <button type="submit">{{ $editing ? 'Save' : ($module ? "Add to $module" : 'Add server') }}</button>
                 <a href="{{ $back }}">Cancel</a>
             </div>
         </form>
@@ -134,24 +168,27 @@
 
     <script>
         (function () {
-            var toggle = document.getElementById('mysql_enabled');
-            var fields = document.getElementById('mysql_fields');
-            var tls = document.getElementById('mysql_tls');
-            var sections = [['ssh_enabled', 'ssh_fields']];
-            var account = document.getElementById('ssh_account_id');
-            var mysqlAccount = document.getElementById('mysql_account_id');
+            var byId = function (id) { return document.getElementById(id); };
+            var existing = byId('existing_id');
             function sync() {
-                document.getElementById('ssh_username_field').hidden = account.value !== '';
-                document.getElementById('mysql_username_field').hidden = mysqlAccount.value !== '';
-                fields.hidden = !toggle.checked;
-                sections.forEach(function (pair) { document.getElementById(pair[1]).hidden = !document.getElementById(pair[0]).checked; });
-                document.querySelectorAll('[data-tls]').forEach(function (el) { el.hidden = el.dataset.tls !== tls.value; });
+                [['ssh_account_id', 'ssh_username_field'], ['mysql_account_id', 'mysql_username_field']].forEach(function (pair) {
+                    if (byId(pair[0])) { byId(pair[1]).hidden = byId(pair[0]).value !== ''; }
+                });
+                [['ssh_enabled', 'ssh_fields'], ['mysql_enabled', 'mysql_fields']].forEach(function (pair) {
+                    if (byId(pair[0])) { byId(pair[1]).hidden = !byId(pair[0]).checked; }
+                });
+                if (byId('mysql_tls')) {
+                    document.querySelectorAll('[data-tls]').forEach(function (el) { el.hidden = el.dataset.tls !== byId('mysql_tls').value; });
+                }
+                if (existing) {
+                    // An existing server keeps its name and hostname.
+                    byId('identity_fields').hidden = existing.value !== '';
+                    ['name', 'hostname'].forEach(function (id) { byId(id).required = existing.value === ''; });
+                }
             }
-            toggle.addEventListener('change', sync);
-            tls.addEventListener('change', sync);
-            sections.forEach(function (pair) { document.getElementById(pair[0]).addEventListener('change', sync); });
-            account.addEventListener('change', sync);
-            mysqlAccount.addEventListener('change', sync);
+            ['ssh_account_id', 'mysql_account_id', 'ssh_enabled', 'mysql_enabled', 'mysql_tls', 'existing_id'].forEach(function (id) {
+                if (byId(id)) { byId(id).addEventListener('change', sync); }
+            });
             sync();
         })();
     </script>

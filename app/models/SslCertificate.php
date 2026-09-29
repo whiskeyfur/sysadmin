@@ -38,6 +38,32 @@ class SslCertificate extends Model
     }
 
     /**
+     * When it expires, as seen at the last checks: the earliest expiry of any
+     * place it's served (a server may still serve an older copy). Null
+     * until checked.
+     */
+    public function expiresAt(): ?Carbon
+    {
+        $dates = [];
+
+        foreach ($this->bindings as $binding) {
+            $validTo = $binding->details['valid_to'] ?? null;
+
+            if (is_string($validTo)) {
+                try {
+                    $dates[] = Carbon::createFromFormat('Y-m-d H:i T', $validTo);
+                } catch (\Throwable) {
+                    // an unexpected format: skip it
+                }
+            }
+        }
+
+        $dates = array_filter($dates);
+
+        return $dates === [] ? null : min($dates);
+    }
+
+    /**
      * @return list<string>
      */
     public function hostnameList(): array

@@ -217,3 +217,62 @@ test('local accounts are a system or a database user; the same name can be both 
         ->and(fn () => $this->accounts->create($this->admin, ['username' => 'deploy', 'type' => 'local', 'server_id' => (string) $web->id, 'service' => 'mysql']))->toThrow(DomainException::class, 'already')
         ->and(collect($this->accounts->selectableFor($web, Account::SERVICE_MYSQL))->pluck('id')->all())->toBe([$db->id]);
 });
+
+test('accounts are listed per service', function () {
+    $web = ($this->server)('web');
+    $this->accounts->create($this->admin, ['username' => 'dbmon', 'type' => 'shared', 'service' => 'mysql']);
+
+    expect(collect($this->accounts->all(Account::SERVICE_SSH))->pluck('username')->all())->toBe(['deploy'])
+        ->and(collect($this->accounts->all(Account::SERVICE_MYSQL))->pluck('username')->all())->toBe(['dbmon']);
+});
+
+test('an account used for both SSH and database logins before they were kept apart is split in two', function () {
+    $ldap = $this->accounts->create($this->admin, ['username' => 'CORP\\ops', 'type' => 'ldap', 'password' => 'both-pw!', 'password_changed_at' => '2026-02-01', 'rotation_days' => '90']);
+    $ldap->service = null;
+    $ldap->save();
+    $web = $this->servers->create($this->admin, [
+        'name' => 'web', 'hostname' => 'web.example.com', 'ssh_port' => 22, 'ssh_account_id' => (string) $ldap->id,
+        'mysql_enabled' => '1', 'mysql_account_id' => (string) $ldap->id, 'mysql_password' => '', 'mysql_tls' => 'off',
+    ]);
+    $dbOnly = $this->accounts->create($this->admin, ['username' => 'dbmon', 'type' => 'shared', 'password' => 'db-pw!']);
+    $dbOnly->service = null;
+    $dbOnly->save();
+    $db = $this->servers->create($this->admin, [
+        'name' => 'db', 'hostname' => 'db.example.com', 'ssh_enabled' => '', 'mysql_enabled' => '1', 'mysql_account_id' => (string) $dbOnly->id, 'mysql_password' => '', 'mysql_tls' => 'off',
+    ]);
+
+    $this->accounts->syncServers($this->servers);
+    $this->accounts->syncServers($this->servers);
+    $web = $web->fresh();
+    $copy = Account::query()->find($web->mysql_account_id);
+
+    expect($ldap->fresh()->service)->toBe(Account::SERVICE_SSH)
+        ->and($web->ssh_account_id)->toBe($ldap->id)
+        ->and($copy->id)->not->toBe($ldap->id)
+        ->and($copy->service)->toBe(Account::SERVICE_MYSQL)
+        ->and($copy->username)->toBe('CORP\\ops')
+        ->and($copy->rotation_days)->toBe(90)
+        ->and($copy->password_changed_at->format('Y-m-d'))->toBe($ldap->fresh()->password_changed_at->format('Y-m-d'))
+        ->and($this->servers->mysqlPassword($web))->toBe('both-pw!')
+        ->and($ldap->fresh()->servers->pluck('id')->all())->toBe([$web->id])
+        ->and($dbOnly->fresh()->service)->toBe(Account::SERVICE_MYSQL)
+        ->and($db->fresh()->mysql_account_id)->toBe($dbOnly->id)
+        ->and(Account::query()->where('username', 'CORP\\ops')->count())->toBe(2);
+});
+
+test('an account in use can\'t switch between SSH and database', function () {
+    $web = ($this->server)('web');
+    $deploy = Account::query()->find($web->ssh_account_id);
+
+    expect(fn () => $this->accounts->update($this->admin, $deploy, ['username' => 'deploy', 'type' => 'local', 'server_id' => (string) $web->id, 'service' => 'mysql']))
+        ->toThrow(DomainException::class, 'kept apart');
+});
+
+test('the server form offers only accounts of its own service', function () {
+    $web = ($this->server)('web');
+    $sshLdap = $this->accounts->create($this->admin, ['username' => 'CORP\\ops', 'type' => 'ldap', 'service' => 'ssh']);
+    $dbShared = $this->accounts->create($this->admin, ['username' => 'dbmon', 'type' => 'shared', 'service' => 'mysql']);
+
+    expect(collect($this->accounts->selectableFor($web, Account::SERVICE_SSH))->pluck('id')->all())->toContain($sshLdap->id)->not->toContain($dbShared->id)
+        ->and(collect($this->accounts->selectableFor(null, Account::SERVICE_MYSQL))->pluck('id')->all())->toBe([$dbShared->id]);
+});

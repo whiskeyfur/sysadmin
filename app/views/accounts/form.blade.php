@@ -18,13 +18,20 @@
             <input type="text" id="username" name="username" value="{{ $account->username }}" autocapitalize="none" autocomplete="off" required autofocus>
             <p class="hint">As used to log in, e.g. <code>deploy</code>, <code>CORP\jsmith</code> or <code>jsmith@corp.example</code>.</p>
 
+            <label for="service">Used for</label>
+            <select id="service" name="service">
+                <option value="ssh" {{ $account->serviceName() === 'ssh' ? 'selected' : '' }}>SSH logins</option>
+                <option value="mysql" {{ $account->serviceName() === 'mysql' ? 'selected' : '' }}>Database logins (MariaDB / MySQL)</option>
+            </select>
+            <p class="hint">SSH and database accounts are kept apart: a directory user who logs into both needs one account for each.</p>
+
             <label for="type">Type</label>
             <select id="type" name="type">
                 <option value="shared" {{ $account->type === 'shared' ? 'selected' : '' }}>Shared</option>
                 <option value="ldap" {{ $account->type === 'ldap' ? 'selected' : '' }}>LDAP / directory</option>
                 <option value="local" {{ $account->type === 'local' ? 'selected' : '' }}>Local to one server</option>
             </select>
-            <p class="hint">LDAP and shared accounts can be chosen for SSH or database logins on any server.</p>
+            <p class="hint">LDAP and shared accounts can be chosen on any server; a local one belongs to one server (a system user for SSH, a database user for MariaDB).</p>
 
             <div id="server_field">
                 <label for="server_id">Server</label>
@@ -33,11 +40,6 @@
                     @foreach ($servers as $server)
                         <option value="{{ $server->id }}" {{ $account->server_id === $server->id ? 'selected' : '' }}>{{ $server->name }}</option>
                     @endforeach
-                </select>
-                <label for="service">It's a</label>
-                <select id="service" name="service">
-                    <option value="ssh" {{ $account->type !== 'local' || $account->localService() === 'ssh' ? 'selected' : '' }}>System user (SSH)</option>
-                    <option value="mysql" {{ $account->type === 'local' && $account->localService() === 'mysql' ? 'selected' : '' }}>Database user (MariaDB / MySQL)</option>
                 </select>
             </div>
 

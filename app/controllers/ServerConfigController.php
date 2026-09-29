@@ -45,12 +45,13 @@ class ServerConfigController extends Controller
     }
 
     /**
-     * ?kind=mysql starts with MariaDB on and SSH off (a server reached with
-     * the database client only); ?kind=ssh the other way round.
+     * ?kind=ssh or ?kind=mysql shows that module's form only: for a new
+     * server, or to add the module to an existing one. Without it, the full
+     * form (every module).
      */
     public function create()
     {
-        $kind = $this->request->get('kind');
+        $kind = $this->kind();
 
         $this->renderForm(new Server([
             'ssh_enabled' => $kind !== 'mysql',
@@ -58,20 +59,25 @@ class ServerConfigController extends Controller
             'ssh_port' => 22,
             'mysql_port' => 3306,
             'mysql_tls' => Server::TLS_VERIFY,
-        ]));
+        ]), kind: $kind);
     }
 
     public function store()
     {
+        $kind = $this->kind();
+        $existing = $kind === null ? null : $this->candidate($kind);
+
         try {
-            $server = $this->servers->create($this->authContext()->user, $this->input());
+            $server = $kind === null
+                ? $this->servers->create($this->authContext()->user, $this->input())
+                : $this->servers->saveModule($this->authContext()->user, $existing, $kind, $this->input());
         } catch (DomainException $e) {
-            $this->renderForm(new Server($this->input(withPassword: false)), $e->getMessage());
+            $this->renderForm($existing ?? new Server($this->input(withPassword: false)), $e->getMessage(), $kind);
 
             return;
         }
 
-        if ($server->ssh_enabled) {
+        if ($kind !== 'mysql' && $server->ssh_enabled && !$server->sshReady()) {
             $this->response->redirect("/admin/servers/{$server->id}/ssh-setup");
 
             return;
@@ -85,7 +91,7 @@ class ServerConfigController extends Controller
         $server = $this->findOrRedirect($id);
 
         if ($server !== null) {
-            $this->renderForm($server);
+            $this->renderForm($server, kind: $this->kind());
         }
     }
 
@@ -97,10 +103,16 @@ class ServerConfigController extends Controller
             return;
         }
 
+        $kind = $this->kind();
+
         try {
-            $this->servers->update($this->authContext()->user, $server, $this->input());
+            if ($kind === null) {
+                $this->servers->update($this->authContext()->user, $server, $this->input());
+            } else {
+                $this->servers->saveModule($this->authContext()->user, $server, $kind, $this->input());
+            }
         } catch (DomainException $e) {
-            $this->renderForm($server->fill($this->input(withPassword: false)), $e->getMessage());
+            $this->renderForm($server->fresh() ?? $server, $e->getMessage(), $kind);
 
             return;
         }
@@ -116,6 +128,34 @@ class ServerConfigController extends Controller
             $this->servers->delete($this->authContext()->user, $server);
             $this->response->withFlash('notice', "Deleted {$server->name}.")->redirect($this->back());
         }
+    }
+
+    /**
+     * Stop monitoring one module on a server (from that module's page); the
+     * server is deleted once nothing is left on it.
+     */
+    public function remove($id)
+    {
+        $server = $this->findOrRedirect($id);
+        $kind = $this->kind();
+
+        if ($server === null || $kind === null) {
+            return;
+        }
+
+        $module = $kind === 'ssh' ? 'SSH' : 'MariaDB';
+
+        try {
+            $deleted = $this->servers->removeModule($this->authContext()->user, $server, $kind);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect($this->back());
+
+            return;
+        }
+
+        $this->response->withFlash('notice', $deleted
+            ? "Removed {$server->name}: it had nothing else to monitor, so it was deleted."
+            : "Stopped monitoring {$module} on {$server->name}. Its other monitoring is unchanged.")->redirect($this->back());
     }
 
     public function test($id)
@@ -163,15 +203,24 @@ class ServerConfigController extends Controller
         $this->renderSetup($server->fresh() ?? $server, $result);
     }
 
-    private function renderForm(Server $server, ?string $error = null): void
+    /**
+     * @param 'ssh'|'mysql'|null $kind one module's form, or null for the full form
+     */
+    private function renderForm(Server $server, ?string $error = null, ?string $kind = null): void
     {
         $this->response->view('servers.form', [
             'auth' => $this->authContext(),
             'server' => $server,
+            'kind' => $kind,
+            // Adding a module: servers that don't have it yet can get it.
+            'candidates' => $kind !== null && !$server->exists
+                ? array_values(array_filter($this->servers->all(), fn (Server $s) => !($kind === 'ssh' ? $s->ssh_enabled : $s->mysql_enabled)))
+                : [],
             'back' => $this->back(),
             'caCertificates' => $server->mysql_tls_ca ? (new CaCertificateService())->describe($server->mysql_tls_ca) : [],
             'bindings' => $server->exists ? (new SslMonitorService())->bindingsFor($server) : [],
-            'sharedAccounts' => array_values(array_filter((new AccountService())->selectableFor($server->exists ? $server : null), fn (Account $a) => $a->type !== Account::TYPE_LOCAL)),
+            'sharedAccounts' => $this->sharedAccounts($server, Account::SERVICE_SSH),
+            'mysqlAccounts' => $this->sharedAccounts($server, Account::SERVICE_MYSQL),
             'mysqlPasswordStored' => $server->exists && $server->mysql_enabled && (new ServerService())->hasMysqlPassword($server),
             'error' => $error,
         ], $error === null ? 200 : 422);
@@ -231,6 +280,44 @@ class ServerConfigController extends Controller
         }
 
         return $server;
+    }
+
+    /**
+     * The LDAP and shared accounts the server's SSH or database login can pick.
+     *
+     * @return list<Account>
+     */
+    private function sharedAccounts(Server $server, string $service): array
+    {
+        return array_values(array_filter(
+            (new AccountService())->selectableFor($server->exists ? $server : null, $service),
+            fn (Account $a) => $a->type !== Account::TYPE_LOCAL,
+        ));
+    }
+
+    /**
+     * The module a form or link is about: 'ssh', 'mysql', or null for all.
+     *
+     * @return 'ssh'|'mysql'|null
+     */
+    private function kind(): ?string
+    {
+        $kind = $this->request->get('kind', false);
+
+        return $kind === 'ssh' || $kind === 'mysql' ? $kind : null;
+    }
+
+    /**
+     * The existing server chosen to get a module, if any; it must not have it yet.
+     *
+     * @param 'ssh'|'mysql' $kind
+     */
+    private function candidate(string $kind): ?Server
+    {
+        $id = filter_var($this->request->get('existing_id', false), FILTER_VALIDATE_INT);
+        $server = $id === false ? null : Server::query()->find($id);
+
+        return $server instanceof Server && !($kind === 'ssh' ? $server->ssh_enabled : $server->mysql_enabled) ? $server : null;
     }
 
     /**

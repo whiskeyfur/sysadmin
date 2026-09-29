@@ -21,6 +21,10 @@
                     @csrf
                     <button type="submit">Check now</button>
                 </form>
+                <form method="post" action="/admin/ssl/{{ $certificate->id }}/names">
+                    @csrf
+                    <button type="submit" class="secondary">Get hostnames from the certificate</button>
+                </form>
             @endif
         </div>
 

@@ -16,7 +16,7 @@ use DomainException;
  */
 class AccountController extends Controller
 {
-    private const FIELDS = ['username', 'type', 'server_id', 'rotation_days', 'notes'];
+    private const FIELDS = ['username', 'type', 'server_id', 'service', 'rotation_days', 'notes'];
 
     private readonly AccountService $accounts;
 

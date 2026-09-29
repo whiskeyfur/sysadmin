@@ -73,6 +73,8 @@ class MysqlService
             throw new ServerConnectionException('MySQL connected, but the session is not encrypted. Refusing to use it.');
         }
 
+        $this->servers->recordMysqlUse($server);
+
         return $pdo;
     }
 

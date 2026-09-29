@@ -176,3 +176,44 @@ test('SSH passwords stored on servers before accounts existed move into the acco
         ->and($web->ssh_password)->toBeNull()
         ->and($this->servers->sshPassword($web))->toBe('old-pw!');
 });
+
+test('MySQL passwords stored on servers before accounts existed move into database accounts', function () {
+    $web = $this->servers->create($this->admin, [
+        'name' => 'db', 'hostname' => 'db.example.com', 'ssh_enabled' => '', 'mysql_enabled' => '1', 'mysql_username' => 'mon', 'mysql_password' => 'new-pw!',
+    ]);
+    // As a server looked before accounts: password on the server, no account.
+    $web->mysql_account_id = null;
+    $web->mysql_password = $this->cipher->encrypt('old-db-pw!', 'mysql-password:' . $web->id);
+    $web->save();
+    Account::query()->delete();
+
+    expect($this->servers->mysqlPassword($web->fresh()))->toBe('old-db-pw!');
+
+    $this->accounts->syncServers($this->servers);
+    $this->accounts->syncServers($this->servers);
+    $web = $web->fresh();
+    $account = Account::query()->find($web->mysql_account_id);
+
+    expect(Account::count())->toBe(1)
+        ->and($account->service)->toBe(Account::SERVICE_MYSQL)
+        ->and($web->mysql_password)->toBeNull()
+        ->and($this->servers->mysqlPassword($web))->toBe('old-db-pw!');
+});
+
+test('an account a server logs into its database with cannot be deleted', function () {
+    $db = $this->servers->create($this->admin, [
+        'name' => 'db', 'hostname' => 'db.example.com', 'ssh_enabled' => '', 'mysql_enabled' => '1', 'mysql_username' => 'mon', 'mysql_password' => 'pw!',
+    ]);
+
+    expect(fn () => $this->accounts->delete($this->admin, Account::query()->find($db->mysql_account_id)))->toThrow(DomainException::class, 'database');
+});
+
+test('local accounts are a system or a database user; the same name can be both on one server', function () {
+    $web = ($this->server)('web');
+    $db = $this->accounts->create($this->admin, ['username' => 'deploy', 'type' => 'local', 'server_id' => (string) $web->id, 'service' => 'mysql']);
+
+    expect($db->typeLabel())->toBe('Local database user')
+        ->and(Account::query()->find($web->ssh_account_id)->typeLabel())->toBe('Local system user')
+        ->and(fn () => $this->accounts->create($this->admin, ['username' => 'deploy', 'type' => 'local', 'server_id' => (string) $web->id, 'service' => 'mysql']))->toThrow(DomainException::class, 'already')
+        ->and(collect($this->accounts->selectableFor($web, Account::SERVICE_MYSQL))->pluck('id')->all())->toBe([$db->id]);
+});

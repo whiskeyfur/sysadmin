@@ -62,6 +62,15 @@
                 <legend>MariaDB / MySQL</legend>
                 <label class="check"><input type="checkbox" id="mysql_enabled" name="mysql_enabled" value="1" {{ $server->mysql_enabled ? 'checked' : '' }}> Monitor this server's database</label>
                 <div id="mysql_fields">
+                    @php($mysqlShared = collect($sharedAccounts)->firstWhere('id', $server->mysql_account_id))
+                    <label for="mysql_account_id">Log in as</label>
+                    <select id="mysql_account_id" name="mysql_account_id">
+                        <option value="">A database user on this server (username below)</option>
+                        @foreach ($sharedAccounts as $shared)
+                            <option value="{{ $shared->id }}" {{ $mysqlShared && $mysqlShared->id === $shared->id ? 'selected' : '' }}>{{ $shared->username }} ({{ $shared->typeLabel() }})</option>
+                        @endforeach
+                    </select>
+                    <p class="hint">Tracked under <a href="/admin/accounts">Accounts</a> like SSH logins, with its password, rotation and where it's used.</p>
                     <div class="grid-2">
                         <div>
                             <label for="mysql_host">Host</label>
@@ -72,11 +81,13 @@
                             <input type="text" id="mysql_port" name="mysql_port" value="{{ $server->mysql_port ?: 3306 }}" inputmode="numeric">
                         </div>
                     </div>
-                    <label for="mysql_username">Username</label>
-                    <input type="text" id="mysql_username" name="mysql_username" value="{{ $server->mysql_username }}" autocapitalize="none" autocomplete="off">
-                    <label for="mysql_password">Password</label>
-                    <input type="password" id="mysql_password" name="mysql_password" autocomplete="new-password" placeholder="{{ $server->mysql_password ? 'Unchanged' : '' }}">
-                    <p class="hint">Stored encrypted and never shown again{{ $server->mysql_password ? '; leave blank to keep the current password' : '' }}. A monitoring user with only SELECT and PROCESS is enough.</p>
+                    <div id="mysql_username_field">
+                        <label for="mysql_username">Username</label>
+                        <input type="text" id="mysql_username" name="mysql_username" value="{{ $mysqlShared ? '' : $server->mysql_username }}" autocapitalize="none" autocomplete="off">
+                    </div>
+                    <label for="mysql_password">Password <span class="muted" id="mysql_password_optional">(leave blank to use the password stored in Accounts)</span></label>
+                    <input type="password" id="mysql_password" name="mysql_password" autocomplete="new-password" placeholder="{{ $mysqlPasswordStored ? 'Unchanged' : '' }}">
+                    <p class="hint">Saved (encrypted) as the account's current password under Accounts; admins can reveal it there. Blank keeps the stored one; a new database user needs one. A monitoring user with only SELECT, PROCESS and SLAVE MONITOR is enough.</p>
 
                     <label for="mysql_tls">Encryption (TLS)</label>
                     <select id="mysql_tls" name="mysql_tls">
@@ -127,8 +138,10 @@
             var tls = document.getElementById('mysql_tls');
             var sections = [['ssh_enabled', 'ssh_fields']];
             var account = document.getElementById('ssh_account_id');
+            var mysqlAccount = document.getElementById('mysql_account_id');
             function sync() {
                 document.getElementById('ssh_username_field').hidden = account.value !== '';
+                document.getElementById('mysql_username_field').hidden = mysqlAccount.value !== '';
                 fields.hidden = !toggle.checked;
                 sections.forEach(function (pair) { document.getElementById(pair[1]).hidden = !document.getElementById(pair[0]).checked; });
                 document.querySelectorAll('[data-tls]').forEach(function (el) { el.hidden = el.dataset.tls !== tls.value; });
@@ -137,6 +150,7 @@
             tls.addEventListener('change', sync);
             sections.forEach(function (pair) { document.getElementById(pair[0]).addEventListener('change', sync); });
             account.addEventListener('change', sync);
+            mysqlAccount.addEventListener('change', sync);
             sync();
         })();
     </script>

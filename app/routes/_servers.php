@@ -18,6 +18,7 @@ app()->group('/admin/ssl', ['middleware' => RequireAdmin::class, function () {
     app()->post('/{id}', 'SslController@update');
     app()->post('/{id}/delete', 'SslController@delete');
     app()->post('/{id}/check', 'SslController@check');
+    app()->post('/{id}/names', 'SslController@importNames');
     app()->post('/{id}/bindings', 'SslController@addBinding');
     app()->post('/{id}/bindings/{bindingId}/delete', 'SslController@removeBinding');
 }]);

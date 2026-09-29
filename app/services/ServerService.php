@@ -169,12 +169,44 @@ class ServerService
         $this->accounts()->recordUse($server);
     }
 
+    /**
+     * Note a successful database login with the server's account.
+     */
+    public function recordMysqlUse(Server $server): void
+    {
+        $this->accounts()->recordUse($server, Account::SERVICE_MYSQL);
+    }
+
     private function accounts(): AccountService
     {
         return $this->accounts ??= new AccountService($this->cipher);
     }
 
+    /**
+     * The password of the server's database account (or, until the accounts
+     * are synced, one stored on the server from before accounts existed).
+     */
     public function mysqlPassword(Server $server): ?string
+    {
+        $account = $this->accounts()->forMysql($server);
+        $password = $account === null ? null : $this->accounts()->password($account);
+
+        return $password ?? $this->legacyMysqlPassword($server);
+    }
+
+    /**
+     * Whether the server's database account has a password (without decrypting it).
+     */
+    public function hasMysqlPassword(Server $server): bool
+    {
+        return ($this->accounts()->forMysql($server)?->hasPassword() ?? false) || $server->mysql_password !== null;
+    }
+
+    /**
+     * A MySQL password stored on the server itself, from before accounts
+     * existed; AccountService::syncServers() moves it into the account.
+     */
+    public function legacyMysqlPassword(Server $server): ?string
     {
         return $server->mysql_password === null ? null : $this->cipher->decrypt($server->mysql_password, $this->passwordContext($server));
     }
@@ -258,6 +290,9 @@ class ServerService
         }
         $server->mysql_enabled = $mysqlEnabled;
 
+        $mysqlAccountId = filter_var($input['mysql_account_id'] ?? null, FILTER_VALIDATE_INT) ?: null;
+        $mysqlUsername = '';
+
         if ($mysqlEnabled) {
             $mysqlHost = strtolower(trim((string) ($input['mysql_host'] ?? '')));
             $mysqlUsername = trim((string) ($input['mysql_username'] ?? ''));
@@ -267,12 +302,20 @@ class ServerService
                 $this->requireHost($mysqlHost, 'MySQL host');
             }
 
-            if ($mysqlUsername === '' || mb_strlen($mysqlUsername) > 80) {
-                throw new DomainException('Enter the MySQL username (up to 80 characters).');
+            if ($mysqlAccountId !== null) {
+                $chosen = Account::query()->find($mysqlAccountId);
+
+                if (!$chosen instanceof Account || !$chosen->usableFor($server, Account::SERVICE_MYSQL)) {
+                    throw new DomainException('Choose a database account this server can use.');
+                }
+
+                $mysqlUsername = $chosen->username;
+            } elseif ($mysqlUsername === '' || mb_strlen($mysqlUsername) > 80) {
+                throw new DomainException('Enter the MySQL username (up to 80 characters), or choose an account.');
             }
 
-            if ($mysqlPassword === '' && $server->mysql_password === null) {
-                throw new DomainException('Enter the MySQL password.');
+            if ($mysqlPassword === '' && !$this->mysqlPasswordKnown($server, $mysqlAccountId, $mysqlUsername)) {
+                throw new DomainException("Enter the MySQL password; none is stored for $mysqlUsername.");
             }
 
             $tls = (string) ($input['mysql_tls'] ?? Server::TLS_VERIFY);
@@ -287,12 +330,18 @@ class ServerService
 
             $server->mysql_host = $mysqlHost !== '' ? $mysqlHost : null;
             $server->mysql_port = $this->port($input['mysql_port'] ?? 3306, 'MySQL port');
+            if ($server->mysql_username !== $mysqlUsername) {
+                // A password stored on the server belonged to the old user.
+                $server->mysql_password = null;
+            }
+
             $server->mysql_username = $mysqlUsername;
         } else {
-            // Don't keep credentials that aren't used.
+            // Don't keep credentials that aren't used (the account stays tracked).
             $server->mysql_host = null;
             $server->mysql_username = null;
             $server->mysql_password = null;
+            $server->mysql_account_id = null;
             $server->mysql_tls = Server::TLS_OFF;
             $server->mysql_tls_ca = null;
         }
@@ -307,12 +356,35 @@ class ServerService
             $this->accounts()->assign($server, $sshAccountId, $sshUsername);
         }
 
-        // A blank password on edit keeps the stored one. Encrypted after saving
-        // so a new server's context can include its id.
-        if ($mysqlEnabled && $mysqlPassword !== '') {
-            $server->mysql_password = $this->cipher->encrypt($mysqlPassword, $this->passwordContext($server));
-            $server->save();
+        if ($mysqlEnabled) {
+            $account = $this->accounts()->assign($server, $mysqlAccountId, $mysqlUsername, Account::SERVICE_MYSQL);
+
+            // A blank password keeps the stored one; a typed one becomes the account's current password.
+            if ($mysqlPassword !== '') {
+                $this->accounts()->storePassword($account, $mysqlPassword);
+                $server->mysql_password = null;
+                $server->save();
+            }
         }
+    }
+
+    /**
+     * Whether a password is already stored for the database login the form chose.
+     */
+    private function mysqlPasswordKnown(Server $server, ?int $accountId, string $username): bool
+    {
+        if ($accountId !== null) {
+            return Account::query()->find($accountId)?->hasPassword() ?? false;
+        }
+
+        if (!$server->exists) {
+            return false;
+        }
+
+        $local = Account::query()->where('type', Account::TYPE_LOCAL)->where('server_id', $server->id)->where('username', $username)->get()
+            ->first(fn (Account $a) => $a->localService() === Account::SERVICE_MYSQL);
+
+        return ($local?->hasPassword() ?? false) || ($server->mysql_password !== null && $server->mysql_username === $username);
     }
 
     private function port(mixed $value, string $label): int

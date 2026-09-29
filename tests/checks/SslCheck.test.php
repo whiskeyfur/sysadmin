@@ -94,6 +94,7 @@ test('real TLS handshakes against a local openssl server', function () {
     try {
         $goodPort = $start('good', 'DNS:localhost');
         $wrongPort = $start('wrong', 'DNS:other.test');
+        $multiPort = $start('multi', 'DNS:Shop.Test, DNS:www.shop.test, DNS:*.cdn.shop.test, IP:127.0.0.1');
         $ssl = new SslCheckService("$dir/ca.pem");
 
         $good = $ssl->check('localhost', $goodPort);
@@ -104,7 +105,11 @@ test('real TLS handshakes against a local openssl server', function () {
             ->and($good->status)->toBe(HealthStatus::Ok)
             ->and($good->details['protocol'])->toStartWith('TLSv1')
             ->and($wrong->summary)->toContain('issued for other.test, not localhost')
-            ->and($untrusted->summary)->toContain('not trusted');
+            ->and($untrusted->summary)->toContain('not trusted')
+            // SAN names are read from any certificate (untrusted here), connecting to the address and sending the name as SNI.
+            ->and((new SslCheckService("$dir/good.pem"))->certificateNames('shop.test', $multiPort, '127.0.0.1'))->toBe(['shop.test', 'www.shop.test', '*.cdn.shop.test'])
+            ->and($ssl->certificateNames('localhost', $wrongPort))->toBe(['other.test'])
+            ->and($ssl->certificateNames('localhost', 1))->toBeNull();
     } finally {
         array_map('proc_terminate', $servers);
         array_map('unlink', glob("$dir/*") ?: []);

@@ -2,8 +2,10 @@
 
 use App\DTOs\HostKey;
 use App\Exceptions\AuthorizationException;
+use App\Models\Account;
 use App\Models\Server;
 use App\Models\User;
+use App\Services\AccountService;
 use App\Services\ServerService;
 
 beforeEach(function () {
@@ -16,15 +18,70 @@ beforeEach(function () {
     ];
 });
 
-test('admins create servers; the MySQL password is encrypted and hidden', function () {
+test('admins create servers; the MySQL login becomes a local database user with its password encrypted', function () {
     $server = $this->servers->create($this->admin, $this->input);
+    $account = Account::query()->find($server->mysql_account_id);
 
     expect($server->hostname)->toBe('web1.example.com')
         ->and($server->ssh_port)->toBe(2222)
         ->and($server->mysqlHost())->toBe('web1.example.com')
-        ->and($server->mysql_password)->not->toContain('s3cret')
+        ->and($server->mysql_password)->toBeNull()
+        ->and($account->type)->toBe(Account::TYPE_LOCAL)
+        ->and($account->service)->toBe(Account::SERVICE_MYSQL)
+        ->and($account->username)->toBe('sys_monitor')
+        ->and($account->server_id)->toBe($server->id)
+        ->and($account->password)->not->toContain('s3cret')
         ->and($this->servers->mysqlPassword($server))->toBe('s3cret!')
-        ->and($server->toArray())->not->toHaveKey('mysql_password');
+        ->and($account->toArray())->not->toHaveKey('password');
+});
+
+test('the SSH user and a database user with the same name are separate accounts', function () {
+    $server = $this->servers->create($this->admin, array_merge($this->input, ['ssh_username' => 'monitor', 'mysql_username' => 'monitor']));
+
+    expect($server->ssh_account_id)->not->toBe($server->mysql_account_id)
+        ->and(Account::query()->find($server->ssh_account_id)->localService())->toBe(Account::SERVICE_SSH)
+        ->and($this->servers->mysqlPassword($server))->toBe('s3cret!')
+        ->and($this->servers->sshPassword($server))->toBeNull();
+});
+
+test('a shared or LDAP account can be the database login, using its stored password', function () {
+    $accounts = new AccountService($this->cipher);
+    $ldap = $accounts->create($this->admin, ['username' => 'CORP\\dbmon', 'type' => 'ldap', 'password' => 'ldap-db-pw!']);
+    $server = $this->servers->create($this->admin, array_merge($this->input, ['mysql_account_id' => (string) $ldap->id, 'mysql_username' => '', 'mysql_password' => '']));
+
+    expect($server->mysql_account_id)->toBe($ldap->id)
+        ->and($server->mysql_username)->toBe('CORP\\dbmon')
+        ->and($this->servers->mysqlPassword($server))->toBe('ldap-db-pw!')
+        ->and($ldap->servers->pluck('id')->all())->toBe([$server->id]);
+});
+
+test('a database account without a stored password needs one typed', function () {
+    $shared = (new AccountService($this->cipher))->create($this->admin, ['username' => 'dbmon', 'type' => 'shared']);
+    $this->servers->create($this->admin, array_merge($this->input, ['mysql_account_id' => (string) $shared->id, 'mysql_password' => '']));
+})->throws(DomainException::class, 'none is stored');
+
+test('another server\'s local user, or an SSH user, is not a usable database account', function () {
+    $server = $this->servers->create($this->admin, $this->input);
+    $other = $this->servers->create($this->admin, array_merge($this->input, ['name' => 'web-2']));
+
+    expect(fn () => $this->servers->update($this->admin, $server, array_merge($this->input, ['mysql_account_id' => (string) $server->ssh_account_id])))->toThrow(DomainException::class, 'database account')
+        ->and(fn () => $this->servers->update($this->admin, $server, array_merge($this->input, ['mysql_account_id' => (string) $other->mysql_account_id])))->toThrow(DomainException::class, 'database account');
+});
+
+test('database logins count as account use', function () {
+    $server = $this->servers->create($this->admin, $this->input);
+    $this->servers->recordMysqlUse($server);
+
+    expect(Account::query()->find($server->mysql_account_id)->servers->first()->pivot->last_used_at)->not->toBeNull();
+});
+
+test('renaming an account renames the login on servers using it', function () {
+    $accounts = new AccountService($this->cipher);
+    $shared = $accounts->create($this->admin, ['username' => 'dbmon', 'type' => 'shared', 'password' => 'pw!']);
+    $server = $this->servers->create($this->admin, array_merge($this->input, ['mysql_account_id' => (string) $shared->id, 'mysql_password' => '']));
+    $accounts->update($this->admin, $shared, ['username' => 'dbmon2', 'type' => 'shared']);
+
+    expect($server->fresh()->mysql_username)->toBe('dbmon2');
 });
 
 test('invalid input is rejected with a message', function (array $override, string $message) {

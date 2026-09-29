@@ -24,7 +24,7 @@ use DomainException;
  */
 class ServerConfigController extends Controller
 {
-    private const FIELDS = ['name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_tls', 'mysql_tls_ca'];
+    private const FIELDS = ['name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_tls', 'mysql_tls_ca'];
 
     private readonly ServerService $servers;
 
@@ -156,6 +156,7 @@ class ServerConfigController extends Controller
             'caCertificates' => $server->mysql_tls_ca ? (new CaCertificateService())->describe($server->mysql_tls_ca) : [],
             'bindings' => $server->exists ? (new SslMonitorService())->bindingsFor($server) : [],
             'sharedAccounts' => array_values(array_filter((new AccountService())->selectableFor($server->exists ? $server : null), fn (Account $a) => $a->type !== Account::TYPE_LOCAL)),
+            'mysqlPasswordStored' => $server->exists && $server->mysql_enabled && (new ServerService())->hasMysqlPassword($server),
             'error' => $error,
         ], $error === null ? 200 : 422);
     }

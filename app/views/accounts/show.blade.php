@@ -35,15 +35,17 @@
     <div class="card">
         <h2>Used on</h2>
         @if ($account->servers->isEmpty())
-            <p class="muted">No servers use this account yet. Choose it as a server's SSH account under Configure.</p>
+            <p class="muted">No servers use this account yet. Choose it as a server's SSH or database login under Configure.</p>
         @else
             <div class="table-wrap">
             <table>
-                <thead><tr><th>Server</th><th>App last logged in</th></tr></thead>
+                <thead><tr><th>Server</th><th>Used for</th><th>App last logged in</th></tr></thead>
                 <tbody>
                     @foreach ($account->servers as $server)
                         <tr>
-                            <td><a href="/servers/{{ $server->id }}">{{ $server->name }}</a>{{ $server->ssh_account_id === $account->id ? '' : ' (no longer its SSH account)' }}</td>
+                            @php($uses = array_keys(array_filter(['SSH' => $server->ssh_account_id === $account->id, 'Database' => $server->mysql_account_id === $account->id])))
+                            <td><a href="/servers/{{ $server->id }}">{{ $server->name }}</a></td>
+                            <td>{{ $uses ? implode(', ', $uses) : 'No longer used' }}</td>
                             <td class="muted">{{ $server->pivot->last_used_at ? \App\Utils\LocalTime::format(\Carbon\Carbon::parse($server->pivot->last_used_at, 'UTC')) : 'Not yet' }}</td>
                         </tr>
                     @endforeach

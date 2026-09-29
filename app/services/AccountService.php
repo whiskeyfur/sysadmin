@@ -16,7 +16,9 @@ use DomainException;
 use Psr\Clock\ClockInterface;
 
 /**
- * Tracked accounts: local accounts on a server, LDAP and shared accounts.
+ * Tracked accounts: local accounts on a server (system users for SSH,
+ * database users for MariaDB/MySQL), LDAP and shared accounts (usable for
+ * either).
  * Each has a current password (encrypted, revealed to admins only after
  * they confirm with an authenticator code, every reveal logged), when it was last
  * reset and a rotation period. Tracks which accounts log into which servers
@@ -57,15 +59,15 @@ class AccountService
     }
 
     /**
-     * LDAP and shared accounts, plus the given server's own local accounts:
-     * the accounts that server can log in with.
+     * LDAP and shared accounts, plus the given server's own local accounts
+     * for $service: the accounts that server can log in with.
      *
      * @return list<Account>
      */
-    public function selectableFor(?Server $server): array
+    public function selectableFor(?Server $server, string $service = Account::SERVICE_SSH): array
     {
         return Account::query()->get()
-            ->filter(fn (Account $a) => $a->type !== Account::TYPE_LOCAL || ($server?->id !== null && $a->server_id === $server->id))
+            ->filter(fn (Account $a) => $a->type !== Account::TYPE_LOCAL || ($server?->id !== null && $a->usableFor($server, $service)))
             ->sortBy(fn (Account $a) => [$a->type, strtolower($a->username)])
             ->values()
             ->all();
@@ -119,7 +121,8 @@ class AccountService
 
     /**
      * Save a password without an admin check, for the app's own flows (SSH
-     * setup storing the password it was given).
+     * setup storing the password it was given, a MySQL password entered on
+     * the server form).
      */
     public function storePassword(Account $account, string $password, ?Carbon $changedAt = null): void
     {
@@ -182,10 +185,10 @@ class AccountService
     public function delete(User $admin, Account $account): void
     {
         $this->requireAdmin($admin);
-        $users = Server::query()->where('ssh_account_id', $account->id)->pluck('name');
+        $users = Server::query()->where('ssh_account_id', $account->id)->orWhere('mysql_account_id', $account->id)->pluck('name');
 
         if ($users->isNotEmpty()) {
-            throw new DomainException('Servers still log in with this account: ' . $users->implode(', ') . '. Change their SSH account first.');
+            throw new DomainException('Servers still log in with this account: ' . $users->implode(', ') . '. Change their SSH or database account first.');
         }
 
         $account->getConnection()->transaction(function () use ($account) {
@@ -235,51 +238,47 @@ class AccountService
      */
     public function forServer(Server $server): ?Account
     {
-        if (!$server->ssh_enabled) {
-            return null;
-        }
-
-        $account = $server->ssh_account_id !== null ? Account::query()->find($server->ssh_account_id) : null;
-
-        if ($account instanceof Account) {
-            return $account;
-        }
-
-        return $this->assignLocal($server, $server->ssh_username);
+        return $this->accountFor($server, Account::SERVICE_SSH);
     }
 
     /**
-     * Point a server's SSH at an account: an existing LDAP/shared (or its own
-     * local) account by id, or else a local account for $username, created if
-     * needed. Keeps ssh_username in step with the account.
+     * The account a server logs into its database with; for older servers, a
+     * local database user is created from the MySQL username.
+     */
+    public function forMysql(Server $server): ?Account
+    {
+        return $this->accountFor($server, Account::SERVICE_MYSQL);
+    }
+
+    /**
+     * Point a server's SSH or database login at an account: an existing
+     * LDAP/shared (or its own local) account by id, or else a local account
+     * for $username, created if needed. Keeps the server's username in step.
      *
      * @throws DomainException if the chosen account can't be used on this server
      */
-    public function assign(Server $server, ?int $accountId, string $username): Account
+    public function assign(Server $server, ?int $accountId, string $username, string $service = Account::SERVICE_SSH): Account
     {
         if ($accountId !== null) {
             $account = Account::query()->find($accountId);
 
-            if (!$account instanceof Account || ($account->type === Account::TYPE_LOCAL && $account->server_id !== $server->id)) {
+            if (!$account instanceof Account || !$account->usableFor($server, $service)) {
                 throw new DomainException('That account can\'t be used on this server.');
             }
 
-            return $this->link($server, $account);
+            return $this->link($server, $account, $service);
         }
 
-        return $this->assignLocal($server, $username);
+        return $this->assignLocal($server, $username, $service);
     }
 
     /**
-     * Note that the app just logged into a server with its SSH account.
+     * Note that the app just logged into a server with its SSH or database account.
      */
-    public function recordUse(Server $server): void
+    public function recordUse(Server $server, string $service = Account::SERVICE_SSH): void
     {
-        if ($server->ssh_account_id === null) {
-            return;
-        }
-
-        $account = Account::query()->find($server->ssh_account_id);
+        $id = $service === Account::SERVICE_MYSQL ? $server->mysql_account_id : $server->ssh_account_id;
+        $account = $id === null ? null : Account::query()->find($id);
 
         if ($account instanceof Account) {
             $account->servers()->syncWithoutDetaching([$server->id => ['last_used_at' => Carbon::instance($this->clock->now())]]);
@@ -287,23 +286,19 @@ class AccountService
     }
 
     /**
-     * Give every SSH server an account, and move SSH passwords stored on
-     * servers (before accounts existed) into those accounts. Idempotent.
+     * Give every SSH and database login an account, and move passwords
+     * stored on servers (before accounts existed) into those accounts.
+     * Idempotent.
      */
     public function syncServers(ServerService $servers): void
     {
-        foreach (Server::query()->where('ssh_enabled', true)->get() as $server) {
-            $account = $this->forServer($server);
+        foreach (Server::query()->where('ssh_enabled', true)->orWhere('mysql_enabled', true)->get() as $server) {
+            if ($server->ssh_enabled) {
+                $this->adopt($this->forServer($server), $server, 'ssh_password', fn () => $servers->legacySshPassword($server));
+            }
 
-            if ($account !== null && $server->ssh_password !== null) {
-                $legacy = $servers->legacySshPassword($server);
-
-                if ($legacy !== null && $account->password === null) {
-                    $this->storePassword($account, $legacy);
-                }
-
-                $server->ssh_password = null;
-                $server->save();
+            if ($server->mysql_enabled) {
+                $this->adopt($this->forMysql($server), $server, 'mysql_password', fn () => $servers->legacyMysqlPassword($server));
             }
         }
     }
@@ -317,24 +312,66 @@ class AccountService
             ->sortByDesc('revealed_at')->take($limit)->values()->all();
     }
 
-    private function assignLocal(Server $server, string $username): Account
+    private function accountFor(Server $server, string $service): ?Account
     {
-        $account = Account::query()
+        $mysql = $service === Account::SERVICE_MYSQL;
+
+        if (!($mysql ? $server->mysql_enabled : $server->ssh_enabled)) {
+            return null;
+        }
+
+        $id = $mysql ? $server->mysql_account_id : $server->ssh_account_id;
+        $account = $id !== null ? Account::query()->find($id) : null;
+
+        if ($account instanceof Account) {
+            return $account;
+        }
+
+        return $this->assignLocal($server, (string) ($mysql ? $server->mysql_username : $server->ssh_username), $service);
+    }
+
+    /**
+     * Move a password stored on the server (legacy column) into its account.
+     *
+     * @param callable(): ?string $legacy
+     */
+    private function adopt(?Account $account, Server $server, string $column, callable $legacy): void
+    {
+        if ($account === null || $server->{$column} === null) {
+            return;
+        }
+
+        $password = $legacy();
+
+        if ($password !== null && $account->password === null) {
+            $this->storePassword($account, $password);
+        }
+
+        $server->{$column} = null;
+        $server->save();
+    }
+
+    private function assignLocal(Server $server, string $username, string $service): Account
+    {
+        $accounts = Account::query()
             ->where('type', Account::TYPE_LOCAL)
             ->where('server_id', $server->id)
             ->where('username', $username)
-            ->first() ?? Account::query()->create(['username' => $username, 'type' => Account::TYPE_LOCAL, 'server_id' => $server->id]);
+            ->get();
+        $account = $accounts->first(fn (Account $a) => $a->localService() === $service)
+            ?? Account::query()->create(['username' => $username, 'type' => Account::TYPE_LOCAL, 'server_id' => $server->id, 'service' => $service]);
 
-        return $this->link($server, $account);
+        return $this->link($server, $account, $service);
     }
 
-    private function link(Server $server, Account $account): Account
+    private function link(Server $server, Account $account, string $service): Account
     {
         $account->servers()->syncWithoutDetaching([$server->id]);
+        [$idColumn, $userColumn] = $service === Account::SERVICE_MYSQL ? ['mysql_account_id', 'mysql_username'] : ['ssh_account_id', 'ssh_username'];
 
-        if ($server->ssh_account_id !== $account->id || $server->ssh_username !== $account->username) {
-            $server->ssh_account_id = $account->id;
-            $server->ssh_username = $account->username;
+        if ($server->{$idColumn} !== $account->id || $server->{$userColumn} !== $account->username) {
+            $server->{$idColumn} = $account->id;
+            $server->{$userColumn} = $account->username;
             $server->save();
         }
 
@@ -349,6 +386,7 @@ class AccountService
         $username = trim((string) ($input['username'] ?? ''));
         $type = (string) ($input['type'] ?? $account->type ?? '');
         $serverId = filter_var($input['server_id'] ?? null, FILTER_VALIDATE_INT) ?: null;
+        $service = (string) ($input['service'] ?? $account->service ?? Account::SERVICE_SSH);
         $rotation = trim((string) ($input['rotation_days'] ?? ''));
 
         if ($username === '' || mb_strlen($username) > 256 || preg_match('/\s/', $username) === 1) {
@@ -363,17 +401,22 @@ class AccountService
             if ($serverId === null || !Server::query()->whereKey($serverId)->exists()) {
                 throw new DomainException('Choose the server this local account belongs to.');
             }
+
+            if (!in_array($service, Account::SERVICES, true)) {
+                throw new DomainException('Choose whether it\'s a system (SSH) or a database user.');
+            }
         } else {
             $serverId = null;
+            $service = null;
         }
 
-        $duplicate = Account::query()->where('type', $type)->where('username', $username)->where('id', '!=', $account->id ?? 0);
+        $duplicates = Account::query()->where('type', $type)->where('username', $username)->where('id', '!=', $account->id ?? 0);
 
         if ($type === Account::TYPE_LOCAL) {
-            $duplicate->where('server_id', $serverId);
+            $duplicates->where('server_id', $serverId);
         }
 
-        if ($duplicate->exists()) {
+        if ($duplicates->get()->contains(fn (Account $a) => $type !== Account::TYPE_LOCAL || $a->localService() === $service)) {
             throw new DomainException('That account is already tracked.');
         }
 
@@ -384,19 +427,35 @@ class AccountService
         $account->username = $username;
         $account->type = $type;
         $account->server_id = $serverId;
+        $account->service = $service;
         $account->rotation_days = $rotation === '' ? null : (int) $rotation;
         $account->notes = mb_substr(trim((string) ($input['notes'] ?? '')), 0, 2000) ?: null;
 
-        if ($account->exists && $account->isDirty('server_id')) {
-            // A local account moved to another server no longer logs into its old one.
-            $account->servers()->detach();
+        if ($account->exists && $account->isDirty('server_id', 'service')) {
+            // A local account moved to another server or service no longer logs into its old one.
+            $this->releaseServers($account);
         }
 
         $account->save();
 
+        // Servers log in with the account's current username.
+        Server::query()->where('ssh_account_id', $account->id)->update(['ssh_username' => $username]);
+        Server::query()->where('mysql_account_id', $account->id)->update(['mysql_username' => $username]);
+
         if ($type === Account::TYPE_LOCAL) {
             $account->servers()->syncWithoutDetaching([$serverId]);
         }
+    }
+
+    /**
+     * Unlink a local account from the servers it logged into; those servers
+     * get a fresh local account for the same username when next used.
+     */
+    private function releaseServers(Account $account): void
+    {
+        $account->servers()->detach();
+        Server::query()->where('ssh_account_id', $account->id)->update(['ssh_account_id' => null]);
+        Server::query()->where('mysql_account_id', $account->id)->update(['mysql_account_id' => null]);
     }
 
     private function date(mixed $value): ?Carbon

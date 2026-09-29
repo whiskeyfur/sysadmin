@@ -1,6 +1,8 @@
 # Tracked accounts (AccountService): logins that exist on servers or in a
 # directory, with their current password and rotation schedule.
 # type: "local" (belongs to server_id), "ldap" or "shared".
+# service: what a local account is on its server: "ssh" (a system user) or "mysql" (a database user).
+#   LDAP and shared accounts can be used for either; their service is null.
 # password: encrypted with SecretCipher ("account-password:<id>"); revealed to
 #   admins only, and every reveal is logged in password_reveals.
 # password_changed_at: when the password was last reset (as recorded here).
@@ -12,6 +14,10 @@ columns:
     type: integer
     nullable: true
     index: true
+  service:
+    type: string
+    nullable: true
+    default: ssh
   password:
     type: text
     nullable: true

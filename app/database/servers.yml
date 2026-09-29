@@ -7,7 +7,10 @@
 # ssh_password: only for ssh_auth "password"; encrypted with SecretCipher, write-only.
 # ssh_password_allowed: opt-in; when false (default) the app never attempts a password login
 #   on this server (e.g. fail2ban bans on the first attempt).
-# mysql_password: encrypted with SecretCipher; write-only in the UI.
+# ssh_account_id / mysql_account_id: the tracked account (accounts table) used to log in; ssh_username and
+#   mysql_username are kept in step with it. Passwords live on the account.
+# ssh_password / mysql_password: legacy, from before accounts; moved into the account by
+#   AccountService::syncServers() and then cleared.
 # mysql_tls: "off", "encrypt" (no certificate check) or "verify" (CA + hostname).
 # mysql_tls_ca: optional CA certificate(s) in PEM for "verify"; null = system CAs.
 columns:
@@ -51,6 +54,9 @@ columns:
   mysql_port:
     type: integer
     default: 3306
+  mysql_account_id:
+    type: integer
+    nullable: true
   mysql_username:
     type: string
     nullable: true

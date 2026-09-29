@@ -32,6 +32,17 @@ beforeEach(function () {
 
             return new CheckResult("ssl:$host:$port", $host, $status, "$host via " . ($connectTo ?? 'dns') . " is {$status->value}", 60.0, 'days', ['names' => $expectedNames]);
         }
+
+        /** @var list<string>|null what the served certificate lists */
+        public ?array $served = null;
+        public array $nameCalls = [];
+
+        public function certificateNames(string $host, int $port = 443, ?string $connectTo = null): ?array
+        {
+            $this->nameCalls[] = [$host, $port, $connectTo];
+
+            return $this->served;
+        }
     };
 
     $this->ssl = new SslMonitorService($this->checker, $this->clock);
@@ -156,4 +167,32 @@ test('only admins manage certificates or run checks', function () {
     expect(fn () => $this->ssl->createCertificate($user, ['name' => 'x', 'hostnames' => 'x.example.com']))->toThrow(AuthorizationException::class)
         ->and(fn () => $this->ssl->addBinding($user, $certificate, null, 443))->toThrow(AuthorizationException::class)
         ->and(fn () => $this->ssl->checkAll($user))->toThrow(AuthorizationException::class);
+});
+
+test('a certificate named after its hostname needs no hostname list', function () {
+    $certificate = $this->ssl->createCertificate($this->admin, ['name' => 'Shop.Example.com', 'hostnames' => '']);
+
+    expect($certificate->hostnameList())->toBe(['shop.example.com'])
+        ->and(fn () => $this->ssl->createCertificate($this->admin, ['name' => 'Main site', 'hostnames' => '']))->toThrow(DomainException::class, 'name it after its hostname');
+});
+
+test('the other hostnames the served certificate lists are added, from where it is served', function () {
+    $web = ($this->server)('web', '10.0.0.5');
+    $certificate = $this->ssl->createCertificate($this->admin, ['name' => 'shop.example.com', 'hostnames' => '', 'server_id' => (string) $web->id, 'port' => '8443']);
+    $this->checker->served = ['shop.example.com', 'www.shop.example.com', '*.cdn.example.com', 'not a host'];
+
+    expect($this->ssl->addNamesFromCertificate($this->admin, $certificate))->toBe(['www.shop.example.com', '*.cdn.example.com'])
+        ->and($certificate->fresh()->hostnameList())->toBe(['shop.example.com', 'www.shop.example.com', '*.cdn.example.com'])
+        ->and($this->checker->nameCalls)->toBe([['shop.example.com', 8443, '10.0.0.5']])
+        ->and($this->ssl->addNamesFromCertificate($this->admin, $certificate->fresh()))->toBe([]);
+});
+
+test('without a binding or a readable certificate, nothing is added', function () {
+    $unbound = ($this->certificate)();
+    $bound = ($this->certificate)(['name' => 'Direct', 'port' => '443']);
+
+    expect($this->ssl->addNamesFromCertificate($this->admin, $unbound))->toBeNull()
+        ->and($this->ssl->addNamesFromCertificate($this->admin, $bound))->toBeNull()
+        ->and($bound->fresh()->hostnameList())->toBe(['shop.example.com', 'www.shop.example.com'])
+        ->and(fn () => $this->ssl->addNamesFromCertificate(new User(['role' => User::ROLE_USER]), $bound))->toThrow(AuthorizationException::class);
 });

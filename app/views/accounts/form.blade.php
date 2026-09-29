@@ -24,6 +24,7 @@
                 <option value="ldap" {{ $account->type === 'ldap' ? 'selected' : '' }}>LDAP / directory</option>
                 <option value="local" {{ $account->type === 'local' ? 'selected' : '' }}>Local to one server</option>
             </select>
+            <p class="hint">LDAP and shared accounts can be chosen for SSH or database logins on any server.</p>
 
             <div id="server_field">
                 <label for="server_id">Server</label>
@@ -32,6 +33,11 @@
                     @foreach ($servers as $server)
                         <option value="{{ $server->id }}" {{ $account->server_id === $server->id ? 'selected' : '' }}>{{ $server->name }}</option>
                     @endforeach
+                </select>
+                <label for="service">It's a</label>
+                <select id="service" name="service">
+                    <option value="ssh" {{ $account->type !== 'local' || $account->localService() === 'ssh' ? 'selected' : '' }}>System user (SSH)</option>
+                    <option value="mysql" {{ $account->type === 'local' && $account->localService() === 'mysql' ? 'selected' : '' }}>Database user (MariaDB / MySQL)</option>
                 </select>
             </div>
 
@@ -44,7 +50,7 @@
                 <input type="password" id="password" name="password" autocomplete="new-password">
                 <label for="password_changed_at">Last reset on <span class="muted">(optional, YYYY-MM-DD; default today)</span></label>
                 <input type="text" id="password_changed_at" name="password_changed_at" placeholder="{{ \App\Utils\LocalTime::format(\Carbon\Carbon::now(), 'Y-m-d') }}">
-                <p class="hint">Stored encrypted; admins can reveal it later after re-entering their own password.</p>
+                <p class="hint">Stored encrypted; admins can reveal it later with an authenticator code.</p>
             @endunless
 
             <label for="notes">Notes <span class="muted">(optional)</span></label>

@@ -68,6 +68,27 @@ class SslCheckService
     }
 
     /**
+     * The hostnames a served certificate lists (its SAN DNS names, or the
+     * subject CN if it has none), or null if none could be read. The
+     * certificate isn't verified here: this only learns names to monitor,
+     * and check() judges the certificate.
+     *
+     * @return list<string>|null
+     */
+    public function certificateNames(string $host, int $port = 443, ?string $connectTo = null): ?array
+    {
+        [$info] = $this->connect($connectTo ?? $host, $host, $port, false);
+
+        if ($info === null) {
+            return null;
+        }
+
+        $names = $this->names($info['leaf']) ?: array_filter([(string) ($info['leaf']['subject']['CN'] ?? '')]);
+
+        return array_values(array_unique(array_map('strtolower', $names)));
+    }
+
+    /**
      * Whether a certificate name (possibly "*.example.com") covers a hostname.
      * A wildcard covers exactly one label, as browsers apply it.
      */

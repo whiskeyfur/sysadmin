@@ -70,7 +70,7 @@
                 <div class="grid-2">
                     <div>
                         <label for="name">Name</label>
-                        <input type="text" id="name" name="name" placeholder="e.g. Shop wildcard 2026" maxlength="100" required>
+                        <input type="text" id="name" name="name" placeholder="e.g. shop.example.com or Shop wildcard 2026" maxlength="100" required>
                     </div>
                     <div>
                         <label for="port">Port</label>
@@ -78,8 +78,8 @@
                     </div>
                 </div>
                 <label for="hostnames">Hostnames it covers</label>
-                <textarea id="hostnames" name="hostnames" rows="3" spellcheck="false" placeholder="shop.example.com&#10;www.shop.example.com&#10;*.shop.example.com" required></textarea>
-                <p class="hint">One per line. The first is sent to the server to ask for this certificate (SNI), so it must be a real hostname, not a wildcard.</p>
+                <textarea id="hostnames" name="hostnames" rows="3" spellcheck="false" placeholder="shop.example.com&#10;www.shop.example.com&#10;*.shop.example.com"></textarea>
+                <p class="hint">One per line. The first is sent to the server to ask for this certificate (SNI), so it must be a real hostname, not a wildcard. Leave empty to use the name as the hostname. Either way, the other hostnames the served certificate lists (SAN) are added automatically.</p>
                 <label for="server_id">Served on</label>
                 <select id="server_id" name="server_id">
                     <option value="">Directly, via DNS (not on a tracked server)</option>

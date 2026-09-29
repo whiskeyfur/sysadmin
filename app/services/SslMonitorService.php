@@ -64,6 +64,11 @@ class SslMonitorService
     }
 
     /**
+     * With no hostnames given, the name is used as the hostname (e.g. a
+     * certificate named "shop.example.com"). With a first binding, the
+     * certificate is then downloaded from it and the other hostnames it lists
+     * (SAN) are added; see addNamesFromCertificate().
+     *
      * @param array<string, mixed> $input name, hostnames, notes; optionally server_id ('' = direct) and port for a first binding
      *
      * @throws DomainException with a user-facing message
@@ -71,14 +76,60 @@ class SslMonitorService
     public function createCertificate(User $admin, array $input): SslCertificate
     {
         $this->requireAdmin($admin);
-        $certificate = new SslCertificate();
-        $this->fill($certificate, $input);
 
-        if (array_key_exists('port', $input)) {
-            $this->addBinding($admin, $certificate, $this->server($input['server_id'] ?? null), $input['port']);
+        if (trim((string) ($input['hostnames'] ?? '')) === '') {
+            $name = strtolower(trim((string) ($input['name'] ?? '')));
+
+            if (!$this->isHostname($name)) {
+                throw new DomainException('List the hostnames it covers, or name it after its hostname (e.g. shop.example.com) to fill them in from the certificate.');
+            }
+
+            $input['hostnames'] = $name;
         }
 
+        $certificate = new SslCertificate();
+
+        $certificate->getConnection()->transaction(function () use ($admin, $certificate, $input) {
+            $this->fill($certificate, $input);
+
+            if (array_key_exists('port', $input)) {
+                $this->addBinding($admin, $certificate, $this->server($input['server_id'] ?? null), $input['port']);
+            }
+        });
+
         return $certificate;
+    }
+
+    /**
+     * Download the certificate from its first binding and add the hostnames
+     * it lists (SAN) that aren't listed yet.
+     *
+     * @return list<string>|null the hostnames added, or null if the certificate couldn't be read
+     */
+    public function addNamesFromCertificate(User $admin, SslCertificate $certificate): ?array
+    {
+        $this->requireAdmin($admin);
+        $binding = SslBinding::query()->with('server')->where('certificate_id', $certificate->id)->orderBy('id')->first();
+
+        if (!$binding instanceof SslBinding) {
+            return null;
+        }
+
+        $names = $this->checker->certificateNames($certificate->primaryHostname(), $binding->port, $binding->server?->hostname);
+
+        if ($names === null) {
+            return null;
+        }
+
+        $listed = $certificate->hostnameList();
+        $added = array_values(array_filter($names, fn (string $name) => $this->isHostname(str_starts_with($name, '*.') ? substr($name, 2) : $name) && !in_array($name, $listed, true)));
+
+        if ($added !== []) {
+            $certificate->hostnames = implode("\n", [...$listed, ...$added]);
+            $certificate->save();
+        }
+
+        return $added;
     }
 
     /**
@@ -310,7 +361,7 @@ class SslMonitorService
             $host = (string) preg_replace('#^https://|[:/].*$#', '', $entry);
             $bare = str_starts_with($host, '*.') ? substr($host, 2) : $host;
 
-            if (filter_var($bare, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) === false || !str_contains($bare, '.') && $bare !== 'localhost') {
+            if (!$this->isHostname($bare)) {
                 throw new DomainException("\"$entry\" isn't a hostname.");
             }
 
@@ -335,6 +386,11 @@ class SslMonitorService
         $certificate->hostnames = implode("\n", $hostnames);
         $certificate->notes = mb_substr(trim((string) ($input['notes'] ?? '')), 0, 2000) ?: null;
         $certificate->save();
+    }
+
+    private function isHostname(string $host): bool
+    {
+        return filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false && (str_contains($host, '.') || $host === 'localhost');
     }
 
     private function server(mixed $id): ?Server

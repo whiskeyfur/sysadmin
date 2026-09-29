@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — Database logins are tracked accounts like SSH (local database users, or LDAP/shared picked per server; password on the account, legacy server passwords migrated); new certificates fill in their SAN hostnames from the served certificate (`AccountService`, `ServerService`, `SslMonitorService::addNamesFromCertificate()`, `SslCheckService::certificateNames()`).
 * 2026-09-29 — SSH setup can verify a new host key through the account: log in (app key, else allowed password), read the server's host key files, trust only a match; the same login installs the key (`SshSetupService::setUpByLogin()`, `SshService::connectForVerification()`, `hostKeysOnServer()`).
 * 2026-09-29 — Disk warning/critical levels are admin settings; SSH key install with a password falls back to the chosen account's stored password (`SettingsService`, `DiskCheck`, `HealthCheckService::defaultSshChecks()`, `SshSetupService`).
 * 2026-09-29 — Sign-in is username + authenticator code; admins set a one-time password used only to enrol the authenticator; no password expiry or /password page; revealing account passwords takes a code; daily per-username guess cap; `php leaf app:reset-admin` (`AuthService`, `AuthController`, `PasswordService`, `LoginThrottleService`, `AppResetAdminCommand`).
 * 2026-09-29 — SSL certificates as their own records (name + hostnames) bound to servers and ports or checked directly via DNS; SNI to each server's address; `composer/ca-bundle` fallback for Windows (`SslMonitorService`, `ssl_certificates.yml`, `ssl_bindings.yml`, `ssl/*.blade.php`).
-* 2026-09-29 — Tracked accounts (local, LDAP, shared) with current password, reset date, rotation, which servers use them and when; reveals logged (`AccountService`, `AccountController`, `accounts/*.blade.php`).
 
 ---
 

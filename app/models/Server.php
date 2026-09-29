@@ -77,6 +77,14 @@ class Server extends Model
         'last_checked_at' => 'datetime',
     ];
 
+    /**
+     * SSH is set up: the host key has been checked and trusted.
+     */
+    public function sshReady(): bool
+    {
+        return $this->ssh_host_key !== null;
+    }
+
     public function mysqlHost(): string
     {
         return $this->mysql_host ?: $this->hostname;

@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\HealthCheckService;
 use App\Services\MysqlService;
 use App\Services\ServerService;
+use App\Services\SshService;
 
 beforeEach(function () {
     $this->servers = new ServerService($this->cipher);
@@ -59,7 +60,28 @@ beforeEach(function () {
         }
     };
 
-    $this->service = fn (array $checks) => new HealthCheckService($this->mysql, $checks, $this->clock);
+    // Stand-in SSH that records calls and returns canned output, or fails.
+    $this->ssh = new class () extends SshService {
+        public int $calls = 0;
+        public ?string $output = null;
+
+        public function __construct()
+        {
+        }
+
+        public function run(Server $server, string $command): string
+        {
+            $this->calls++;
+
+            if ($this->output === null) {
+                throw new ServerConnectionException('Connection refused');
+            }
+
+            return $this->output;
+        }
+    };
+
+    $this->service = fn (array $checks) => new HealthCheckService($this->mysql, $checks, $this->clock, $this->ssh);
 });
 
 test('a run stores every result and records the worst status', function () {
@@ -115,7 +137,7 @@ test('history returns recent runs per check, oldest first', function () {
         ->and($history['alpha'][0]->checked_at->lessThan($history['alpha'][1]->checked_at))->toBeTrue();
 });
 
-test('only admins run checks, and only for servers with MySQL', function () {
+test('only admins run checks, and only for servers with SSH or MySQL', function () {
     $service = ($this->service)([]);
 
     expect(fn () => $service->run(new User(['role' => User::ROLE_USER]), $this->server))->toThrow(AuthorizationException::class);
@@ -130,4 +152,57 @@ test('deleting a server deletes its history', function () {
     $this->servers->delete($this->admin, $this->server);
 
     expect(StoredCheck::count())->toBe(0);
+});
+
+test('servers without trusted SSH are never contacted over SSH', function () {
+    ($this->service)([])->run($this->admin, $this->server);
+
+    expect($this->ssh->calls)->toBe(0);
+});
+
+test('SSH checks share one session and each reads its own section', function () {
+    $this->server->ssh_host_key = 'ssh-ed25519 ' . base64_encode('key');
+    $this->server->save();
+    $service = ($this->service)([]);
+    $this->ssh->output = implode("\n", [
+        '@@sys-check:disk', 'Filesystem 1024-blocks Used Available Capacity Mounted on', '/dev/sda1 100 50 50 50% /', '--inodes--',
+        '@@sys-check:load', '0.10 0.20 0.30 1/100 42', '4',
+        '@@sys-check:memory', 'MemTotal: 1000 kB', 'MemAvailable: 800 kB', 'SwapTotal: 0 kB',
+    ]);
+
+    $results = $service->run($this->admin, $this->server);
+
+    expect($this->ssh->calls)->toBe(1)
+        ->and(array_map(fn ($r) => $r->key . ':' . $r->status->value, $results))->toBe(['disk:ok', 'load:ok', 'memory:ok']);
+});
+
+test('an SSH failure is one critical result and MySQL checks still run', function () {
+    $this->server->ssh_host_key = 'ssh-ed25519 ' . base64_encode('key');
+    $this->server->save();
+    $results = ($this->service)([($this->check)('alpha', HealthStatus::Ok)])->run($this->admin, $this->server);
+
+    expect(array_map(fn ($r) => $r->key . ':' . $r->status->value, $results))->toBe(['ssh:critical', 'alpha:ok']);
+});
+
+test('an SSH-only server can be checked', function () {
+    $this->servers->update($this->admin, $this->server, ['name' => 'nas', 'hostname' => 'nas.example.com', 'ssh_port' => 22, 'ssh_username' => 'x', 'mysql_enabled' => '']);
+    $this->server->ssh_host_key = 'ssh-ed25519 ' . base64_encode('key');
+    $this->server->save();
+    $this->ssh->output = "@@sys-check:disk\n@@sys-check:load\n@@sys-check:memory\n";
+
+    $results = ($this->service)([])->run($this->admin, $this->server);
+
+    expect(array_map(fn ($r) => $r->status, $results))->toBe([HealthStatus::Unknown, HealthStatus::Unknown, HealthStatus::Unknown]);
+});
+
+test('the shared script really runs and parses on this Linux machine', function () {
+    $service = new HealthCheckService($this->mysql, [], $this->clock, $this->ssh);
+    exec($service->sshScript(), $lines, $status);
+    $sections = $service->splitSections(implode("\n", $lines));
+
+    expect($status)->toBe(0)
+        ->and(array_keys($sections))->toBe(['disk', 'load', 'memory'])
+        ->and((new App\Services\Checks\DiskCheck())->evaluate($sections['disk'])->status)->not->toBe(HealthStatus::Unknown)
+        ->and((new App\Services\Checks\LoadCheck())->evaluate($sections['load'])->status)->not->toBe(HealthStatus::Unknown)
+        ->and((new App\Services\Checks\MemoryCheck())->evaluate($sections['memory'])->status)->not->toBe(HealthStatus::Unknown);
 });

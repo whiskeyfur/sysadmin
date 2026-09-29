@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — SSH health checks: disk (space + inodes), load per core, memory/swap, all in one SSH session per run (`DiskCheck`, `LoadCheck`, `MemoryCheck`, `HealthCheckService::sshScript()`).
 * 2026-09-29 — MariaDB health checks, run on demand: server status, connections, crashed tables (metadata + CHECK FAST QUICK), replication, buffer pool; 30-day history (`HealthCheckService`, `app/services/Checks/*`, `servers/show.blade.php`).
 * 2026-09-29 — SSH setup flow: trust host key, try the app key, optionally install it with a one-time password, fall back to a stored password only for servers refusing keys; password login is opt-in per server (`SshSetupService`, `servers/setup.blade.php`).
 * 2026-09-29 — MySQL TLS per server: verify (default, pasted CA or system CAs), encrypt-only, or off (`MysqlService`, `CaCertificateService`, `servers.yml`).
 * 2026-09-29 — Server configurations: app SSH keypair, host key trust, MySQL over direct TCP, connection test (`ServerService`, `SshService`, `SshKeyService`, `MysqlService`, `ServerController`, `app/views/servers/*`).
-* 2026-09-29 — Removed encryption at rest, master key, key files and registration per the client; admins create accounts, first sign-in forces password + authenticator setup, passwords expire after 30 days (`AuthService`, `PasswordService`, `SecretCipher`, `UserAdminService`, `PasswordController`).
 
 ---
 

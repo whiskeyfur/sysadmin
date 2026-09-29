@@ -60,6 +60,7 @@ class ServerController extends Controller
             'checks' => $health->latest($server),
             'history' => $health->history($server),
             'health' => $health,
+            'canCheck' => $health->canCheck($server),
             'notice' => $this->request->flash('notice'),
             'error' => $this->request->flash('error'),
         ]);

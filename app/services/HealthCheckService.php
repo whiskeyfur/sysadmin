@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Contracts\HealthCheck;
+use App\Contracts\SshHealthCheck;
 use App\DTOs\CheckResult;
 use App\Enums\HealthStatus;
 use App\Exceptions\AuthorizationException;
@@ -13,6 +14,9 @@ use App\Models\User;
 use App\Services\Checks\BufferPoolCheck;
 use App\Services\Checks\ConnectionsCheck;
 use App\Services\Checks\CrashedTablesCheck;
+use App\Services\Checks\DiskCheck;
+use App\Services\Checks\LoadCheck;
+use App\Services\Checks\MemoryCheck;
 use App\Services\Checks\ReplicationCheck;
 use App\Services\Checks\ServerStatusCheck;
 use App\Utils\SystemClock;
@@ -22,12 +26,19 @@ use Psr\Clock\ClockInterface;
 use Throwable;
 
 /**
- * Runs the MariaDB/MySQL health checks for a server, stores the results
- * (kept RETENTION_DAYS) and records the worst status on the server.
+ * Runs a server's health checks, stores the results (kept RETENTION_DAYS)
+ * and records the worst status on the server:
+ *
+ * - SSH checks (disk, load, memory) when SSH is set up. They share one SSH
+ *   session per run: one login, which matters on servers with fail2ban.
+ *   Servers whose host key isn't trusted yet are skipped, never contacted.
+ * - MariaDB/MySQL checks when MySQL is configured.
  */
 class HealthCheckService
 {
     public const RETENTION_DAYS = 30;
+
+    private const SECTION_MARKER = '@@sys-check:';
 
     /**
      * @var list<HealthCheck>
@@ -35,13 +46,22 @@ class HealthCheckService
     private readonly array $checks;
 
     /**
+     * @var list<SshHealthCheck>
+     */
+    private readonly array $sshChecks;
+
+    /**
      * @param list<HealthCheck>|null $checks
+     * @param list<SshHealthCheck>|null $sshChecks
      */
     public function __construct(
         private readonly MysqlService $mysql = new MysqlService(),
         ?array $checks = null,
         private readonly ClockInterface $clock = new SystemClock(),
+        private readonly SshService $ssh = new SshService(),
+        ?array $sshChecks = null,
     ) {
+        $this->sshChecks = $sshChecks ?? [new DiskCheck(), new LoadCheck(), new MemoryCheck()];
         $this->checks = $checks ?? [
             new ServerStatusCheck(),
             new ConnectionsCheck(),
@@ -54,7 +74,7 @@ class HealthCheckService
     /**
      * @return list<CheckResult>
      *
-     * @throws DomainException if the server has no MySQL configured.
+     * @throws DomainException if neither SSH nor MySQL is set up for the server.
      */
     public function run(User $user, Server $server): array
     {
@@ -62,11 +82,14 @@ class HealthCheckService
             throw new AuthorizationException('Only admins can run health checks.');
         }
 
-        if (!$server->mysql_enabled) {
-            throw new DomainException("MySQL isn't configured for {$server->name}.");
+        if (!$this->canCheck($server)) {
+            throw new DomainException("Nothing to check on {$server->name} yet: set up SSH or configure MySQL first.");
         }
 
-        $results = $this->runChecks($server);
+        $results = array_merge(
+            $server->sshReady() ? $this->runSshChecks($server) : [],
+            $server->mysql_enabled ? $this->runChecks($server) : [],
+        );
         $this->store($server, $results);
 
         return $results;
@@ -77,13 +100,56 @@ class HealthCheckService
      */
     public function label(string $key): string
     {
-        foreach ($this->checks as $check) {
+        foreach ([...$this->sshChecks, ...$this->checks] as $check) {
             if ($check->key() === $key) {
                 return $check->label();
             }
         }
 
-        return $key === 'connection' ? 'Connection' : ucfirst(str_replace('_', ' ', $key));
+        return match ($key) {
+            'connection' => 'MySQL connection',
+            'ssh' => 'SSH connection',
+            default => ucfirst(str_replace('_', ' ', $key)),
+        };
+    }
+
+    public function canCheck(Server $server): bool
+    {
+        return $server->sshReady() || $server->mysql_enabled;
+    }
+
+    /**
+     * The one script the SSH checks share: each check's commands after a
+     * marker line, so the output can be split back per check.
+     */
+    public function sshScript(): string
+    {
+        $parts = array_map(
+            fn (SshHealthCheck $check) => "echo '" . self::SECTION_MARKER . $check->key() . "'; " . $check->command(),
+            $this->sshChecks,
+        );
+
+        return 'sh -c ' . escapeshellarg(implode('; ', $parts) . '; exit 0');
+    }
+
+    /**
+     * @return array<string, string> output per check key
+     */
+    public function splitSections(string $output): array
+    {
+        $sections = [];
+        $current = null;
+
+        foreach (preg_split('/\R/', $output) ?: [] as $line) {
+            if (str_starts_with($line, self::SECTION_MARKER)) {
+                $current = substr($line, strlen(self::SECTION_MARKER));
+                $sections[$current] = '';
+            } elseif ($current !== null) {
+                $sections[$current] .= $line . "\n";
+            }
+        }
+
+        return $sections;
     }
 
     /**
@@ -142,12 +208,36 @@ class HealthCheckService
     /**
      * @return list<CheckResult>
      */
+    private function runSshChecks(Server $server): array
+    {
+        try {
+            $sections = $this->splitSections($this->ssh->run($server, $this->sshScript()));
+        } catch (ServerConnectionException $e) {
+            return [new CheckResult('ssh', 'SSH connection', HealthStatus::Critical, "Can't connect over SSH: {$e->getMessage()}")];
+        }
+
+        $results = [];
+
+        foreach ($this->sshChecks as $check) {
+            try {
+                $results[] = $check->evaluate($sections[$check->key()] ?? '');
+            } catch (Throwable $e) {
+                $results[] = new CheckResult($check->key(), $check->label(), HealthStatus::Unknown, "The check failed: {$e->getMessage()}");
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * @return list<CheckResult>
+     */
     private function runChecks(Server $server): array
     {
         try {
             $pdo = $this->mysql->connect($server);
         } catch (ServerConnectionException $e) {
-            return [new CheckResult('connection', 'Connection', HealthStatus::Critical, "Can't connect: {$e->getMessage()}")];
+            return [new CheckResult('connection', 'MySQL connection', HealthStatus::Critical, "Can't connect: {$e->getMessage()}")];
         }
 
         $results = [];

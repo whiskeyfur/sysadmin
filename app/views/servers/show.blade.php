@@ -15,14 +15,16 @@
             <div>
                 <h1>{{ $server->name }}</h1>
                 <p class="muted">
+                    SSH: {{ $server->sshReady() ? 'set up' : 'not set up' }}@if ($auth->isAdmin() && !$server->sshReady()) (<a href="/admin/servers/{{ $server->id }}/ssh-setup">set it up</a>)@endif ·
+                    MySQL:
                     @if ($server->mysql_enabled)
-                        MariaDB/MySQL at <code>{{ $server->mysqlHost() . ':' . $server->mysql_port }}</code>
+                        <code>{{ $server->mysqlHost() . ':' . $server->mysql_port }}</code>
                     @else
-                        MySQL isn't configured for this server.
+                        not configured
                     @endif
                 </p>
             </div>
-            @if ($auth->isAdmin() && $server->mysql_enabled)
+            @if ($auth->isAdmin() && $canCheck)
                 <form method="post" action="/admin/servers/{{ $server->id }}/checks">
                     @csrf
                     <button type="submit">Run checks now</button>
@@ -30,12 +32,12 @@
             @endif
         </div>
 
-        @if (!$server->mysql_enabled && $server->last_checked_at === null)
-            <p class="muted">Health checks currently cover MariaDB/MySQL only, so there's nothing to check on this server yet.</p>
+        @if (!$canCheck && $server->last_checked_at === null)
+            <p class="muted">Nothing to check yet: set up SSH (for disk, load and memory) or configure MySQL (for database health).</p>
         @elseif ($server->last_checked_at === null)
             <p class="muted">No health checks have run yet.{{ $auth->isAdmin() ? '' : ' An admin can run them.' }}</p>
         @else
-            <p class="muted">Last checked {{ \App\Utils\LocalTime::format($server->last_checked_at) }}. Checks run when an admin starts them; results are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days.</p>
+            <p class="muted">Last checked {{ \App\Utils\LocalTime::format($server->last_checked_at) }}. SSH checks use one login per run. Checks run when an admin starts them; results are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days.</p>
 
             <div class="table-wrap">
             <table>

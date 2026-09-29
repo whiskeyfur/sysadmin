@@ -1,0 +1,17 @@
+# Composer
+/vendor/
+
+# SQLite databases (encrypted, but still live data)
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Local environment and secrets
+.env
+*.env
+
+# IDE
+/.idea/

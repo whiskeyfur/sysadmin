@@ -1,0 +1,20 @@
+{
+    "description": "System and network admin tool for monitoring servers, PHP stacks and MariaDB",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.3",
+        "ext-sodium": "*",
+        "ext-pdo_mysql": "*",
+        "ext-pdo_sqlite": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Sys\\": "src/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}

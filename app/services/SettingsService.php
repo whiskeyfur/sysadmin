@@ -21,6 +21,8 @@ class SettingsService
 
     public const SSL_IMPORT_NAMES = 'ssl_import_names';
 
+    public const SSL_CHECK_HOURS = 'ssl_check_hours';
+
     public const ACCOUNT_WARNING_DAYS = 'account_warning_days';
 
     public const DISK_WARNING_PERCENT = 'disk_warning_percent';
@@ -60,6 +62,7 @@ class SettingsService
         self::SSL_WARNING_DAYS => 7,
         self::SESSION_TIMEOUT_MINUTES => 30,
         self::SSL_IMPORT_NAMES => 1,
+        self::SSL_CHECK_HOURS => 24,
         self::ACCOUNT_WARNING_DAYS => 7,
         self::DISK_WARNING_PERCENT => 85,
         self::DISK_CRITICAL_PERCENT => 95,
@@ -85,7 +88,7 @@ class SettingsService
      */
     public const SECTIONS = [
         'app' => [self::SESSION_TIMEOUT_MINUTES],
-        'ssl' => [self::SSL_WARNING_DAYS, self::SSL_IMPORT_NAMES],
+        'ssl' => [self::SSL_WARNING_DAYS, self::SSL_IMPORT_NAMES, self::SSL_CHECK_HOURS],
         'ssh' => [self::DISK_WARNING_PERCENT, self::DISK_CRITICAL_PERCENT, self::ACCOUNT_WARNING_DAYS],
         'mariadb' => [
             self::MYSQL_CONNECTIONS_WARNING_PERCENT,
@@ -113,6 +116,7 @@ class SettingsService
         self::SSL_WARNING_DAYS => ['min' => 1, 'max' => 365],
         self::SESSION_TIMEOUT_MINUTES => ['min' => 5, 'max' => AuthSessionService::MAX_TIMEOUT_MINUTES],
         self::SSL_IMPORT_NAMES => ['min' => 0, 'max' => 1],
+        self::SSL_CHECK_HOURS => ['min' => 1, 'max' => 168],
         self::ACCOUNT_WARNING_DAYS => ['min' => 1, 'max' => 365],
         self::DISK_WARNING_PERCENT => ['min' => 1, 'max' => 100],
         self::DISK_CRITICAL_PERCENT => ['min' => 1, 'max' => 100],
@@ -234,6 +238,7 @@ class SettingsService
             self::SSL_WARNING_DAYS => 'SSL warning period',
             self::SESSION_TIMEOUT_MINUTES => 'Sign-out after inactivity',
             self::SSL_IMPORT_NAMES => 'Adding hostnames from certificates',
+            self::SSL_CHECK_HOURS => 'Certificate check interval',
             self::ACCOUNT_WARNING_DAYS => 'Account rotation warning period',
             self::DISK_WARNING_PERCENT => 'disk warning level',
             self::DISK_CRITICAL_PERCENT => 'disk critical level',

@@ -27,7 +27,7 @@
             @endif
         </div>
         <p class="muted">
-            Days until each certificate expires, from each check: every {{ \App\Services\ScheduledCheckService::DEFAULT_INTERVAL_MINUTES }} minutes when checks are scheduled, and whenever someone runs them. Results are kept {{ \App\Services\SslMonitorService::RETENTION_DAYS }} days. A renewal shows as a jump up.
+            Days until each certificate expires, from each check: every {{ (new \App\Services\SettingsService())->integer(\App\Services\SettingsService::SSL_CHECK_HOURS) }} hours when checks are scheduled, and whenever someone runs them. Results are kept {{ \App\Services\SslMonitorService::RETENTION_DAYS }} days. A renewal shows as a jump up.
             @if ($certificate)
                 One line per place <a href="/ssl/{{ $certificate->id }}">{{ $certificate->name }}</a> is served: a server still serving an old copy stands out.
             @else

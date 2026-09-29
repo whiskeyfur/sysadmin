@@ -14,8 +14,8 @@ use Throwable;
 /**
  * Scheduled checks, run by `php leaf app:run-checks` (cron every minute, or
  * --loop): every server whose interval (servers.check_interval_minutes,
- * default 5) has passed gets its health and SSL checks, and certificates
- * served directly are checked on the same interval.
+ * default 5) has passed gets its health checks. Certificates, on servers
+ * and served directly, are checked every ssl_check_hours (default 24).
  *
  * A server whose SSH or MariaDB connection failed is retried less often
  * (twice the interval per consecutive failure, at most MAX_BACKOFF_MINUTES):
@@ -60,13 +60,13 @@ class ScheduledCheckService
             $ssl = SslBinding::query()->where('server_id', $server->id)->exists();
 
             if ($health || $ssl) {
-                $this->checkIfDue($server, $health, $ssl, $now, $log);
+                $this->checkIfDue($server, $health, $ssl && $this->sslDue($server, $now), $now, $log);
             }
 
             $this->importLogIfDue($server, $now, $log);
         }
 
-        $direct = $this->ssl->checkDirectDue($now->copy()->subMinutes(self::DEFAULT_INTERVAL_MINUTES)->addSeconds(30));
+        $direct = $this->ssl->checkDirectDue($now->copy()->subHours($this->sslHours())->addSeconds(30));
 
         if ($direct > 0) {
             $log[] = "direct: $direct certificate(s)";
@@ -78,9 +78,15 @@ class ScheduledCheckService
     /**
      * @param list<string> $log
      */
+    /**
+     * @param bool $ssl whether the server's certificates are due (their own, daily, schedule)
+     * @param list<string> $log
+     */
     private function checkIfDue(Server $server, bool $health, bool $ssl, Carbon $now, array &$log): void
     {
-        if (!$this->isDue($server, $health, $now)) {
+        $health = $health && $this->isDue($server, true, $now);
+
+        if (!$health && !$ssl) {
             return;
         }
 
@@ -126,6 +132,21 @@ class ScheduledCheckService
             $server->save();
             $log[] = "{$server->name}: log import failed: {$e->getMessage()}";
         }
+    }
+
+    /**
+     * Certificates are checked every ssl_check_hours (an SSL setting, default
+     * 24: once a day); expiry only moves day by day.
+     */
+    public function sslDue(Server $server, Carbon $now): bool
+    {
+        return $server->last_ssl_checked_at === null
+            || $server->last_ssl_checked_at->copy()->addHours($this->sslHours())->subSeconds(30)->lessThanOrEqualTo($now);
+    }
+
+    private function sslHours(): int
+    {
+        return $this->settings->integer(SettingsService::SSL_CHECK_HOURS);
     }
 
     /**

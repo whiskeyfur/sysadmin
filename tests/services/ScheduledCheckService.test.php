@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\HealthCheckService;
 use App\Services\MariadbLogService;
 use App\Services\ScheduledCheckService;
+use App\Services\SettingsService;
 use App\Services\ServerService;
 use App\Services\SslCheckService;
 use App\Services\SslMonitorService;
@@ -136,7 +137,7 @@ test('a server that can\'t be reached is retried less often, up to an hour, and 
     expect($this->scheduler->intervalMinutes(Server::query()->where('name', 'down')->first()))->toBe(5);
 });
 
-test('servers with nothing to check are skipped; certificates on servers and served directly follow the schedule', function () {
+test('servers with nothing to check are skipped; certificates on servers and served directly are checked once a day', function () {
     $sslOnly = $this->servers->create($this->admin, ['name' => 'web', 'hostname' => 'web.example.com', 'ssh_enabled' => '']);
     $this->servers->create($this->admin, ['name' => 'idle', 'hostname' => 'idle.example.com', 'ssh_enabled' => '']);
     $certificate = SslCertificate::query()->create(['name' => 'Site', 'hostnames' => 'site.example.com']);
@@ -155,7 +156,16 @@ test('servers with nothing to check are skipped; certificates on servers and ser
 
     $this->clock->advance(5 * 60);
     $this->scheduler->runDue();
+    expect($this->checker->calls)->toHaveCount(2);
+
+    $this->clock->advance(24 * 60 * 60 - 6 * 60);
+    $this->scheduler->runDue();
     expect($this->checker->calls)->toHaveCount(4);
+
+    (new SettingsService())->update($this->admin, [SettingsService::SSL_CHECK_HOURS => '1']);
+    $this->clock->advance(60 * 60);
+    $this->scheduler->runDue();
+    expect($this->checker->calls)->toHaveCount(6);
 });
 
 test('MariaDB logs of servers with SSH set up are imported on their own interval', function () {

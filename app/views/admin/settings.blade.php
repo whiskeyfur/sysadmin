@@ -38,7 +38,11 @@
                         <option value="1" {{ $value('ssl_import_names') === 1 ? 'selected' : '' }}>Add them to the certificate's list automatically</option>
                         <option value="0" {{ $value('ssl_import_names') === 0 ? 'selected' : '' }}>Leave the list as I set it</option>
                     </select>
-                    <p class="hint">Every check (scheduled every {{ \App\Services\ScheduledCheckService::DEFAULT_INTERVAL_MINUTES }} minutes) reads the hostnames a certificate covers (SAN); new ones, e.g. from a renewal, are added. Only from certificates that check out as valid.</p>
+                    <p class="hint">Every check reads the hostnames a certificate covers (SAN); new ones, e.g. from a renewal, are added. Only from certificates that check out as valid.</p>
+
+                    <label for="ssl_check_hours">Check certificates every (hours)</label>
+                    <input type="text" id="ssl_check_hours" name="ssl_check_hours" value="{{ $value('ssl_check_hours') }}" inputmode="numeric" required>
+                    <p class="hint">Scheduled checks of every certificate, on servers and served directly (1–168, default {{ $default('ssl_check_hours') }}: once a day). Check now and Check all now still work any time.</p>
                 </fieldset>
             @elseif ($section === 'ssh')
                 <fieldset>

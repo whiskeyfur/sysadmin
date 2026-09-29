@@ -93,6 +93,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Import MariaDB users ('name'@'%' only) as database accounts without passwords, unusable for logins until one is recorded; every account records its origin (manual, server settings, import) (`AccountService::importMysqlUsers()`, `Account::canLogIn()`, `accounts.origin*`).
 * 2026-09-29 — MariaDB data without SSH: disk space (DISKS plugin), file I/O (performance_schema) and database sizes as optional checks, charted on the MariaDB report; scheduled SSL checks add new SAN hostnames from valid certificates (setting) (`DisksCheck`, `FileIoCheck`, `DatabaseSizeCheck`, `SslMonitorService::addNames()`).
 * 2026-09-29 — MariaDB logs imported on a schedule (every 60 min by default, MariaDB setting), reading only new bytes per file (inode + offset) and still importing when only MariaDB is down; last outcome shown on the report (`ScheduledCheckService::importLogIfDue()`, `MariadbLogService::importNow()/readNew()`).
+* 2026-09-29 — SSL checks scheduled on their own interval, once a day by default (SSL setting `ssl_check_hours`, 1–168): each run checks certificates not checked in that long; server health checks stay every 5 minutes (`ScheduledCheckService::sslDue()`).
 
 ---
 

@@ -44,6 +44,27 @@ class AppKeyBootstrap
      */
     public function ensure(): string
     {
+        $key = $this->findOrCreate();
+        $this->export($key);
+
+        return $key;
+    }
+
+    /**
+     * Put the key in the process environment. `php leaf app:start` loads .env
+     * into its own environment and the built-in server inherits it, possibly
+     * with an empty APP_KEY; Leaf's .env loader never overrides a variable
+     * that already exists, so without this it would keep the empty value.
+     */
+    private function export(string $key): void
+    {
+        putenv("APP_KEY=$key");
+        $_ENV['APP_KEY'] = $key;
+        $_SERVER['APP_KEY'] = $key;
+    }
+
+    private function findOrCreate(): string
+    {
         // A key set in the real environment (e.g. by the web server) wins, as with Dotenv.
         $fromEnvironment = getenv('APP_KEY');
 

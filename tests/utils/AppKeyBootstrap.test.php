@@ -11,6 +11,9 @@ beforeEach(function () {
 });
 
 afterEach(function () {
+    // ensure() exports the key into this process; don't leak it into other tests.
+    putenv('APP_KEY');
+    unset($_ENV['APP_KEY'], $_SERVER['APP_KEY']);
     @chmod("{$this->dir}/.env", 0o644);
     exec('rm -rf ' . escapeshellarg($this->dir));
 });
@@ -86,4 +89,19 @@ test('concurrent first requests agree on one key', function () {
     expect(array_unique($keys))->toHaveCount(1)
         ->and(($this->env)())->toContain('APP_KEY=' . $keys[0] . "\n")
         ->and(substr_count(($this->env)(), 'APP_KEY='))->toBe(1);
+});
+
+test('an empty APP_KEY inherited from the environment is replaced in the process too', function () {
+    putenv('APP_KEY=');
+    $_ENV['APP_KEY'] = '';
+    file_put_contents("{$this->dir}/.env", "APP_KEY=base64:saved\n");
+
+    try {
+        expect((new AppKeyBootstrap($this->dir))->ensure())->toBe('base64:saved')
+            ->and(getenv('APP_KEY'))->toBe('base64:saved')
+            ->and($_ENV['APP_KEY'])->toBe('base64:saved');
+    } finally {
+        putenv('APP_KEY');
+        unset($_ENV['APP_KEY'], $_SERVER['APP_KEY']);
+    }
 });

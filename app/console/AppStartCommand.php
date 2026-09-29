@@ -39,13 +39,32 @@ class AppStartCommand extends Command
         ];
     }
 
+    /**
+     * Whether the built-in server could listen on this host: an IP address,
+     * or a name this machine can resolve.
+     */
+    public static function resolves(string $host): bool
+    {
+        $host = trim($host, '[]');
+
+        return filter_var($host, FILTER_VALIDATE_IP) !== false || gethostbynamel($host) !== false;
+    }
+
     protected function handle()
     {
-        [$host, $port] = self::address($this->option('host') ?: null, $this->option('port') ?: null, (string) _env('APP_URL', ''));
+        $hostOption = $this->option('host') ?: null;
+        [$host, $port] = self::address($hostOption, $this->option('port') ?: null, (string) _env('APP_URL', ''));
         $public = getcwd() . DIRECTORY_SEPARATOR . 'public';
 
         if (!is_dir($public)) {
             $this->error('Run this from the project folder (public/ not found).');
+
+            return 1;
+        }
+
+        if (!self::resolves($host)) {
+            $source = $hostOption !== null ? '--host' : 'APP_URL in .env';
+            $this->error("Can't find the host \"$host\" (from $source). Check it for typos, e.g. \"localhost\".");
 
             return 1;
         }

@@ -33,6 +33,7 @@
         button.fold[aria-expanded="true"]::before { content: '▾ '; }
         tr.fold-row td { background: var(--code-bg); padding-top: 6px; padding-bottom: 6px; }
         ul.hostnames { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+        pre.log-message { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, monospace; max-height: 12em; overflow: auto; }
         figure.chart { margin: 0; }
         figure.chart figcaption { font-weight: 600; margin-bottom: 8px; }
         svg.chart { display: block; width: 100%; height: auto; }

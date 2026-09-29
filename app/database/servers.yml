@@ -99,6 +99,9 @@ columns:
   last_checked_at:
     type: timestamp
     nullable: true
+  log_imported_at:
+    type: timestamp
+    nullable: true
   last_health_status:
     type: string
     nullable: true

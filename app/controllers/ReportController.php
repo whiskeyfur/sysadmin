@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\DTOs\AuthContext;
 use App\Models\Server;
 use App\Services\HistoryReport;
+use App\Services\MariadbLogService;
 use App\Services\MariadbReportService;
 use App\Services\ServerService;
 use App\Services\SshReportService;
@@ -56,6 +57,10 @@ class ReportController extends Controller
             'server' => $server,
             'range' => $range,
             'report' => $server === null ? null : (new MariadbReportService())->report($server, $range),
+            'canImport' => $server !== null && $this->authContext()->isAdmin() && (new MariadbLogService())->canImport($server),
+            'notice' => $this->request->flash('notice'),
+            'error' => $this->request->flash('error'),
+            'import' => json_decode((string) $this->request->flash('log_import'), true),
         ]);
     }
 

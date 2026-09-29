@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\HealthCheck as StoredCheck;
+use App\Models\MariadbLogEntry;
 use App\Models\Server;
 use Carbon\Carbon;
 
@@ -14,6 +15,16 @@ use Carbon\Carbon;
 class MariadbReportService extends HistoryReport
 {
     private const KEYS = ['server_status', 'connections', 'crashed_tables', 'replication', 'innodb_buffer_pool'];
+
+    /**
+     * Log levels charted, and their series names (notes are too many to chart).
+     */
+    private const LOG_LEVELS = ['crash' => 'Crashes', 'error' => 'Errors', 'warning' => 'Warnings', 'slow' => 'Slow queries'];
+
+    /**
+     * Interval for counting log entries, per report period.
+     */
+    private const LOG_BUCKET_MINUTES = ['24h' => 60, '7d' => 360, '30d' => 1440];
 
     /**
      * Chart series and table rows for a server over a period, oldest first.
@@ -35,8 +46,14 @@ class MariadbReportService extends HistoryReport
      *     crashed: array<string, list<array{0: int, 1: float}>>,
      *     uptime: array<string, list<array{0: int, 1: float}>>,
      *     rows: list<array<string, mixed>>,
-     *     bucket_minutes: int|null
+     *     bucket_minutes: int|null,
+     *     log: list<MariadbLogEntry>,
+     *     log_counts: array<string, list<array{0: int, 1: float}>>,
+     *     log_bucket_minutes: int
      * }
+     *
+     * log is the imported log entries in the period (newest first, up to
+     * 500); log_counts counts them per level in log_bucket_minutes intervals.
      */
     public function report(Server $server, string $range = self::DEFAULT_RANGE): array
     {
@@ -150,6 +167,54 @@ class MariadbReportService extends HistoryReport
             'uptime' => $named['uptime'],
             'rows' => array_values($rows),
             'bucket_minutes' => $bucket,
+            'log' => $this->logEntries($server, $from),
+            'log_counts' => $this->logCounts($server, $from, $to, $logBucket = self::LOG_BUCKET_MINUTES[$range] ?? self::LOG_BUCKET_MINUTES[self::DEFAULT_RANGE]),
+            'log_bucket_minutes' => $logBucket,
         ];
+    }
+
+    /**
+     * Imported log entries in the period, newest first.
+     *
+     * @return list<MariadbLogEntry>
+     */
+    private function logEntries(Server $server, Carbon $from, int $limit = 500): array
+    {
+        /** @var list<MariadbLogEntry> $entries */
+        $entries = MariadbLogEntry::query()->where('server_id', $server->id)->where('logged_at', '>=', $from)
+            ->orderByDesc('logged_at')->orderByDesc('id')->limit($limit)->get()->all();
+
+        return $entries;
+    }
+
+    /**
+     * Log entries per level and interval, zero-filled so quiet periods show as zero.
+     *
+     * @return array<string, list<array{0: int, 1: float}>> series name => points; only levels that occur
+     */
+    private function logCounts(Server $server, Carbon $from, Carbon $to, int $bucketMinutes): array
+    {
+        $seconds = $bucketMinutes * 60;
+        $start = intdiv($from->getTimestamp(), $seconds) * $seconds;
+        $counts = [];
+
+        foreach (MariadbLogEntry::query()->where('server_id', $server->id)->where('logged_at', '>=', $from)->get(['level', 'logged_at']) as $entry) {
+            $bucket = intdiv($entry->logged_at->getTimestamp(), $seconds) * $seconds;
+            $counts[$entry->level][$bucket] = ($counts[$entry->level][$bucket] ?? 0) + 1;
+        }
+
+        $series = [];
+
+        foreach (self::LOG_LEVELS as $level => $name) {
+            if (!isset($counts[$level])) {
+                continue;
+            }
+
+            for ($time = $start; $time <= $to->getTimestamp(); $time += $seconds) {
+                $series[$name][] = [$time, (float) ($counts[$level][$time] ?? 0)];
+            }
+        }
+
+        return $series;
     }
 }

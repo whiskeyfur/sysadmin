@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — MariaDB log import over SSH: reads the server's real option files (my_print_defaults list, includes followed) to find the error/slow logs or the systemd journal, parses and stores entries (`mariadb_log_entries`), shown on the MariaDB report with a count chart (`MariadbLogService`, `MariadbConfigParser`, `MariadbLogParser`).
 * 2026-09-29 — MariaDB reports: connections, buffer pool hit ratio, replication lag, crashed tables and uptime as line charts plus data table; report periods and averaging shared in `HistoryReport` (`MariadbReportService`, `reports/mariadb.blade.php`, `LineChart` scale floor).
 * 2026-09-29 — Scheduled checks every 5 minutes: `php leaf app:run-checks` from cron (or `--loop`), backing off to at most hourly for unreachable servers, never overlapping; SSH reports average dense data into buckets (`ScheduledCheckService`, `AppRunChecksCommand`, `SshReportService`).
 * 2026-09-29 — SSH reports: disk per filesystem, load and memory/swap over 24 h / 7 d / 30 d as server-rendered SVG line charts plus a data table, from the stored check runs (`SshReportService`, `App\Utils\LineChart`, `reports/ssh.blade.php`).
 * 2026-09-29 — Add item in each module's menu: SSL › Add (`/admin/ssl/new`, the certificate form moved off the SSL list), SSH › Add and MariaDB › Add (`/admin/ssh/new`, `/admin/mariadb/new`: that module's server form) (`SslController::create()`, `ServerConfigController::createSsh()/createMariadb()`).
-* 2026-09-29 — Servers managed per module: SSH/MariaDB pages add (new or existing server), edit and remove only their module; MariaDB logins pick database accounts; deleting a server drops its certificate links; menu highlights only the current item (`ServerService::saveModule()`/`removeModule()`, `ServerConfigController`, `servers/form.blade.php`).
 
 ---
 
@@ -118,6 +118,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * Host keys can be verified through the account at setup, as an explicit admin choice next to the manual fingerprint check — the user asked for it; the page warns it's weaker (an impostor in the middle sees the password and can fake the answer).
 * Non-admins can test servers and run checks, with a per-server cooldown — the user wants everyone able to test; the cooldown keeps repeated clicks from tripping fail2ban on monitored servers.
 * Scheduled checks back off after connection failures (up to hourly) — this machine's sshd bans on failures (fail2ban) and MariaDB blocks hosts after max_connect_errors; a check every 5 minutes against a broken login would otherwise get the app banned.
+* Log locations are read from MariaDB's own option files, never assumed — the user's explicit instruction; only when `my_print_defaults` is missing does the import fall back to the documented /etc/my.cnf and /etc/mysql/my.cnf.
 * Password login is opt-in per server and off by default — this machine's fail2ban bans on the first password attempt; the user said "no passwords, period" for it.
 * SSH passwords are kept (encrypted) only for servers that refuse key login after the key is installed — the user chose this fallback.
 * New servers default to verified MySQL TLS; existing ones were migrated to `off` so nothing broke — encrypt-only is offered with a warning for servers without a usable CA.

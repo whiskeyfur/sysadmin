@@ -1,0 +1,21 @@
+# MariaDB log lines imported over SSH (MariadbLogService). Kept HealthCheckService::RETENTION_DAYS.
+# source: "error" (error log file), "journal" (systemd journal, when there's no error log file) or "slow" (slow query log).
+# level: "note", "warning", "error", "crash" (the server died; message includes the stack trace) or "slow".
+# logged_at: UTC, converted from the server's own timezone.
+# hash: of server, source, time and message, so importing the same lines again adds nothing.
+timestamps: false
+columns:
+  server_id:
+    type: integer
+    index: true
+  source: string
+  level:
+    type: string
+    index: true
+  logged_at:
+    type: timestamp
+    index: true
+  message: text
+  hash:
+    type: string
+    unique: true

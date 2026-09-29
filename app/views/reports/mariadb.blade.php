@@ -4,10 +4,25 @@
 @section('width', 'wide')
 
 @section('content')
+    @if ($notice)
+        <div class="alert notice" role="status">{{ $notice }}</div>
+    @endif
+    @if ($error)
+        <div class="alert error" role="alert">{{ $error }}</div>
+    @endif
+
     <div class="card">
         <div class="actions" style="margin-top: 0; justify-content: space-between">
             <h1>MariaDB reports</h1>
-            @include('reports.picker', ['action' => '/mariadb/reports'])
+            <div class="row-actions">
+                @include('reports.picker', ['action' => '/mariadb/reports'])
+                @if ($canImport)
+                    <form method="post" action="/servers/{{ $server->id }}/import-log">
+                        @csrf
+                        <button type="submit" class="secondary" title="Read MariaDB's option files and logs on {{ $server->name }} over SSH">Import log</button>
+                    </form>
+                @endif
+            </div>
         </div>
         <p class="muted">Database health from each MariaDB check run: every {{ \App\Services\ScheduledCheckService::DEFAULT_INTERVAL_MINUTES }} minutes when checks are scheduled, and whenever someone runs them. Results are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days. Hover a point for its value.</p>
 
@@ -17,6 +32,20 @@
             <p class="muted">No MariaDB checks ran on {{ $server->name }} in this period. <a href="/servers/{{ $server->id }}">Run checks</a> to start collecting data.</p>
         @endif
     </div>
+
+    @if (is_array($import))
+        <div class="card">
+            <h2>Log import</h2>
+            <ul class="steps">
+                @foreach ($import['configuration'] as $line)
+                    <li>{{ $line }}</li>
+                @endforeach
+                @foreach ($import['sources'] as $source)
+                    <li class="{{ $source['problem'] ? 'failed' : 'ok' }}">{{ $source['label'] }} ({{ $source['where'] }}): {{ $source['read'] }} entr{{ $source['read'] === 1 ? 'y' : 'ies' }} in the last {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days, {{ $source['imported'] }} new.{{ $source['problem'] ? ' ' . $source['problem'] : '' }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
 
     @if ($server !== null && $report['rows'] !== [])
         @php($from = $report['from']->getTimestamp())
@@ -79,6 +108,48 @@
                 </tbody>
             </table>
             </div>
+        </div>
+    @endif
+
+    @if ($server !== null)
+        <div class="card">
+            <h2>Log</h2>
+            @if ($report['log'] === [])
+                <p class="muted">
+                    No imported log entries in this period.
+                    @if ($server->log_imported_at)
+                        Last imported {{ \App\Utils\LocalTime::format($server->log_imported_at) }}.
+                    @endif
+                    @if ($canImport)
+                        Use Import log to read {{ $server->name }}'s MariaDB logs.
+                    @elseif (!$server->sshReady())
+                        Importing the log needs SSH set up on {{ $server->name }}.
+                    @endif
+                </p>
+            @else
+                <p class="muted">From MariaDB's own logs on {{ $server->name }}{{ $server->log_imported_at ? ', last imported ' . \App\Utils\LocalTime::format($server->log_imported_at) : '' }}.{{ count($report['log']) >= 500 ? ' Showing the newest 500.' : '' }}</p>
+                @if ($report['log_counts'])
+                    {!! \App\Utils\LineChart::render('Log entries per ' . ($report['log_bucket_minutes'] >= 1440 ? 'day' : ($report['log_bucket_minutes'] / 60) . ' hour' . ($report['log_bucket_minutes'] > 60 ? 's' : '')), $report['log_counts'], $report['from']->getTimestamp(), $report['to']->getTimestamp()) !!}
+                @endif
+                <div class="table-wrap" style="margin-top: 16px">
+                <table class="top">
+                    <thead>
+                        <tr><th>Logged</th><th>Level</th><th>Source</th><th>Message</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach ($report['log'] as $entry)
+                            @php($badge = ['crash' => 'critical', 'error' => 'critical', 'warning' => 'warning', 'slow' => 'warning', 'note' => 'unknown'][$entry->level] ?? 'unknown')
+                            <tr>
+                                <td data-sort="{{ $entry->logged_at->getTimestamp() }}" style="white-space: nowrap">{{ \App\Utils\LocalTime::format($entry->logged_at, 'Y-m-d H:i:s') }}</td>
+                                <td data-sort="{{ ['note' => 0, 'slow' => 1, 'warning' => 2, 'error' => 3, 'crash' => 4][$entry->level] ?? 0 }}"><span class="badge {{ $badge }}">{{ ucfirst($entry->level) }}</span></td>
+                                <td class="muted">{{ ['error' => 'Error log', 'journal' => 'Journal', 'slow' => 'Slow log'][$entry->source] ?? $entry->source }}</td>
+                                <td><pre class="log-message">{{ $entry->message }}</pre></td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+                </div>
+            @endif
         </div>
     @endif
 @endsection

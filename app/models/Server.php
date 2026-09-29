@@ -35,6 +35,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string|null $last_test_message
  * @property int $check_interval_minutes
  * @property Carbon|null $last_checked_at
+ * @property Carbon|null $log_imported_at when the MariaDB log was last imported
  * @property string|null $last_health_status worst status of the last health check run
  * @property bool $ssl_enabled
  * @property string|null $ssl_hosts one per line, "host" or "host:port"
@@ -67,7 +68,7 @@ class Server extends Model
         'name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_host_key', 'ssh_auth', 'ssh_platform', 'ssh_password', 'ssh_password_allowed',
         'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca',
         'last_tested_at', 'last_test_ok', 'last_test_message',
-        'check_interval_minutes', 'last_checked_at', 'last_health_status',
+        'check_interval_minutes', 'last_checked_at', 'log_imported_at', 'last_health_status',
         'ssl_enabled', 'ssl_hosts', 'last_ssl_checked_at', 'last_ssl_status',
     ];
 
@@ -93,6 +94,7 @@ class Server extends Model
         'last_test_ok' => 'boolean',
         'check_interval_minutes' => 'integer',
         'last_checked_at' => 'datetime',
+        'log_imported_at' => 'datetime',
     ];
 
     /**

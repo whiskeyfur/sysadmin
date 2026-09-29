@@ -5,7 +5,9 @@ namespace App\Controllers;
 use App\DTOs\AuthContext;
 use App\Models\Server;
 use App\Models\SslBinding;
+use App\Exceptions\ServerConnectionException;
 use App\Services\HealthCheckService;
+use App\Services\MariadbLogService;
 use App\Services\ServerService;
 use App\Services\SshKeyService;
 use App\Services\SslMonitorService;
@@ -112,6 +114,35 @@ class ServerController extends Controller
     /**
      * The monitoring page a form was sent from, else $default.
      */
+    /**
+     * Import the server's MariaDB log over SSH (admins), then show the
+     * MariaDB report with what was found where.
+     */
+    public function importLog($id)
+    {
+        $server = $this->findOrRedirect($id);
+
+        if ($server === null) {
+            return;
+        }
+
+        $report = "/mariadb/reports?server={$server->id}";
+
+        try {
+            $result = (new MariadbLogService())->import($this->authContext()->user, $server);
+        } catch (DomainException | ServerConnectionException $e) {
+            $this->response->withFlash('error', "Couldn't import the log of {$server->name}: " . $e->getMessage())->redirect($report);
+
+            return;
+        }
+
+        $imported = array_sum(array_column($result['sources'], 'imported'));
+        $this->response
+            ->withFlash('notice', "Imported $imported new log entr" . ($imported === 1 ? 'y' : 'ies') . " from {$server->name}.")
+            ->withFlash('log_import', (string) json_encode($result))
+            ->redirect($report);
+    }
+
     private function back(string $default): string
     {
         $back = $this->request->get('back', false);

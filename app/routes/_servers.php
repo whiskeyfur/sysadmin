@@ -19,6 +19,8 @@ app()->get('/ssl/{id}', ['middleware' => Authenticate::class, 'SslController@sho
 // Testing and running checks: everyone signed in (non-admins wait CheckCooldown::SECONDS per server).
 app()->post('/servers/{id}/checks', ['middleware' => Authenticate::class, 'ServerController@runChecks']);
 app()->post('/servers/{id}/test', ['middleware' => Authenticate::class, 'ServerConfigController@test']);
+// Importing a MariaDB log reads the server's files over SSH: admins.
+app()->post('/servers/{id}/import-log', ['middleware' => RequireAdmin::class, 'ServerController@importLog']);
 app()->post('/ssl/check-all', ['middleware' => Authenticate::class, 'SslController@checkAll']);
 app()->post('/ssl/{id}/check', ['middleware' => Authenticate::class, 'SslController@check']);
 

@@ -44,6 +44,7 @@ uses()->beforeEach(function () {
     Schema::migrate('app/database/servers.yml');
     Schema::migrate('app/database/ssh_keypairs.yml');
     Schema::migrate('app/database/health_checks.yml');
+    Schema::migrate('app/database/mariadb_log_entries.yml');
     Schema::migrate('app/database/ssl_checks.yml');
     Schema::migrate('app/database/settings.yml');
     Schema::migrate('app/database/accounts.yml');

@@ -91,6 +91,12 @@
                                     @csrf
                                     <button type="submit" class="secondary">Test</button>
                                 </form>
+                                @if ($auth->isAdmin() && $kind === 'mysql' && $server->sshReady())
+                                    <form method="post" action="/servers/{{ $server->id }}/import-log">
+                                        @csrf
+                                        <button type="submit" class="secondary" title="Read MariaDB's option files and logs over SSH">Import log</button>
+                                    </form>
+                                @endif
                                 @if ($auth->isAdmin())
                                     <a class="button secondary-link" href="/admin/servers/{{ $server->id }}/edit?kind={{ $kind }}&amp;back=/{{ $kind === 'ssh' ? 'ssh' : 'mariadb' }}">Edit</a>
                                     <form method="post" action="/admin/servers/{{ $server->id }}/remove" data-confirm="Stop monitoring {{ $title }} on {{ $server->name }}? Its other monitoring stays; a server left with nothing to monitor is deleted.">

@@ -24,6 +24,10 @@ class AppRunChecksCommand extends Command
 
     protected function handle()
     {
+        if (!\App\Utils\DatabaseConfig::isConfigured()) {
+            return 0; // not installed yet: nothing to check (quietly, it runs every minute)
+        }
+
         // One run at a time: a slow server must not make runs pile up.
         $lock = new FileSemaphore(StoragePath('framework/scheduler'), 1);
 

@@ -1,0 +1,8 @@
+{
+    "driver": "mysql",
+    "host": "localhost",
+    "port": 3306,
+    "database": "sysadmin",
+    "username": "sysadmin",
+    "password": "VdQte99830So5ylkRqzkRu9xTdyZTjRfWoh5NkufYzoJRqMRv0vwJ6Hp5WD7yavbGdMC2p8MIkkCOt6BqYn2deWMLceifQTR"
+}

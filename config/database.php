@@ -1,5 +1,8 @@
 <?php
 
+// The connection the install wizard saved (storage/app/db/connection.json); see App\Utils\DatabaseConfig.
+$saved = \App\Utils\DatabaseConfig::connection();
+
 return [
 
     /*
@@ -15,7 +18,9 @@ return [
     // This app stores its own data in SQLite. Defaulting to it (not Leaf's
     // "mysql") means a missing or incomplete .env can't send migrations to a
     // local MySQL server's "forge" database.
-    'default' => _env('DB_CONNECTION', 'sqlite'),
+    // The saved connection; else DB_CONNECTION from .env (installs from before the wizard); else none yet,
+    // and every page leads to the wizard (the RequireDatabase middleware).
+    'default' => $saved !== null ? 'app' : (\App\Utils\DatabaseConfig::isConfigured() ? _env('DB_CONNECTION', 'sqlite') : 'unconfigured'),
 
     /*
     |--------------------------------------------------------------------------
@@ -32,7 +37,12 @@ return [
     | choice installed on your machine before you begin development.
     |
     */
-    'connections' => [
+    'connections' => array_filter([
+        'app' => $saved,
+
+        // Until a database is set up: nothing persists, and nothing should query it.
+        'unconfigured' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
+
         'sqlite' => [
             'driver' => 'sqlite',
             'url' => _env('DATABASE_URL'),
@@ -48,9 +58,10 @@ return [
             'url' => _env('DATABASE_URL'),
             'host' => _env('DB_HOST', '127.0.0.1'),
             'port' => _env('DB_PORT', '3306'),
-            'database' => _env('DB_DATABASE', 'forge'),
-            'username' => _env('DB_USERNAME', 'forge'),
-            'password' => _env('DB_PASSWORD', ''),
+            // This app's .env names them DB_NAME, DB_USER and DB_PASS (Laravel's names still work).
+            'database' => _env('DB_NAME', _env('DB_DATABASE', 'forge')),
+            'username' => _env('DB_USER', _env('DB_USERNAME', 'forge')),
+            'password' => _env('DB_PASS', _env('DB_PASSWORD', '')),
             'unix_socket' => _env('DB_SOCKET', ''),
             'charset' => _env('DB_CHARSET', 'utf8mb4'),
             'collation' => _env('DB_COLLATION', 'utf8mb4_unicode_ci'),
@@ -58,6 +69,9 @@ return [
             'prefix_indexes' => true,
             'strict' => true,
             'engine' => null,
+            // Times are stored in UTC: TIMESTAMP columns convert from the session's time zone, which is
+            // the server's own (e.g. PDT) unless set.
+            'timezone' => '+00:00',
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 (PHP_VERSION_ID >= 80400 ? Pdo\Mysql::ATTR_SSL_CA : PDO::MYSQL_ATTR_SSL_CA) => _env('MYSQL_ATTR_SSL_CA'),
             ]) : [],
@@ -90,5 +104,5 @@ return [
             'prefix' => '',
             'prefix_indexes' => true,
         ],
-    ],
+    ]),
 ];

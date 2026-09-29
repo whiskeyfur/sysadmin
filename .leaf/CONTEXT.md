@@ -97,6 +97,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Apache without its control program in PATH: the admin sets the main configuration file (`servers.apache_config_file`), read with its includes followed (`ApacheConfigFiles`).
 * 2026-09-29 — Apache in Docker/Podman containers: found when the host has no working `-S`, remembered (`servers.apache_container`), commands run via `ContainerShell`, container output read with `logs --since`; Apache 2.2 read from `-V` + its main file (`ApacheConfigParser::compiled()`/`answered()`).
 * 2026-09-29 — Apache logs can be set by hand per server (`apache_error_logs`/`apache_access_logs`); virtual hosts discovered from the configuration (`apache_vhosts`), with a Vhosts menu: List (SSL coverage, Monitor link) and Reports (per-vhost traffic/errors from its logs).
+* 2026-09-29 — Database setup wizard (`/install/database`, install code) and `php leaf app:db-setup`: MariaDB/MySQL, PostgreSQL or SQLite; an admin account gets the database plus a restricted app user with a generated password; existing SQLite data copied; connection saved encrypted in storage/app/db/connection.json (`DatabaseConfig`, `DatabaseSetupService`).
 
 ---
 

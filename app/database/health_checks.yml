@@ -17,7 +17,7 @@ columns:
     type: string
     nullable: true
   details:
-    type: text
+    type: mediumText
     nullable: true
   checked_at:
     type: timestamp

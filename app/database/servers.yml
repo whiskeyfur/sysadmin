@@ -67,7 +67,7 @@ columns:
     type: string
     default: 'off'
   mysql_tls_ca:
-    type: text
+    type: mediumText
     nullable: true
   last_tested_at:
     type: timestamp
@@ -100,18 +100,19 @@ columns:
     type: boolean
     default: false
   apache_config:
-    type: text
+    type: longText
     nullable: true
   apache_scanned_at:
     type: timestamp
     nullable: true
   apache_import_state:
-    type: text
+    type: mediumText
     nullable: true
   # apache_config_file: Apache's main configuration file (e.g. /etc/httpd/conf/httpd.conf), read directly
   #   when its control program isn't in the SSH user's PATH; null to rely on the control program.
   apache_config_file:
     type: string
+    length: 500
     nullable: true
   # apache_error_logs / apache_access_logs: log files set by hand, one full path per line, read as well as
   #   those the configuration names (and on their own when Apache's configuration can't be found).
@@ -137,7 +138,7 @@ columns:
     nullable: true
   # JSON: per log file, how far the last import read (inode and byte offset), so scheduled imports read only new lines.
   log_import_state:
-    type: text
+    type: mediumText
     nullable: true
   # The last import's outcome, e.g. "12 new entries" or a permission problem (imports also run on a schedule).
   log_import_message:

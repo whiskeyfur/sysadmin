@@ -37,7 +37,8 @@ declare(strict_types=1);
 | routes in your application.
 |
 */
-// app()->use(ExampleMiddleware::class);
+// Until a database is set up, every page leads to the install wizard.
+app()->use(\App\Middleware\RequireDatabase::class);
 /*
 |--------------------------------------------------------------------------
 | Your application routes

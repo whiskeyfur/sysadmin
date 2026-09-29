@@ -24,15 +24,18 @@ columns:
     default: false
   document_root:
     type: string
+    length: 1024
     nullable: true
   error_log:
     type: string
+    length: 1024
     nullable: true
   access_logs:
     type: text
     nullable: true
   config_file:
     type: string
+    length: 1024
     nullable: true
   first_seen_at: timestamp
   last_seen_at: timestamp

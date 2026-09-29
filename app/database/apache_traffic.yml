@@ -6,7 +6,9 @@ columns:
   server_id:
     type: integer
     index: true
-  log: string
+  log:
+    type: string
+    length: 1024
   bucket_at:
     type: timestamp
     index: true

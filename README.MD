@@ -131,15 +131,28 @@ php leaf db:migrate                  # creates the SQLite database in storage/ap
 - Without a `.env`, `php leaf key:generate` still says "APP_KEY generated successfully" but saves nothing. Check with `grep APP_KEY .env` (Linux/macOS) or `findstr APP_KEY .env` (Windows); it should show `APP_KEY=base64:...`.
 - In `.env`, set `APP_TIMEZONE` to your timezone (e.g. `America/Los_Angeles`) so times show in local time.
 
-Run it:
+Run it (the same on Windows, Linux and macOS):
 
 ```bash
-leaf serve                      # or: php -S localhost:5500 -t public public/index.php
+php leaf app:start              # PHP's built-in web server at APP_URL (default http://localhost:5500)
+php leaf app:start --port=8080  # or pick the port (and --host=0.0.0.0 to allow other machines)
 ```
 
-Then open the address it prints (by default <http://localhost:5500>, the `APP_URL` in `.env`). On a fresh install, sign in as **`admin`** with password **`changeme`**. You'll be asked to choose a new password and set up an authenticator app (e.g. Google Authenticator) straight away. Do this right after installing: until then, anyone who can reach the site can claim that account.
+Stop it with Ctrl+C. Then open <http://localhost:5500> (or the address it prints). On a fresh install, sign in as **`admin`** with password **`changeme`**. You'll be asked to choose a new password and set up an authenticator app (e.g. Google Authenticator) straight away. Do this right after installing: until then, anyone who can reach the site can claim that account.
 
 To serve it with Apache instead, point the site's `DocumentRoot` at `public/` with `AllowOverride All`, and make `storage/` writable by the web server user (e.g. `chgrp -R www-data storage && chmod -R g+w storage`).
+
+## Updating
+
+From the project folder (Windows, Linux and macOS):
+
+```bash
+php leaf app:update             # git pull, composer install, db:migrate
+```
+
+- `git pull` is fast-forward only, so local changes are never merged or overwritten; if it fails, commit or stash them and try again. Use `--no-pull` to skip it.
+- In a copy that isn't a git checkout (e.g. from a zip), it skips the pull: replace the files by hand, then run it to install dependencies and apply database changes.
+- Restart the server afterwards if it's running.
 
 ## Development
 

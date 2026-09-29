@@ -48,7 +48,7 @@ The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice
 ### Commands
 
 - `composer install` installs dependencies.
-- `leaf serve` (or `composer dev`) runs the dev server.
+- `php leaf app:start` serves the app with PHP's built-in server at `APP_URL` (`--host`, `--port` override; never rewrites `.env`, unlike `leaf serve`). `php leaf app:update` runs `git pull --ff-only`, `composer install` and `db:migrate`, stopping at the first failure. Both are project console commands in `app/console` (auto-registered as `App\Console\<file name>`); run external programs with `Leaf\Sprout\Process` and `setTimeout(null)` (its default is 60 s). Don't use colons inside Sprout option descriptions: they cut the help text off.
 - `php leaf list` shows project commands. Use the generators rather than hand-writing boilerplate: `php leaf g:controller`, `g:model`, `g:schema`, `g:middleware`, `g:route`, `g:template`.
 - `php leaf db:migrate` applies schema files; `db:seed`, `db:rollback` and `db:reset` also exist.
 - `leaf context` prints a compact map of the app.

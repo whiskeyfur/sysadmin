@@ -91,3 +91,36 @@ test('servers are listed by name', function () {
 
     expect(array_map(fn (Server $s) => $s->name, $this->servers->all()))->toBe(['db-1', 'web-2', 'web-10']);
 });
+
+test('TLS defaults to verify and a pasted CA is validated', function () {
+    $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
+    openssl_x509_export(openssl_csr_sign(openssl_csr_new(['commonName' => 'Internal CA'], $key), null, $key, 30), $ca);
+
+    $server = $this->servers->create($this->admin, $this->input);
+
+    expect($server->mysql_tls)->toBe(Server::TLS_VERIFY)
+        ->and($server->mysql_tls_ca)->toBeNull();
+
+    $this->servers->update($this->admin, $server, array_merge($this->input, ['mysql_tls' => 'verify', 'mysql_tls_ca' => $ca]));
+
+    expect($server->fresh()->mysql_tls_ca)->toContain('BEGIN CERTIFICATE');
+
+    // The CA only applies when verifying.
+    $this->servers->update($this->admin, $server, array_merge($this->input, ['mysql_tls' => 'encrypt', 'mysql_tls_ca' => $ca]));
+
+    expect($server->fresh()->mysql_tls_ca)->toBeNull();
+});
+
+test('bad TLS settings are rejected', function (array $override) {
+    $this->servers->create($this->admin, array_merge($this->input, $override));
+})->throws(DomainException::class)->with([
+    [['mysql_tls' => 'maybe']],
+    [['mysql_tls' => 'verify', 'mysql_tls_ca' => 'not a certificate']],
+]);
+
+test('turning MySQL off also resets TLS', function () {
+    $server = $this->servers->create($this->admin, $this->input);
+    $this->servers->update($this->admin, $server, array_merge($this->input, ['mysql_enabled' => '']));
+
+    expect($server->fresh()->mysql_tls)->toBe(Server::TLS_OFF);
+});

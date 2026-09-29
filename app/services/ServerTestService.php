@@ -44,8 +44,13 @@ class ServerTestService
 
         if ($server->mysql_enabled) {
             try {
-                $version = $this->mysql->connect($server)->query('SELECT VERSION()')?->fetch(PDO::FETCH_COLUMN);
-                [$mysqlOk, $mysqlMessage] = [true, "connected ($version)."];
+                $pdo = $this->mysql->connect($server);
+                $version = $pdo->query('SELECT VERSION()')?->fetch(PDO::FETCH_COLUMN);
+                $tls = $this->mysql->tls($pdo);
+                $encryption = $tls === null
+                    ? 'unencrypted'
+                    : "{$tls['version']} {$tls['cipher']}" . ($server->mysql_tls === Server::TLS_ENCRYPT ? ', certificate not checked' : ', certificate verified');
+                [$mysqlOk, $mysqlMessage] = [true, "connected ($version, $encryption)."];
             } catch (ServerConnectionException $e) {
                 [$mysqlOk, $mysqlMessage] = [false, $e->getMessage()];
             }

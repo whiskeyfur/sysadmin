@@ -34,6 +34,13 @@
                             <td>
                                 @if ($server->mysql_enabled)
                                     <code>{{ $server->mysqlHost() }}:{{ $server->mysql_port }}</code>
+                                    @if ($server->mysql_tls === 'verify')
+                                        <span class="badge ok">TLS</span>
+                                    @elseif ($server->mysql_tls === 'encrypt')
+                                        <span class="badge untested" title="Encrypted, certificate not checked">TLS, unverified</span>
+                                    @else
+                                        <span class="badge failed">Unencrypted</span>
+                                    @endif
                                 @else
                                     <span class="muted">Not configured</span>
                                 @endif

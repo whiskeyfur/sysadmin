@@ -6,6 +6,7 @@ use App\DTOs\AuthContext;
 use App\DTOs\ServerTestResult;
 use App\Exceptions\ServerConnectionException;
 use App\Models\Server;
+use App\Services\CaCertificateService;
 use App\Services\ServerService;
 use App\Services\ServerTestService;
 use App\Services\SshKeyService;
@@ -18,7 +19,7 @@ use DomainException;
  */
 class ServerController extends Controller
 {
-    private const FIELDS = ['name', 'hostname', 'ssh_port', 'ssh_username', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username'];
+    private const FIELDS = ['name', 'hostname', 'ssh_port', 'ssh_username', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_tls', 'mysql_tls_ca'];
 
     private readonly ServerService $servers;
 
@@ -44,7 +45,7 @@ class ServerController extends Controller
 
     public function create()
     {
-        $this->renderForm(new Server(['ssh_port' => 22, 'mysql_port' => 3306]));
+        $this->renderForm(new Server(['ssh_port' => 22, 'mysql_port' => 3306, 'mysql_tls' => Server::TLS_VERIFY]));
     }
 
     public function store()
@@ -144,6 +145,7 @@ class ServerController extends Controller
         $this->response->view('servers.form', [
             'auth' => $this->authContext(),
             'server' => $server,
+            'caCertificates' => $server->mysql_tls_ca ? (new CaCertificateService())->describe($server->mysql_tls_ca) : [],
             'error' => $error,
         ], $error === null ? 200 : 422);
     }

@@ -19,18 +19,30 @@ use Carbon\Carbon;
  * @property int $mysql_port
  * @property string|null $mysql_username
  * @property string|null $mysql_password encrypted with SecretCipher
+ * @property string $mysql_tls one of the TLS_* constants
+ * @property string|null $mysql_tls_ca PEM CA certificate(s) for TLS_VERIFY; null = system CAs
  * @property Carbon|null $last_tested_at
  * @property bool|null $last_test_ok
  * @property string|null $last_test_message
  */
 class Server extends Model
 {
+    public const TLS_OFF = 'off';
+
+    // Encrypted, but the certificate isn't checked: stops eavesdropping, not impersonation.
+    public const TLS_ENCRYPT = 'encrypt';
+
+    // Encrypted, certificate chain and hostname checked.
+    public const TLS_VERIFY = 'verify';
+
+    public const TLS_MODES = [self::TLS_VERIFY, self::TLS_ENCRYPT, self::TLS_OFF];
+
     /**
      * @var list<string>
      */
     protected $fillable = [
         'name', 'hostname', 'ssh_port', 'ssh_username', 'ssh_host_key',
-        'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_password',
+        'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca',
         'last_tested_at', 'last_test_ok', 'last_test_message',
     ];
 

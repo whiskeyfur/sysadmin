@@ -2,6 +2,8 @@
 # ssh_host_key: the server's trusted SSH host key ("type base64"); null until
 #   an admin trusts it. Cleared when hostname or ssh_port changes.
 # mysql_password: encrypted with SecretCipher; write-only in the UI.
+# mysql_tls: "off", "encrypt" (no certificate check) or "verify" (CA + hostname).
+# mysql_tls_ca: optional CA certificate(s) in PEM for "verify"; null = system CAs.
 columns:
   name:
     type: string
@@ -27,6 +29,12 @@ columns:
     type: string
     nullable: true
   mysql_password:
+    type: text
+    nullable: true
+  mysql_tls:
+    type: string
+    default: 'off'
+  mysql_tls_ca:
     type: text
     nullable: true
   last_tested_at:

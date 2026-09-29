@@ -16,8 +16,10 @@ use DomainException;
  */
 class ServerService
 {
-    public function __construct(private readonly SecretCipher $cipher = new SecretCipher())
-    {
+    public function __construct(
+        private readonly SecretCipher $cipher = new SecretCipher(),
+        private readonly CaCertificateService $certificates = new CaCertificateService(),
+    ) {
     }
 
     /**
@@ -141,6 +143,16 @@ class ServerService
                 throw new DomainException('Enter the MySQL password.');
             }
 
+            $tls = (string) ($input['mysql_tls'] ?? Server::TLS_VERIFY);
+
+            if (!in_array($tls, Server::TLS_MODES, true)) {
+                throw new DomainException('Choose a TLS setting for MySQL.');
+            }
+
+            $ca = trim((string) ($input['mysql_tls_ca'] ?? ''));
+            $server->mysql_tls = $tls;
+            $server->mysql_tls_ca = $tls === Server::TLS_VERIFY && $ca !== '' ? $this->certificates->normalize($ca) : null;
+
             $server->mysql_host = $mysqlHost !== '' ? $mysqlHost : null;
             $server->mysql_port = $this->port($input['mysql_port'] ?? 3306, 'MySQL port');
             $server->mysql_username = $mysqlUsername;
@@ -149,6 +161,8 @@ class ServerService
             $server->mysql_host = null;
             $server->mysql_username = null;
             $server->mysql_password = null;
+            $server->mysql_tls = Server::TLS_OFF;
+            $server->mysql_tls_ca = null;
         }
 
         $server->save();

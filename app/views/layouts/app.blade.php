@@ -33,7 +33,8 @@
         p { margin: 0 0 12px; }
         .muted { color: var(--muted); }
         label { display: block; font-weight: 600; margin: 16px 0 6px; }
-        input[type=text], input[type=password], select { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+        input[type=text], input[type=password], select, textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+        textarea { font: 12px/1.5 ui-monospace, monospace; }
         input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         .hint { font-size: 13px; color: var(--muted); margin-top: 4px; }
         button, .button { display: inline-block; padding: 9px 16px; border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }

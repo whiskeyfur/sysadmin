@@ -52,7 +52,25 @@
                     <input type="text" id="mysql_username" name="mysql_username" value="{{ $server->mysql_username }}" autocapitalize="none" autocomplete="off">
                     <label for="mysql_password">Password</label>
                     <input type="password" id="mysql_password" name="mysql_password" autocomplete="new-password" placeholder="{{ $server->mysql_password ? 'Unchanged' : '' }}">
-                    <p class="hint">Connects directly over TCP, so the database must accept connections from this machine. Stored encrypted and never shown again{{ $server->mysql_password ? '; leave blank to keep the current password' : '' }}. A read-only monitoring user is enough.</p>
+                    <p class="hint">Stored encrypted and never shown again{{ $server->mysql_password ? '; leave blank to keep the current password' : '' }}. A monitoring user with only SELECT and PROCESS is enough.</p>
+
+                    <label for="mysql_tls">Encryption (TLS)</label>
+                    <select id="mysql_tls" name="mysql_tls">
+                        <option value="verify" {{ $server->mysql_tls === 'verify' ? 'selected' : '' }}>Encrypt and verify the certificate (recommended)</option>
+                        <option value="encrypt" {{ $server->mysql_tls === 'encrypt' ? 'selected' : '' }}>Encrypt, don't check the certificate</option>
+                        <option value="off" {{ $server->mysql_tls === 'off' ? 'selected' : '' }}>Off: unencrypted</option>
+                    </select>
+                    <p class="hint" data-tls="encrypt">Stops eavesdropping, but not someone impersonating the server. Use only if you can't get the server's CA certificate.</p>
+                    <p class="hint" data-tls="off">The password and all query results cross the network in plain text. Only for a trusted local network.</p>
+
+                    <div data-tls="verify">
+                        <label for="mysql_tls_ca">CA certificate <span class="muted">(optional)</span></label>
+                        <textarea id="mysql_tls_ca" name="mysql_tls_ca" rows="5" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----">{{ $server->mysql_tls_ca }}</textarea>
+                        <p class="hint">Leave blank if the database's certificate comes from a public CA. For an internal or self-signed setup, paste the CA certificate (PEM), e.g. the file MariaDB's <code>ssl_ca</code> points to. The certificate must be issued for the host above.</p>
+                        @foreach ($caCertificates as $certificate)
+                            <p class="hint">Current CA: <strong>{{ $certificate['subject'] }}</strong>, expires {{ $certificate['expires']->format('Y-m-d') }}{{ $certificate['expires']->isPast() ? ' (expired)' : '' }}.</p>
+                        @endforeach
+                    </div>
                 </div>
             </fieldset>
 
@@ -67,8 +85,13 @@
         (function () {
             var toggle = document.getElementById('mysql_enabled');
             var fields = document.getElementById('mysql_fields');
-            function sync() { fields.hidden = !toggle.checked; }
+            var tls = document.getElementById('mysql_tls');
+            function sync() {
+                fields.hidden = !toggle.checked;
+                document.querySelectorAll('[data-tls]').forEach(function (el) { el.hidden = el.dataset.tls !== tls.value; });
+            }
             toggle.addEventListener('change', sync);
+            tls.addEventListener('change', sync);
             sync();
         })();
     </script>

@@ -13,7 +13,10 @@ use App\Models\User;
 use App\Services\Checks\BufferPoolCheck;
 use App\Services\Checks\ConnectionsCheck;
 use App\Services\Checks\CrashedTablesCheck;
+use App\Services\Checks\DatabaseSizeCheck;
 use App\Services\Checks\DiskCheck;
+use App\Services\Checks\DisksCheck;
+use App\Services\Checks\FileIoCheck;
 use App\Services\Checks\LoadCheck;
 use App\Services\Checks\MemoryCheck;
 use App\Services\Checks\ReplicationCheck;
@@ -88,6 +91,10 @@ class HealthCheckService
                 $settings->integer(SettingsService::MYSQL_LAG_CRITICAL_SECONDS),
             ),
             new BufferPoolCheck($settings->integer(SettingsService::MYSQL_BUFFER_POOL_WARNING_PERCENT)),
+            // Optional sources: say "not available" (and stay OK) when not set up.
+            new DisksCheck(new DiskCheck($settings->diskWarningPercent(), $settings->diskCriticalPercent())),
+            new FileIoCheck(),
+            new DatabaseSizeCheck(),
         ];
     }
 

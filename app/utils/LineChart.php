@@ -42,9 +42,11 @@ class LineChart
         $top = $max ?? self::niceCeiling(max($values) * 1.1);
         $top = $top > $min ? $top : $min + 1;
         $span = max(1, $to - $from);
-        $plotWidth = self::WIDTH - self::LEFT - self::RIGHT;
+        // Room for the widest value label (about 7 units per character at 12px).
+        $left = max(self::LEFT, 12 + 7 * max(array_map(fn (int $i) => strlen(self::number($min + ($top - $min) * $i / 4) . $unit), range(0, 4))));
+        $plotWidth = self::WIDTH - $left - self::RIGHT;
         $plotHeight = self::HEIGHT - self::TOP - self::BOTTOM;
-        $x = fn (int $time) => self::LEFT + ($time - $from) / $span * $plotWidth;
+        $x = fn (int $time) => $left + ($time - $from) / $span * $plotWidth;
         $y = fn (float $value) => self::TOP + (1 - (max($min, min($value, $top)) - $min) / ($top - $min)) * $plotHeight;
         $e = fn (string $text) => htmlspecialchars($text, ENT_QUOTES);
 
@@ -59,8 +61,8 @@ class LineChart
         for ($i = 0; $i <= 4; $i++) {
             $value = $min + ($top - $min) * $i / 4;
             $lineY = round($y($value), 1);
-            $svg[] = sprintf('<line x1="%d" x2="%d" y1="%s" y2="%s" class="grid"/>', self::LEFT, self::WIDTH - self::RIGHT, $lineY, $lineY);
-            $svg[] = sprintf('<text x="%d" y="%s" class="axis" text-anchor="end" dominant-baseline="middle">%s</text>', self::LEFT - 6, $lineY, $e(self::number($value) . $unit));
+            $svg[] = sprintf('<line x1="%d" x2="%d" y1="%s" y2="%s" class="grid"/>', $left, self::WIDTH - self::RIGHT, $lineY, $lineY);
+            $svg[] = sprintf('<text x="%d" y="%s" class="axis" text-anchor="end" dominant-baseline="middle">%s</text>', $left - 6, $lineY, $e(self::number($value) . $unit));
         }
 
         // Time labels: start, middle, end.

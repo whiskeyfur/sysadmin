@@ -128,9 +128,7 @@
     @if ($server->mysql_enabled)
     <div class="card">
         <h2>Monitoring user</h2>
-        <p>The checks need these privileges; a check without them reports <em>Unknown</em>:</p>
-        <code class="pubkey">GRANT SELECT, PROCESS, SLAVE MONITOR ON *.* TO 'sys_monitor'@'this-host';</code>
-        <p class="hint">SELECT lets the crashed-table check run CHECK TABLE; SLAVE MONITOR (MariaDB 10.5+; REPLICATION CLIENT on older versions and MySQL) lets it read replication status.</p>
+        @include('servers.grants')
     </div>
     @endif
 

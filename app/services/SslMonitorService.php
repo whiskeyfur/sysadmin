@@ -140,8 +140,22 @@ class SslMonitorService
             return null;
         }
 
+        return $this->addNames($certificate, $names);
+    }
+
+    /**
+     * Append the hostnames not listed yet.
+     *
+     * @param list<string> $names
+     * @return list<string> the ones added
+     */
+    private function addNames(SslCertificate $certificate, array $names): array
+    {
         $listed = $certificate->hostnameList();
-        $added = array_values(array_filter($names, fn (string $name) => $this->isHostname(str_starts_with($name, '*.') ? substr($name, 2) : $name) && !in_array($name, $listed, true)));
+        $added = array_values(array_unique(array_filter(
+            array_map('strtolower', $names),
+            fn (string $name) => $this->isHostname(str_starts_with($name, '*.') ? substr($name, 2) : $name) && !in_array($name, $listed, true),
+        )));
 
         if ($added !== []) {
             $certificate->hostnames = implode("\n", [...$listed, ...$added]);
@@ -358,6 +372,7 @@ class SslMonitorService
         $now = Carbon::instance($this->clock->now())->startOfSecond();
         $certificates = [];
         $servers = [];
+        $importNames = (new SettingsService())->integer(SettingsService::SSL_IMPORT_NAMES) === 1;
 
         foreach ($bindings as $binding) {
             $certificate = $binding->certificate;
@@ -374,6 +389,12 @@ class SslMonitorService
             );
             $this->store($binding, $result, $now);
             $certificates[$certificate->id] = $certificate;
+
+            // Keep the hostname list in step with the certificate (e.g. a renewal that added a name),
+            // but only from a certificate that checked out: an invalid one could be anyone's.
+            if ($importNames && $result->status !== HealthStatus::Critical && is_array($result->details['names'] ?? null)) {
+                $this->addNames($certificate, array_values(array_map('strval', $result->details['names'])));
+            }
 
             if ($binding->server !== null) {
                 $servers[$binding->server->id] = $binding->server;

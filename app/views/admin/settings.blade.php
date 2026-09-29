@@ -25,6 +25,13 @@
                     <label for="ssl_warning_days">Warning period (days)</label>
                     <input type="text" id="ssl_warning_days" name="ssl_warning_days" value="{{ $value('ssl_warning_days') }}" inputmode="numeric" required>
                     <p class="hint">A valid certificate shows as a warning once it expires within this many days (1–365, default {{ $default('ssl_warning_days') }}). Expired or otherwise invalid certificates are always critical.</p>
+
+                    <label for="ssl_import_names">Hostnames found in certificates</label>
+                    <select id="ssl_import_names" name="ssl_import_names">
+                        <option value="1" {{ $value('ssl_import_names') === 1 ? 'selected' : '' }}>Add them to the certificate's list automatically</option>
+                        <option value="0" {{ $value('ssl_import_names') === 0 ? 'selected' : '' }}>Leave the list as I set it</option>
+                    </select>
+                    <p class="hint">Every check (scheduled every {{ \App\Services\ScheduledCheckService::DEFAULT_INTERVAL_MINUTES }} minutes) reads the hostnames a certificate covers (SAN); new ones, e.g. from a renewal, are added. Only from certificates that check out as valid.</p>
                 </fieldset>
             @elseif ($section === 'ssh')
                 <fieldset>

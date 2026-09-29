@@ -19,6 +19,8 @@ beforeEach(function () {
     // Stand-in checker: records (host, port, connectTo, expected) and returns a status per connectTo.
     $this->checker = new class () extends SslCheckService {
         public array $statuses = [];
+        /** @var list<string> names the served certificate has beyond the listed ones */
+        public array $extraNames = [];
         public array $calls = [];
 
         public function __construct()
@@ -30,7 +32,7 @@ beforeEach(function () {
             $this->calls[] = [$host, $port, $connectTo, $expectedNames];
             $status = $this->statuses[$connectTo ?? 'dns'] ?? HealthStatus::Ok;
 
-            return new CheckResult("ssl:$host:$port", $host, $status, "$host via " . ($connectTo ?? 'dns') . " is {$status->value}", 60.0, 'days', ['names' => $expectedNames]);
+            return new CheckResult("ssl:$host:$port", $host, $status, "$host via " . ($connectTo ?? 'dns') . " is {$status->value}", 60.0, 'days', ['names' => [...$expectedNames, ...$this->extraNames]]);
         }
 
         /** @var list<string>|null what the served certificate lists */
@@ -242,4 +244,22 @@ test('bindings whose certificate or server is gone are dropped, and never break 
         ->and(SslBinding::query()->find($orphanCertificate->id))->toBeNull()
         ->and(SslBinding::query()->find($orphanServer->id))->toBeNull()
         ->and(SslBinding::query()->where('certificate_id', $kept->id)->count())->toBe(1);
+});
+
+test('checks add hostnames a valid certificate covers; not from an invalid one, and not when turned off', function () {
+    $certificate = ($this->certificate)(['port' => '443']);
+    $this->checker->extraNames = ['api.shop.example.com', 'Shop.Example.com'];
+
+    $this->ssl->checkCertificate($this->admin, $certificate);
+    expect($certificate->fresh()->hostnameList())->toBe(['shop.example.com', 'www.shop.example.com', 'api.shop.example.com']);
+
+    $this->checker->extraNames = ['evil.example.net'];
+    $this->checker->statuses = ['dns' => HealthStatus::Critical];
+    $this->ssl->checkCertificate($this->admin, $certificate->fresh());
+    expect($certificate->fresh()->hostnameList())->not->toContain('evil.example.net');
+
+    (new App\Services\SettingsService())->update($this->admin, ['ssl_import_names' => '0']);
+    $this->checker->statuses = [];
+    $this->ssl->checkCertificate($this->admin, $certificate->fresh());
+    expect($certificate->fresh()->hostnameList())->not->toContain('evil.example.net');
 });

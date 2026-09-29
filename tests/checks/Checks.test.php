@@ -102,3 +102,34 @@ test('crashed tables: warnings and missing privileges are reported, not hidden',
     expect($check->evaluate([], [['Table' => 'a.b', 'Msg_type' => 'warning', 'Msg_text' => '1 client is using or hasn\'t closed the table properly']], 1)->status)->toBe(HealthStatus::Warning)
         ->and($check->evaluate([], [['Table' => 'a.b', 'Msg_type' => 'error', 'Msg_text' => 'SELECT command denied to user']], 1)->status)->toBe(HealthStatus::Unknown);
 });
+
+test('disk space through MariaDB: not installed, no FILE privilege, or judged like the SSH disk check', function () {
+    $check = new App\Services\Checks\DisksCheck(new App\Services\Checks\DiskCheck(85, 95));
+    $rows = [
+        ['Disk' => 'tmpfs', 'Path' => '/run', 'Total' => 100, 'Used' => 99, 'Available' => 1],
+        ['Disk' => '/dev/nvme0n1p3', 'Path' => '/', 'Total' => 1000, 'Used' => 400, 'Available' => 600],
+        ['Disk' => '/dev/sdb1', 'Path' => '/data', 'Total' => 1000, 'Used' => 900, 'Available' => 100],
+    ];
+
+    expect($check->evaluate(null)->summary)->toContain('DISKS plugin')
+        ->and($check->evaluate(null)->status)->toBe(HealthStatus::Ok)
+        ->and($check->evaluate([])->summary)->toContain('FILE privilege')
+        ->and($check->evaluate($rows)->status)->toBe(HealthStatus::Warning)
+        ->and(array_keys($check->evaluate($rows)->details['mounts']))->toBe(['/', '/data'])
+        ->and($check->evaluate($rows)->key)->toBe('disk_space');
+});
+
+test('file I/O and database size read through MariaDB', function () {
+    $io = new App\Services\Checks\FileIoCheck();
+    $sizes = (new App\Services\Checks\DatabaseSizeCheck())->evaluate([
+        ['name' => 'mysql', 'bytes' => 3 * 1048576, 'free' => 0],
+        ['name' => 'shop', 'bytes' => 12 * 1048576, 'free' => 4194304],
+    ]);
+
+    expect($io->evaluate(null, null, 'off')->summary)->toContain('performance_schema is off')
+        ->and($io->evaluate(null, null, 'denied')->summary)->toContain('SELECT on performance_schema')
+        ->and($io->evaluate(5 * 1048576, 1024)->details)->toBe(['bytes_read' => 5 * 1048576, 'bytes_written' => 1024])
+        ->and($sizes->value)->toBe(15.0)
+        ->and($sizes->summary)->toBe('15 MB in 2 databases; largest shop 12 MB, mysql 3 MB.')
+        ->and(array_keys($sizes->details['databases']))->toBe(['shop', 'mysql']);
+});

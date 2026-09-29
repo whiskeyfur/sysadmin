@@ -16,6 +16,8 @@ class SettingsService
 {
     public const SSL_WARNING_DAYS = 'ssl_warning_days';
 
+    public const SSL_IMPORT_NAMES = 'ssl_import_names';
+
     public const ACCOUNT_WARNING_DAYS = 'account_warning_days';
 
     public const DISK_WARNING_PERCENT = 'disk_warning_percent';
@@ -41,6 +43,7 @@ class SettingsService
      */
     public const DEFAULTS = [
         self::SSL_WARNING_DAYS => 7,
+        self::SSL_IMPORT_NAMES => 1,
         self::ACCOUNT_WARNING_DAYS => 7,
         self::DISK_WARNING_PERCENT => 85,
         self::DISK_CRITICAL_PERCENT => 95,
@@ -59,7 +62,7 @@ class SettingsService
      * @var array<string, list<string>>
      */
     public const SECTIONS = [
-        'ssl' => [self::SSL_WARNING_DAYS],
+        'ssl' => [self::SSL_WARNING_DAYS, self::SSL_IMPORT_NAMES],
         'ssh' => [self::DISK_WARNING_PERCENT, self::DISK_CRITICAL_PERCENT, self::ACCOUNT_WARNING_DAYS],
         'mariadb' => [
             self::MYSQL_CONNECTIONS_WARNING_PERCENT,
@@ -77,6 +80,7 @@ class SettingsService
      */
     private const INTEGER_RANGES = [
         self::SSL_WARNING_DAYS => ['min' => 1, 'max' => 365],
+        self::SSL_IMPORT_NAMES => ['min' => 0, 'max' => 1],
         self::ACCOUNT_WARNING_DAYS => ['min' => 1, 'max' => 365],
         self::DISK_WARNING_PERCENT => ['min' => 1, 'max' => 100],
         self::DISK_CRITICAL_PERCENT => ['min' => 1, 'max' => 100],
@@ -188,6 +192,7 @@ class SettingsService
     {
         return match ($key) {
             self::SSL_WARNING_DAYS => 'SSL warning period',
+            self::SSL_IMPORT_NAMES => 'Adding hostnames from certificates',
             self::ACCOUNT_WARNING_DAYS => 'Account rotation warning period',
             self::DISK_WARNING_PERCENT => 'disk warning level',
             self::DISK_CRITICAL_PERCENT => 'disk critical level',

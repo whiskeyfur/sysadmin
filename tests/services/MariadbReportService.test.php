@@ -67,3 +67,21 @@ test('a chart scale can start above zero, for values in a narrow band', function
 
     expect($svg)->toContain('>95%<')->toContain('>100%<')->not->toContain('>0%<');
 });
+
+test('disk space, database sizes and I/O throughput read through MariaDB', function () {
+    $mb = 1048576;
+    foreach ([[120, 10, 100, 40.0], [60, 20, 160, 41.0], [0, 5, 20, 42.0]] as [$ago, $size, $read, $root]) {
+        ($this->store)($ago, 'disk_space', $root, ['mounts' => ['/' => ['used_percent' => $root], '/data' => ['used_percent' => 70.0]]]);
+        ($this->store)($ago, 'database_size', (float) $size, ['databases' => ['shop' => $size * $mb]]);
+        ($this->store)($ago, 'file_io', null, ['bytes_read' => $read * $mb, 'bytes_written' => 0]);
+    }
+
+    $report = $this->reports->report($this->server, '24h');
+
+    expect(array_keys($report['disk']))->toBe(['/', '/data'])
+        ->and(array_column($report['disk']['/'], 1))->toBe([40.0, 41.0, 42.0])
+        ->and(array_column($report['sizes']['shop'], 1))->toBe([10.0, 20.0, 5.0])
+        // 60 MB in the hour after the first run; then the counters dropped (a restart): no rate across it.
+        ->and(array_column($report['io']['Read'], 1))->toBe([60.0])
+        ->and($report['rows'][1])->toMatchArray(['disk' => 70.0, 'db_size_mb' => 20.0, 'io_read' => 60.0]);
+});

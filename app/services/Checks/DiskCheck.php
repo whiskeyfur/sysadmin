@@ -61,6 +61,18 @@ class DiskCheck extends SshCheck
             }
         }
 
+        return $this->evaluateMounts($mounts, $inodeUse);
+    }
+
+    /**
+     * Judge filesystems however their usage was read (df over SSH, or
+     * MariaDB's information_schema.DISKS: see DisksCheck).
+     *
+     * @param array<string, array{percent: float, available: float}> $mounts keyed by mount point
+     * @param array<string, float> $inodeUse inode use % per mount, where known
+     */
+    public function evaluateMounts(array $mounts, array $inodeUse = []): CheckResult
+    {
         $status = HealthStatus::Ok;
         $worst = 0.0;
         $problems = [];
@@ -119,7 +131,10 @@ class DiskCheck extends SshCheck
         return $mounts;
     }
 
-    private function skipped(string $filesystem, string $mount): bool
+    /**
+     * Pseudo filesystems, snaps and loop devices aren't worth watching.
+     */
+    public function skipped(string $filesystem, string $mount): bool
     {
         if (in_array($filesystem, self::SKIPPED_FILESYSTEMS, true) || str_starts_with($filesystem, '/dev/loop')) {
             return true;

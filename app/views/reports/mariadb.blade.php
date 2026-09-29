@@ -76,6 +76,24 @@
             {!! \App\Utils\LineChart::render('Uptime', $report['uptime'], $from, $to, ' d') !!}
             <p class="hint">A drop to zero is a restart.</p>
         </div>
+        @if ($report['disk'])
+            <div class="card">
+                {!! \App\Utils\LineChart::render('Disk space used, per filesystem (read through MariaDB)', $report['disk'], $from, $to, '%', 100) !!}
+                <p class="hint">From MariaDB's DISKS plugin: no SSH needed. Judged with the disk levels in SSH settings.</p>
+            </div>
+        @endif
+        @if ($report['sizes'])
+            <div class="card">
+                {!! \App\Utils\LineChart::render('Database size (MB)', $report['sizes'], $from, $to, ' MB') !!}
+                <p class="hint">Data and indexes, from information_schema; InnoDB updates these figures as tables change, so they trail recent writes.{{ count($report['sizes']) >= 6 ? ' The largest 6 databases; the table has the total.' : '' }}</p>
+            </div>
+        @endif
+        @if ($report['io'])
+            <div class="card">
+                {!! \App\Utils\LineChart::render('File I/O (MB per hour)', $report['io'], $from, $to, ' MB/h') !!}
+                <p class="hint">From performance_schema, between one check and the next.</p>
+            </div>
+        @endif
 
         <div class="card">
             <h2>Data</h2>
@@ -85,7 +103,7 @@
             <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>Checked</th><th>Connections</th><th>Peak</th><th>Buffer pool</th><th>Replication lag</th><th>Crashed tables</th><th>Uptime</th></tr>
+                    <tr><th>Checked</th><th>Connections</th><th>Peak</th><th>Buffer pool</th><th>Replication lag</th><th>Crashed tables</th><th>Uptime</th><th>Fullest disk</th><th>Databases</th><th>I/O read / written</th></tr>
                 </thead>
                 <tbody>
                     @foreach (array_reverse($report['rows']) as $row)
@@ -103,6 +121,9 @@
                             <td data-sort="{{ $row['lag'] ?? '' }}">{{ $row['lag'] === null ? '—' : $row['lag'] . ' s' }}</td>
                             <td data-sort="{{ $row['crashed'] ?? '' }}">{{ $row['crashed'] ?? '—' }}</td>
                             <td data-sort="{{ $row['uptime_days'] ?? '' }}">{{ $row['uptime_days'] === null ? '—' : $row['uptime_days'] . ' d' }}</td>
+                            <td data-sort="{{ $row['disk'] ?? '' }}">{{ $row['disk'] === null ? '—' : $row['disk'] . '%' }}</td>
+                            <td data-sort="{{ $row['db_size_mb'] ?? '' }}">{{ $row['db_size_mb'] === null ? '—' : $row['db_size_mb'] . ' MB' }}</td>
+                            <td data-sort="{{ ($row['io_read'] ?? 0) + ($row['io_write'] ?? 0) }}">{{ $row['io_read'] === null ? '—' : $row['io_read'] . ' / ' . $row['io_write'] . ' MB/h' }}</td>
                         </tr>
                     @endforeach
                 </tbody>

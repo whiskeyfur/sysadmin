@@ -14,7 +14,12 @@ use Carbon\Carbon;
  */
 class MariadbReportService extends HistoryReport
 {
-    private const KEYS = ['server_status', 'connections', 'crashed_tables', 'replication', 'innodb_buffer_pool'];
+    private const KEYS = ['server_status', 'connections', 'crashed_tables', 'replication', 'innodb_buffer_pool', 'disk_space', 'database_size', 'file_io'];
+
+    /**
+     * Databases charted by size (the largest); the table has the total.
+     */
+    private const MAX_DATABASES = 6;
 
     /**
      * Log levels charted, and their series names (notes are too many to chart).
@@ -45,6 +50,9 @@ class MariadbReportService extends HistoryReport
      *     lag: array<string, list<array{0: int, 1: float}>>,
      *     crashed: array<string, list<array{0: int, 1: float}>>,
      *     uptime: array<string, list<array{0: int, 1: float}>>,
+     *     disk: array<string, list<array{0: int, 1: float}>>,
+     *     sizes: array<string, list<array{0: int, 1: float}>>,
+     *     io: array<string, list<array{0: int, 1: float}>>,
      *     rows: list<array<string, mixed>>,
      *     bucket_minutes: int|null,
      *     log: list<MariadbLogEntry>,
@@ -67,11 +75,16 @@ class MariadbReportService extends HistoryReport
             ->sortBy(['checked_at', 'id']);
 
         $series = ['connections' => [], 'buffer_pool' => [], 'lag' => [], 'crashed' => [], 'uptime' => []];
+        // Read through MariaDB (no SSH needed): disk used % per filesystem, MB per database, and I/O in MB per hour.
+        $disk = [];
+        $sizes = [];
+        $io = ['Read' => [], 'Written' => []];
+        $previousIo = null;
         $rows = [];
 
         foreach ($checks as $check) {
             $time = (int) $check->checked_at->getTimestamp();
-            $row = $rows[$time] ?? ['time' => $check->checked_at, 'connected' => null, 'max_connections' => null, 'peak' => null, 'connections' => null, 'buffer_pool' => null, 'lag' => null, 'crashed' => null, 'uptime_days' => null];
+            $row = $rows[$time] ?? ['time' => $check->checked_at, 'connected' => null, 'max_connections' => null, 'peak' => null, 'connections' => null, 'buffer_pool' => null, 'lag' => null, 'crashed' => null, 'uptime_days' => null, 'disk' => null, 'db_size_mb' => null, 'io_read' => null, 'io_write' => null];
             $details = $check->details ?? [];
             $value = $check->value;
 
@@ -121,6 +134,47 @@ class MariadbReportService extends HistoryReport
                     }
 
                     break;
+
+                case 'disk_space':
+                    foreach ($details['mounts'] ?? [] as $mount => $usage) {
+                        if (isset($usage['used_percent'])) {
+                            $disk[(string) $mount][] = [$time, (float) $usage['used_percent']];
+                            $row['disk'] = max($row['disk'] ?? 0.0, (float) $usage['used_percent']);
+                        }
+                    }
+
+                    break;
+
+                case 'database_size':
+                    if ($value !== null && isset($details['databases'])) {
+                        $row['db_size_mb'] = $value;
+
+                        foreach ($details['databases'] as $name => $bytes) {
+                            $sizes[(string) $name][] = [$time, round($bytes / 1048576, 1)];
+                        }
+                    }
+
+                    break;
+
+                case 'file_io':
+                    if (!isset($details['bytes_read'], $details['bytes_written'])) {
+                        break;
+                    }
+
+                    $current = [$time, (int) $details['bytes_read'], (int) $details['bytes_written']];
+
+                    // Counters run since the server started: a drop means it restarted, so no rate across it.
+                    if ($previousIo !== null && $time > $previousIo[0] && $current[1] >= $previousIo[1] && $current[2] >= $previousIo[2]) {
+                        $hours = ($time - $previousIo[0]) / 3600;
+                        $row['io_read'] = round(($current[1] - $previousIo[1]) / 1048576 / $hours, 2);
+                        $row['io_write'] = round(($current[2] - $previousIo[2]) / 1048576 / $hours, 2);
+                        $io['Read'][] = [$time, $row['io_read']];
+                        $io['Written'][] = [$time, $row['io_write']];
+                    }
+
+                    $previousIo = $current;
+
+                    break;
             }
 
             $rows[$time] = $row;
@@ -135,8 +189,12 @@ class MariadbReportService extends HistoryReport
                 $series[$key] = $this->averageSeries($points, $seconds, $key === 'crashed' ? 'max' : 'average');
             }
 
+            $disk = array_map(fn (array $points) => $this->averageSeries($points, $seconds), $disk);
+            $sizes = array_map(fn (array $points) => $this->averageSeries($points, $seconds), $sizes);
+            $io = array_map(fn (array $points) => $this->averageSeries($points, $seconds), $io);
+
             // Crashed tables: the worst in the bucket, so a crash isn't averaged away.
-            $rows = $this->averageRows($rows, $seconds, ['connected', 'connections', 'buffer_pool', 'lag', 'uptime_days'], ['max_connections', 'peak'], function (array $group, array $row) {
+            $rows = $this->averageRows($rows, $seconds, ['connected', 'connections', 'buffer_pool', 'lag', 'uptime_days', 'disk', 'db_size_mb', 'io_read', 'io_write'], ['max_connections', 'peak'], function (array $group, array $row) {
                 $crashed = array_filter(array_column($group, 'crashed'), fn ($v) => $v !== null);
                 $row['crashed'] = $crashed === [] ? null : max($crashed);
 
@@ -165,12 +223,39 @@ class MariadbReportService extends HistoryReport
             'lag' => $named['lag'],
             'crashed' => $named['crashed'],
             'uptime' => $named['uptime'],
+            'disk' => $this->sorted($disk),
+            'sizes' => $this->largest($sizes),
+            'io' => array_filter($io),
             'rows' => array_values($rows),
             'bucket_minutes' => $bucket,
             'log' => $this->logEntries($server, $from),
             'log_counts' => $this->logCounts($server, $from, $to, $logBucket = self::LOG_BUCKET_MINUTES[$range] ?? self::LOG_BUCKET_MINUTES[self::DEFAULT_RANGE]),
             'log_bucket_minutes' => $logBucket,
         ];
+    }
+
+    /**
+     * @param array<string, list<array{0: int, 1: float}>> $series
+     * @return array<string, list<array{0: int, 1: float}>>
+     */
+    private function sorted(array $series): array
+    {
+        ksort($series, SORT_NATURAL);
+
+        return $series;
+    }
+
+    /**
+     * The largest databases (by their latest size), largest first.
+     *
+     * @param array<string, list<array{0: int, 1: float}>> $sizes
+     * @return array<string, list<array{0: int, 1: float}>>
+     */
+    private function largest(array $sizes): array
+    {
+        uasort($sizes, fn (array $a, array $b) => end($b)[1] <=> end($a)[1]);
+
+        return array_slice($sizes, 0, self::MAX_DATABASES, true);
     }
 
     /**

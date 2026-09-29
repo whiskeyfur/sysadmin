@@ -54,10 +54,10 @@
                                 @endif
                             </td>
                             <td>
-                                @if ($server->ssl_enabled)
-                                    {{ implode(', ', array_map(fn ($t) => $t['port'] === 443 ? $t['host'] : $t['host'] . ':' . $t['port'], array_slice($server->sslTargets(), 0, 3))) }}{{ count($server->sslTargets()) > 3 ? ' +' . (count($server->sslTargets()) - 3) : '' }}
+                                @if (($sslCounts[$server->id] ?? 0) > 0)
+                                    <a href="/servers/{{ $server->id }}">{{ $sslCounts[$server->id] }} certificate(s)</a>
                                 @else
-                                    <span class="muted">Off</span>
+                                    <span class="muted">None</span>
                                 @endif
                             </td>
                             <td>
@@ -96,7 +96,7 @@
     @if ($publicKey)
         <div class="card">
             <h2>The app's SSH key</h2>
-            <p>The app logs in to every server with this key. On each server, add this line to the SSH user's <code>~/.ssh/authorized_keys</code>. The private key never leaves the app.</p>
+            <p>The app logs in to every server with this key. On each server, add this line to the SSH user's <code>~/.ssh/authorized_keys</code> (on Windows: <code>C:\ProgramData\ssh\administrators_authorized_keys</code> for administrator accounts, otherwise <code>C:\Users\&lt;user&gt;\.ssh\authorized_keys</code>). Each server's SSH setup page shows the right place once it has detected the platform. The private key never leaves the app.</p>
             <code class="pubkey">{{ $publicKey }}</code>
         </div>
     @endif

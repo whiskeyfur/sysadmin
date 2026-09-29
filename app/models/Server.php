@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use App\Enums\ServerPlatform;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * A monitored server. Use ServerService to create or change one; it
@@ -13,10 +15,12 @@ use Carbon\Carbon;
  * @property string $hostname
  * @property bool $ssh_enabled
  * @property int $ssh_port
+ * @property int|null $ssh_account_id the Account used for SSH
  * @property string $ssh_username '' when SSH is off
  * @property string|null $ssh_host_key trusted host key, "type base64"
  * @property string $ssh_auth SSH_AUTH_KEY or SSH_AUTH_PASSWORD
- * @property string|null $ssh_password encrypted with SecretCipher; only for SSH_AUTH_PASSWORD
+ * @property string|null $ssh_platform a ServerPlatform value, from the SSH banner
+ * @property string|null $ssh_password legacy: moved to the server's Account by AccountService::syncServers()
  * @property bool $ssh_password_allowed opt-in: false means never attempt a password login
  * @property bool $mysql_enabled
  * @property string|null $mysql_host null means the SSH hostname
@@ -35,6 +39,7 @@ use Carbon\Carbon;
  * @property string|null $ssl_hosts one per line, "host" or "host:port"
  * @property Carbon|null $last_ssl_checked_at
  * @property string|null $last_ssl_status worst status of the last SSL check
+ * @property-read Account|null $sshAccount
  */
 class Server extends Model
 {
@@ -57,7 +62,7 @@ class Server extends Model
      * @var list<string>
      */
     protected $fillable = [
-        'name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_username', 'ssh_host_key', 'ssh_auth', 'ssh_password', 'ssh_password_allowed',
+        'name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_host_key', 'ssh_auth', 'ssh_platform', 'ssh_password', 'ssh_password_allowed',
         'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca',
         'last_tested_at', 'last_test_ok', 'last_test_message',
         'check_interval_minutes', 'last_checked_at', 'last_health_status',
@@ -75,6 +80,7 @@ class Server extends Model
     protected $casts = [
         'ssh_enabled' => 'boolean',
         'ssh_port' => 'integer',
+        'ssh_account_id' => 'integer',
         'ssl_enabled' => 'boolean',
         'last_ssl_checked_at' => 'datetime',
         'ssh_password_allowed' => 'boolean',
@@ -89,6 +95,19 @@ class Server extends Model
     /**
      * SSH is set up: the host key has been checked and trusted.
      */
+    /**
+     * @return BelongsTo<Account, $this>
+     */
+    public function sshAccount(): BelongsTo
+    {
+        return $this->belongsTo(Account::class, 'ssh_account_id');
+    }
+
+    public function platform(): ServerPlatform
+    {
+        return ServerPlatform::tryFrom((string) $this->ssh_platform) ?? ServerPlatform::Unknown;
+    }
+
     public function sshReady(): bool
     {
         return $this->ssh_enabled && $this->ssh_host_key !== null;

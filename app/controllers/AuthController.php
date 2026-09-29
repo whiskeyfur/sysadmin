@@ -7,16 +7,20 @@ use App\Enums\LoginStatus;
 use App\Middleware\LimitConcurrentLogins;
 use App\Services\AuthService;
 use App\Services\AuthSessionService;
-use App\Services\PasswordService;
 use App\Services\TotpService;
 
 /**
- * Sign in, first-login setup and sign out. Setup re-asks for the current
- * password rather than keeping it between requests.
+ * Sign in (username + authenticator code), first-login setup and sign out.
+ *
+ * On a first sign-in the one-time password opens setup; the pending setup
+ * (user and the new authenticator's secret) is kept in the session, so the
+ * one-time password isn't sent again.
  */
 class AuthController extends Controller
 {
-    private const INVALID_CREDENTIALS = 'Invalid username, password or authenticator code.';
+    private const INVALID_CREDENTIALS = 'Invalid username or code.';
+
+    private const INVALID_ONE_TIME_PASSWORD = 'Invalid username or one-time password.';
 
     private readonly AuthService $auth;
 
@@ -50,49 +54,94 @@ class AuthController extends Controller
     {
         $this->auth->ensureDefaultAdmin();
 
-        $data = $this->request->validate([
-            'username' => 'username|between:[3,32]',
-            'password' => 'min:1',
-            'code' => 'optional|number|between:[6,6]',
-        ]);
+        $username = (string) $this->request->get('username', false);
+        $oneTimePassword = (string) $this->request->get('one_time_password', false);
+        $code = (string) $this->request->get('code', false);
 
-        if ($data === false) {
+        if ($this->request->validate(['username' => 'username|between:[3,32]']) === false) {
+            LimitConcurrentLogins::release();
             $this->renderLogin(error: self::INVALID_CREDENTIALS);
 
             return;
         }
 
-        $result = $this->auth->attempt($data['username'], $data['password'], (string) ($data['code'] ?? ''), $this->clientIp());
-        $this->respond($result, $data['username']);
+        if ($oneTimePassword !== '') {
+            $result = $this->auth->startSetup($username, $oneTimePassword, $this->clientIp());
+            LimitConcurrentLogins::release();
+
+            if ($result->status === LoginStatus::NeedsSetup && $result->user !== null) {
+                $this->sessions->beginSetup($result->user, $this->totp->generateSecret());
+                $this->response->redirect('/setup');
+
+                return;
+            }
+
+            $this->respondWithLogin($result, self::INVALID_ONE_TIME_PASSWORD);
+
+            return;
+        }
+
+        $result = $this->auth->attempt($username, $code, $this->clientIp());
+        LimitConcurrentLogins::release();
+
+        if ($result->status === LoginStatus::Success && $result->user !== null) {
+            $this->sessions->start($result->user);
+            $this->response->redirect('/');
+
+            return;
+        }
+
+        $this->respondWithLogin($result, self::INVALID_CREDENTIALS);
+    }
+
+    public function showSetup()
+    {
+        $setup = $this->sessions->pendingSetup();
+
+        if ($setup === null) {
+            $this->response->withFlash('notice', 'Setup expired. Sign in with your one-time password again.')->redirect('/login');
+
+            return;
+        }
+
+        $this->renderSetup($setup['user']->username, $setup['secret']);
     }
 
     public function setup()
     {
-        $username = (string) $this->request->get('username', false);
-        $secret = (string) $this->request->get('totp_secret', false);
+        $setup = $this->sessions->pendingSetup();
 
-        if (!$this->totp->isValidSecret($secret)) {
-            $this->renderLogin(error: 'Setup expired. Sign in again.');
-
-            return;
-        }
-
-        $data = $this->request->validate([
-            'username' => 'username|between:[3,32]',
-            'password' => 'min:1',
-            'new_password' => 'min:' . PasswordService::MIN_LENGTH,
-            'new_password_confirmation' => 'matchesvalueof:new_password',
-            'code' => 'number|between:[6,6]',
-        ]);
-
-        if ($data === false) {
-            $this->renderSetup($username, $secret, $this->firstError());
+        if ($setup === null) {
+            $this->response->withFlash('notice', 'Setup expired. Sign in with your one-time password again.')->redirect('/login');
 
             return;
         }
 
-        $result = $this->auth->completeSetup($data['username'], $data['password'], $data['new_password'], $secret, $data['code'], $this->clientIp());
-        $this->respond($result, $data['username'], $secret);
+        $result = $this->auth->completeSetup($setup['user'], $setup['version'], $setup['secret'], (string) $this->request->get('code', false), $this->clientIp());
+
+        switch ($result->status) {
+            case LoginStatus::Success:
+                $this->sessions->endSetup();
+                $this->sessions->start($result->user);
+                $this->response->redirect('/');
+
+                return;
+
+            case LoginStatus::InvalidCode:
+                $this->renderSetup($setup['user']->username, $setup['secret'], "That code doesn't match. Enter the code the app shows now.");
+
+                return;
+
+            case LoginStatus::TooManyAttempts:
+                $this->response->withHeader('Retry-After', (string) $result->retryAfter);
+                $this->renderSetup($setup['user']->username, $setup['secret'], 'Too many attempts. Try again in ' . $this->retryMinutes($result->retryAfter) . ' minute(s).', 429);
+
+                return;
+
+            default:
+                $this->sessions->endSetup();
+                $this->response->withFlash('notice', 'This account was reset or set up in the meantime. Sign in again.')->redirect('/login');
+        }
     }
 
     public function logout()
@@ -101,44 +150,16 @@ class AuthController extends Controller
         $this->response->redirect('/login');
     }
 
-    private function respond(LoginResult $result, string $username, ?string $setupSecret = null): void
+    private function respondWithLogin(LoginResult $result, string $invalid): void
     {
-        LimitConcurrentLogins::release();
+        if ($result->status === LoginStatus::TooManyAttempts) {
+            $this->response->withHeader('Retry-After', (string) $result->retryAfter);
+            $this->renderLogin(error: 'Too many attempts. Try again in ' . $this->retryMinutes($result->retryAfter) . ' minute(s).', status: 429);
 
-        switch ($result->status) {
-            case LoginStatus::Success:
-                $this->sessions->start($result->user);
-                $this->response->redirect('/');
-
-                return;
-
-            case LoginStatus::NeedsSetup:
-                $this->renderSetup($username, $this->totp->generateSecret());
-
-                return;
-
-            case LoginStatus::InvalidCode:
-                $this->renderSetup($username, (string) $setupSecret, 'That code does not match the new authenticator. Try the current code.');
-
-                return;
-
-            case LoginStatus::PasswordRejected:
-                $this->renderSetup($username, (string) $setupSecret, (string) $result->message);
-
-                return;
-
-            case LoginStatus::TooManyAttempts:
-                $this->response->withHeader('Retry-After', (string) $result->retryAfter);
-                $this->renderLogin(
-                    error: 'Too many attempts. Try again in ' . $this->retryMinutes($result->retryAfter) . ' minute(s).',
-                    status: 429,
-                );
-
-                return;
-
-            default:
-                $this->renderLogin(error: self::INVALID_CREDENTIALS);
+            return;
         }
+
+        $this->renderLogin(error: $invalid);
     }
 
     private function renderLogin(?string $error = null, ?string $notice = null, int $status = 200): void
@@ -146,21 +167,14 @@ class AuthController extends Controller
         $this->response->view('auth.login', ['error' => $error, 'notice' => $notice], $status);
     }
 
-    private function renderSetup(string $username, string $secret, ?string $error = null): void
+    private function renderSetup(string $username, string $secret, ?string $error = null, int $status = 200): void
     {
+        $this->response->withHeader('Cache-Control', 'no-store');
         $this->response->view('auth.setup', [
             'username' => $username,
             'secret' => $secret,
             'qr' => $this->totp->qrCode($this->totp->provisioningUri($secret, $username)),
             'error' => $error,
-            'minLength' => PasswordService::MIN_LENGTH,
-        ]);
-    }
-
-    private function firstError(): string
-    {
-        $errors = $this->request->errors();
-
-        return is_array($errors) && $errors !== [] ? (string) reset($errors) : 'Check the form and try again.';
+        ], $status);
     }
 }

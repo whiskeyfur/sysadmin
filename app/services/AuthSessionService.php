@@ -10,14 +10,18 @@ use Leaf\Http\Session;
 /**
  * The signed-in session. Holds only the user id and their session version;
  * bumping users.session_version signs that user out everywhere.
+ *
+ * Also holds a pending first-login setup (after a correct one-time
+ * password): the user, their session version and the authenticator secret
+ * being enrolled, for SETUP_SECONDS.
  */
 class AuthSessionService
 {
+    public const SETUP_SECONDS = 600;
+
     private const SESSION_KEY = 'auth';
 
-    public function __construct(private readonly PasswordService $passwords = new PasswordService())
-    {
-    }
+    private const SETUP_KEY = 'setup';
 
     /**
      * Harden the PHP session cookie. Called from public/index.php because
@@ -62,12 +66,49 @@ class AuthSessionService
             return null;
         }
 
-        return new AuthContext($user, $this->passwords->isExpired($user));
+        return new AuthContext($user);
     }
 
     public function end(): void
     {
         Session::unset(self::SESSION_KEY);
+        Session::unset(self::SETUP_KEY);
         Session::regenerate(true);
+    }
+
+    public function beginSetup(User $user, string $totpSecret): void
+    {
+        Session::regenerate(true);
+        Session::set(self::SETUP_KEY, [
+            'user_id' => $user->id,
+            'version' => (int) $user->session_version,
+            'secret' => $totpSecret,
+            'expires' => time() + self::SETUP_SECONDS,
+        ]);
+    }
+
+    /**
+     * The pending setup, or null if there is none or it expired.
+     *
+     * @return array{user: User, version: int, secret: string}|null
+     */
+    public function pendingSetup(): ?array
+    {
+        $setup = Session::get(self::SETUP_KEY, null, false);
+
+        if (!is_array($setup) || ($setup['expires'] ?? 0) < time()) {
+            Session::unset(self::SETUP_KEY);
+
+            return null;
+        }
+
+        $user = User::query()->find($setup['user_id'] ?? null);
+
+        return $user instanceof User ? ['user' => $user, 'version' => (int) $setup['version'], 'secret' => (string) $setup['secret']] : null;
+    }
+
+    public function endSetup(): void
+    {
+        Session::unset(self::SETUP_KEY);
     }
 }

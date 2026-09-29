@@ -1,0 +1,26 @@
+# Tracked accounts (AccountService): logins that exist on servers or in a
+# directory, with their current password and rotation schedule.
+# type: "local" (belongs to server_id), "ldap" or "shared".
+# password: encrypted with SecretCipher ("account-password:<id>"); revealed to
+#   admins only, and every reveal is logged in password_reveals.
+# password_changed_at: when the password was last reset (as recorded here).
+# rotation_days: change every N days; null = no rotation. Due = changed + N.
+columns:
+  username: string
+  type: string
+  server_id:
+    type: integer
+    nullable: true
+    index: true
+  password:
+    type: text
+    nullable: true
+  password_changed_at:
+    type: timestamp
+    nullable: true
+  rotation_days:
+    type: integer
+    nullable: true
+  notes:
+    type: text
+    nullable: true

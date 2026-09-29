@@ -39,3 +39,11 @@ test('anything else is rejected', function (string $input) {
 test('the system CA bundle is found', function () {
     expect(is_readable($this->certs->systemBundle()))->toBeTrue();
 });
+
+test('a CA bundle is always found, with the shipped one as a fallback', function () {
+    $bundle = (new CaCertificateService())->systemBundle();
+
+    expect(is_readable($bundle))->toBeTrue()
+        ->and(file_get_contents($bundle))->toContain('-----BEGIN CERTIFICATE-----')
+        ->and(is_readable(\Composer\CaBundle\CaBundle::getBundledCaBundlePath()))->toBeTrue();
+});

@@ -1,4 +1,4 @@
-# Rate limiting for sign-in (LoginThrottleService).
+# Rate limiting for sign-in (LoginThrottleService). Kept for a day.
 # bucket is a SHA-256 of "ip:<address>" or "user:<username>", so attempted usernames (which are sometimes
 # passwords typed into the wrong field) are never stored as typed.
 timestamps: false

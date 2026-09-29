@@ -9,6 +9,7 @@ use Carbon\Carbon;
  * A stored SSL certificate check.
  *
  * @property int $id
+ * @property int|null $binding_id
  * @property int $server_id
  * @property string $host
  * @property int $port
@@ -25,7 +26,7 @@ class SslCheck extends Model
     /**
      * @var list<string>
      */
-    protected $fillable = ['server_id', 'host', 'port', 'status', 'summary', 'days_left', 'details', 'checked_at'];
+    protected $fillable = ['binding_id', 'server_id', 'host', 'port', 'status', 'summary', 'days_left', 'details', 'checked_at'];
 
     /**
      * @var array<string, string>

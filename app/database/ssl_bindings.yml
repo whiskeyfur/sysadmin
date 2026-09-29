@@ -1,0 +1,29 @@
+# Where a certificate is served: on a server (its hostname/IP) at a port, or
+# directly via DNS when server_id is null. Several servers can serve the same
+# certificate. Holds the latest check result; history is in ssl_checks.
+columns:
+  certificate_id:
+    type: integer
+    index: true
+  server_id:
+    type: integer
+    nullable: true
+    index: true
+  port:
+    type: integer
+    default: 443
+  last_checked_at:
+    type: timestamp
+    nullable: true
+  last_status:
+    type: string
+    nullable: true
+  last_summary:
+    type: text
+    nullable: true
+  days_left:
+    type: float
+    nullable: true
+  details:
+    type: text
+    nullable: true

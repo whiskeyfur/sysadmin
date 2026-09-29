@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\DTOs\HostKey;
 use App\DTOs\SshSetupResult;
+use App\Enums\ServerPlatform;
 use App\Exceptions\AuthorizationException;
 use App\Exceptions\ServerConnectionException;
 use App\Models\Server;
@@ -18,8 +19,10 @@ use App\Models\User;
  * 3. With a password (only if the server allows password login), log
  *    in, install the app's public key in ~/.ssh/authorized_keys, and try the
  *    key again.
- * 4. If the server still refuses key login, keep the password (encrypted)
- *    and use password login for this server.
+ *    A password that worked is saved (encrypted) to the server's SSH
+ *    account in the account list, as the account's current password.
+ * 4. If the server still refuses key login, use password login for this
+ *    server, with that account's password.
  *
  * Each login is tried at most once per step, so a server running fail2ban
  * sees as few attempts as possible.
@@ -76,15 +79,17 @@ class SshSetupService
             return $result->finish(false);
         }
 
+        $this->servers->storeSshPassword($server, $password);
+        $result->step(true, "Saved the password as the current password of {$server->ssh_username}@{$server->name} in Accounts.");
+
         if ($this->keyLoginWorks($server, $result)) {
             $this->servers->useKeyAuth($server);
-            $result->step(true, 'The password was not stored.');
 
             return $result->finish(true);
         }
 
         $this->servers->usePasswordAuth($server, $password);
-        $result->step(true, "This server doesn't allow key login, so the app will log in with the password, stored encrypted. Turn on key login on the server (PubkeyAuthentication yes) and run setup again to stop storing it.");
+        $result->step(true, "This server doesn't allow key login, so the app will log in with that account's password. Turn on key login on the server (PubkeyAuthentication yes) and run setup again to switch to the key.");
 
         return $result->finish(true);
     }
@@ -109,7 +114,8 @@ class SshSetupService
     private function trustHostKey(User $admin, Server $server, ?string $confirmedFingerprint, SshSetupResult $result): bool
     {
         try {
-            $presented = $this->ssh->presentedHostKey($server);
+            [$presented, $platform] = $this->ssh->probe($server);
+            $this->servers->recordPlatform($server, $platform);
         } catch (ServerConnectionException $e) {
             $result->step(false, $e->getMessage());
 
@@ -137,7 +143,9 @@ class SshSetupService
     private function keyLoginWorks(Server $server, SshSetupResult $result): bool
     {
         try {
-            $this->ssh->connectWithKey($server)->disconnect();
+            $connection = $this->ssh->connectWithKey($server);
+            $this->servers->recordPlatform($server, $this->ssh->platformOf($connection));
+            $connection->disconnect();
             $result->step(true, "Logged in as {$server->ssh_username} with the app's key.");
 
             return true;
@@ -158,6 +166,16 @@ class SshSetupService
             return false;
         }
 
+        $platform = $this->ssh->platformOf($connection);
+        $this->servers->recordPlatform($server, $platform);
+
+        if ($platform === ServerPlatform::Windows) {
+            $connection->disconnect();
+            $result->step(false, "Logged in with the password, but installing the key automatically only works on Linux/Unix servers. On this Windows server, add the app's public key by hand: to C:\\ProgramData\\ssh\\administrators_authorized_keys for an administrator account, otherwise to C:\\Users\\{$server->ssh_username}\\.ssh\\authorized_keys.");
+
+            return false;
+        }
+
         try {
             $this->ssh->exec($connection, $this->installCommand($this->keys->publicKey()));
             $result->step(true, "Logged in with the password and added the app's public key to ~/.ssh/authorized_keys.");
@@ -173,14 +191,18 @@ class SshSetupService
     }
 
     /**
-     * The host key a server presents, for the setup page. Null with a message on failure.
+     * The host key a server presents, for the setup page, and records its
+     * platform. Null with a message on failure.
      *
      * @return array{0: HostKey|null, 1: string|null}
      */
     public function presentedHostKey(Server $server): array
     {
         try {
-            return [$this->ssh->presentedHostKey($server), null];
+            [$hostKey, $platform] = $this->ssh->probe($server);
+            $this->servers->recordPlatform($server, $platform);
+
+            return [$hostKey, null];
         } catch (ServerConnectionException $e) {
             return [null, $e->getMessage()];
         }

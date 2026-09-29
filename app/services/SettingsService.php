@@ -15,11 +15,14 @@ class SettingsService
 {
     public const SSL_WARNING_DAYS = 'ssl_warning_days';
 
+    public const ACCOUNT_WARNING_DAYS = 'account_warning_days';
+
     /**
      * @var array<string, int>
      */
     public const DEFAULTS = [
         self::SSL_WARNING_DAYS => 7,
+        self::ACCOUNT_WARNING_DAYS => 7,
     ];
 
     /**
@@ -27,6 +30,7 @@ class SettingsService
      */
     private const INTEGER_RANGES = [
         self::SSL_WARNING_DAYS => ['min' => 1, 'max' => 365],
+        self::ACCOUNT_WARNING_DAYS => ['min' => 1, 'max' => 365],
     ];
 
     /**
@@ -35,6 +39,14 @@ class SettingsService
     public function sslWarningDays(): int
     {
         return $this->integer(self::SSL_WARNING_DAYS);
+    }
+
+    /**
+     * Days before an account's password is due at which it's flagged "due soon".
+     */
+    public function accountWarningDays(): int
+    {
+        return $this->integer(self::ACCOUNT_WARNING_DAYS);
     }
 
     public function integer(string $key): int
@@ -84,6 +96,7 @@ class SettingsService
     {
         return match ($key) {
             self::SSL_WARNING_DAYS => 'SSL warning period',
+            self::ACCOUNT_WARNING_DAYS => 'Account rotation warning period',
             default => $key,
         };
     }

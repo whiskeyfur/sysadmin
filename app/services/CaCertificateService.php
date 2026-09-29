@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Carbon\Carbon;
+use Composer\CaBundle\CaBundle;
 use DomainException;
 
 /**
@@ -63,23 +64,14 @@ class CaCertificateService
     }
 
     /**
-     * The system's trusted CA bundle, for verifying publicly issued certificates.
+     * The trusted CA bundle for verifying publicly issued certificates: the
+     * system's (openssl.cafile, curl.cainfo, SSL_CERT_FILE or the usual
+     * Linux paths), else the Mozilla bundle shipped with composer/ca-bundle.
+     * PHP on Windows has no system bundle file, so it gets the latter.
      */
     public function systemBundle(): string
     {
-        $candidates = [
-            openssl_get_cert_locations()['default_cert_file'] ?? '',
-            '/etc/ssl/certs/ca-certificates.crt',
-            '/etc/pki/tls/certs/ca-bundle.crt',
-        ];
-
-        foreach ($candidates as $path) {
-            if ($path !== '' && is_readable($path)) {
-                return $path;
-            }
-        }
-
-        throw new \RuntimeException('No system CA bundle found.');
+        return CaBundle::getSystemCaRootBundlePath();
     }
 
     /**

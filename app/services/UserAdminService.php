@@ -7,9 +7,9 @@ use App\Models\User;
 use DomainException;
 
 /**
- * Admin user management. Accounts are created by admins only, with a random
- * temporary password the admin hands out; the user sets their own password
- * and authenticator at first sign-in.
+ * Admin user management. Accounts are created by admins only, with a
+ * one-time password the admin sets and hands out; the user uses it once to
+ * enrol their authenticator, then signs in with username and code.
  *
  * Every method re-checks that the acting user is an admin and refuses
  * actions on their own account. There must always be at least one admin.
@@ -33,14 +33,11 @@ class UserAdminService
     }
 
     /**
-     * Create an account with a temporary password, returned for the admin
-     * to hand out.
+     * Create an account with the one-time password the admin chose.
      *
-     * @return array{user: User, temporaryPassword: string}
-     *
-     * @throws DomainException if the username is taken or the role is unknown.
+     * @throws DomainException if the username is taken, the role is unknown or the password too weak.
      */
-    public function createUser(User $admin, string $username, string $role): array
+    public function createUser(User $admin, string $username, string $role, string $oneTimePassword): User
     {
         $this->requireAdmin($admin);
 
@@ -52,30 +49,65 @@ class UserAdminService
             throw new DomainException("The username $username is taken.");
         }
 
-        $temporaryPassword = $this->passwords->temporaryPassword();
+        $this->requireAcceptable($oneTimePassword);
         $user = new User(['username' => $username, 'role' => $role]);
-        $this->passwords->setTemporaryPassword($user, $temporaryPassword);
+        $this->passwords->setOneTimePassword($user, $oneTimePassword);
         $user->save();
 
-        return ['user' => $user, 'temporaryPassword' => $temporaryPassword];
+        return $user;
     }
 
     /**
-     * Give a user a new temporary password, remove their authenticator and
-     * sign them out everywhere. Returns the temporary password.
+     * Server-side recovery (`php leaf app:reset-admin`): reset a user to a
+     * given one-time password, remove their authenticator, sign them out
+     * and clear their login lockout. A missing "admin" user is recreated as
+     * an admin, so there's always a way back in.
+     *
+     * @return array{user: User, created: bool}
+     *
+     * @throws DomainException if the user doesn't exist (and isn't "admin")
      */
-    public function resetPassword(User $admin, User $target): string
+    public function resetFromConsole(string $username, string $oneTimePassword, LoginThrottleService $throttle = new LoginThrottleService()): array
+    {
+        $user = User::query()->where('username', $username)->first();
+        $created = false;
+
+        if ($user === null) {
+            if ($username !== AuthService::DEFAULT_ADMIN_USERNAME) {
+                throw new DomainException("There is no user called $username.");
+            }
+
+            $user = new User(['username' => $username, 'role' => User::ROLE_ADMIN]);
+            $created = true;
+        }
+
+        $this->passwords->setOneTimePassword($user, $oneTimePassword);
+        $user->totp_secret = null;
+        $user->totp_last_step = null;
+        $user->session_version = (int) $user->session_version + 1;
+        $user->save();
+        $throttle->recordLoginSuccess($username);
+
+        return ['user' => $user, 'created' => $created];
+    }
+
+    /**
+     * Remove a user's authenticator, give them the one-time password the
+     * admin chose and sign them out everywhere, so they enrol a new
+     * authenticator (e.g. after losing their phone).
+     *
+     * @throws DomainException if the password is too weak.
+     */
+    public function resetPassword(User $admin, User $target, string $oneTimePassword): void
     {
         $this->requireAdminActingOnOther($admin, $target);
+        $this->requireAcceptable($oneTimePassword);
 
-        $temporaryPassword = $this->passwords->temporaryPassword();
-        $this->passwords->setTemporaryPassword($target, $temporaryPassword);
+        $this->passwords->setOneTimePassword($target, $oneTimePassword);
         $target->totp_secret = null;
         $target->totp_last_step = null;
         $target->session_version = $target->session_version + 1;
         $target->save();
-
-        return $temporaryPassword;
     }
 
     /**
@@ -121,6 +153,15 @@ class UserAdminService
         }
 
         $target->delete();
+    }
+
+    private function requireAcceptable(string $oneTimePassword): void
+    {
+        $error = $this->passwords->policyError($oneTimePassword);
+
+        if ($error !== null) {
+            throw new DomainException($error);
+        }
     }
 
     private function requireAdmin(User $admin): void

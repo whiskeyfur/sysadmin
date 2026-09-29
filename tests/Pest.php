@@ -46,6 +46,11 @@ uses()->beforeEach(function () {
     Schema::migrate('app/database/health_checks.yml');
     Schema::migrate('app/database/ssl_checks.yml');
     Schema::migrate('app/database/settings.yml');
+    Schema::migrate('app/database/accounts.yml');
+    Schema::migrate('app/database/account_server.yml');
+    Schema::migrate('app/database/password_reveals.yml');
+    Schema::migrate('app/database/ssl_certificates.yml');
+    Schema::migrate('app/database/ssl_bindings.yml');
 
     // A clock tests can move: $this->clock->advance(30) jumps one TOTP period.
     $this->clock = new class () implements ClockInterface {
@@ -63,6 +68,6 @@ uses()->beforeEach(function () {
     };
 
     $this->cipher = new SecretCipher('base64:' . base64_encode(random_bytes(32)));
-    $this->passwords = new PasswordService($this->clock);
+    $this->passwords = new PasswordService();
 })->in('services', 'checks');
 

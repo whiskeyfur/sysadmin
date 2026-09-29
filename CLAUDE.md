@@ -30,7 +30,7 @@ The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice
 - Route partials are `app/routes/_*.php` and are loaded automatically. Views use Blade (`app/views/*.blade.php`, layout `layouts/app`); styling is plain CSS in the layout.
 - `config/database.php` (published with `php leaf config:publish database`) defaults the connection to `sqlite` instead of Leaf's `mysql`, so a missing `.env` can't send migrations to a local MySQL server's `forge` database. `php leaf key:generate` without a `.env` reports success but saves nothing. On web requests, `App\Utils\AppKeyBootstrap` (called from `public/index.php` before Leaf loads `.env`, because the CSRF module needs the key at boot) creates `.env` from `.env.example` and generates `APP_KEY` if missing, under a lock so concurrent first requests agree on one key. If it can't write `.env`, it stops with a 500 rather than run on a key that would be lost. It also exports the key into the process environment: `php leaf app:start` loads `.env` into its own environment and the built-in server inherits it (possibly with an empty `APP_KEY`), and Leaf's `.env` loader never overrides an existing variable, so otherwise every request would fail with "No CSRF secret is set" until a restart. Default `APP_URL` is `http://localhost:5500/` (matches `leaf serve`).
 - CSRF protection is on for every POST (`leafs/csrf`); every form needs `@csrf`. `config/auth.php` exists only because Leaf MVC reads `auth.session` to decide whether to enable CSRF and errors if it's missing.
-- Route middleware (`app/middleware`) passes data to controllers with `response()->next([...])`; controllers read it with `$this->request->next('auth')`. `Authenticate` (and its subclasses `AuthenticateAllowingExpiredPassword` and `RequireAdmin`) provide an `AuthContext` (user, password-expired flag).
+- Route middleware (`app/middleware`) passes data to controllers with `response()->next([...])`; controllers read it with `$this->request->next('auth')`. `Authenticate` (and its subclass `RequireAdmin`) provide an `AuthContext` (the signed-in user).
 - Leaf pitfalls hit so far:
   - `request()->get($key)` HTML-escapes by default; pass `false` for passwords and other raw input. `request()->validate()` returns raw values.
   - Leaf validation rules are single-line regexes (`min:1` fails on multi-line input). Check such fields manually.
@@ -54,9 +54,9 @@ The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice
 - `php leaf db:migrate` applies schema files; `db:seed`, `db:rollback` and `db:reset` also exist.
 - `leaf context` prints a compact map of the app.
 - Tests, lint and analysis use Leaf's Alchemy (config in `alchemy.yml`; Pest, PHP CS Fixer PSR-12, PHPStan level 5 on `app/`):
-  - `composer run test` runs the suite (in parallel). Alchemy writes the PHPUnit config on the fly, so don't call `vendor/bin/pest` directly. To narrow a run, pass a filter regex with no spaces: `vendor/bin/alchemy test --flags=--filter=AuthService` (one file) or `--flags=--filter=expire` (tests whose names match).
+  - `composer run test` runs the suite (in parallel). Alchemy writes the PHPUnit config on the fly, so don't call `vendor/bin/pest` directly. To narrow a run, pass a filter regex with no spaces: `vendor/bin/alchemy test --flags=--filter=AuthService` (one file) or `--flags=--filter=one-time` (tests whose names match).
   - `composer run lint` checks style, `composer run fmt` fixes it, `composer run analyse` runs PHPStan.
-  - Test files are `tests/**/*.test.php`. `tests/Pest.php` gives every test in `tests/services` a fresh in-memory SQLite database migrated from the real schema files, plus `$this->clock` (a PSR-20 clock tests can move with `advance($seconds)`), `$this->cipher` (a `SecretCipher` with a throwaway app key) and `$this->passwords` (a `PasswordService` on the test clock). It loads `Leaf\Model` before building the test connection because loading that class connects to the app database and would replace it.
+  - Test files are `tests/**/*.test.php`. `tests/Pest.php` gives every test in `tests/services` a fresh in-memory SQLite database migrated from the real schema files, plus `$this->clock` (a PSR-20 clock tests can move with `advance($seconds)`), `$this->cipher` (a `SecretCipher` with a throwaway app key) and `$this->passwords` (a `PasswordService`). It loads `Leaf\Model` before building the test connection because loading that class connects to the app database and would replace it.
 
 ## Accounts and sign-in
 
@@ -64,53 +64,58 @@ The client decided against encryption at rest: app data is stored in plain SQLit
 
 ### Rules
 
-1. **No authenticator, no access.** Signing in needs the username, the password and a current code from an authenticator app (TOTP, Google Authenticator defaults). A new or reset account can only reach the setup page (new password + authenticator), never the app. Setup must refuse accounts that already have an authenticator and aren't being forced to change their password; otherwise a password alone could replace the authenticator. A session is only created after the code is checked, which is why the app doesn't use `leafs/auth` (it puts the user in the session as soon as the password matches).
-2. **Admins create all accounts.** There is no self-registration. An admin creates the account and gets a random temporary password (shown once) to hand out outside the website. At first sign-in the user must choose their own password and enrol an authenticator.
-3. **Passwords expire every 30 days** (`PasswordService::MAX_AGE_DAYS`), counted from `password_changed_at`. A signed-in user with an expired password can only reach `/password` (the `Authenticate` middleware redirects everything else). New passwords need at least 12 characters and must differ from the current one.
+1. **No passwords; no authenticator, no access.** Users sign in with their username and a current code from an authenticator app (TOTP, Google Authenticator defaults). There are no user passwords, no password expiry and no change-password page. A session is only created after the code is checked, which is why the app doesn't use `leafs/auth`.
+2. **Admins create all accounts, with a one-time password they choose.** There is no self-registration. The admin types a one-time password (at least 8 characters, `PasswordService::MIN_LENGTH`, and not 6 digits so it can't be mistaken for a code) and hands it over outside the website. It is only good for setup: enrolling an authenticator. It's then discarded (`users.password` = null, `must_change_password` = false). An admin reset ("Reset sign-in") removes the authenticator, sets a new one-time password and ends the user's sessions.
+3. **Setup can't replace an enrolled authenticator.** The one-time password only opens setup for users with `must_change_password` set; `completeSetup` re-checks that and the session version from when setup started, so an admin reset in between voids it.
 4. **At least one admin.** Demoting or deleting the last admin is refused, and admins can't act on their own account in the admin tools.
-5. **Passwords** are Argon2id hashes via Leaf's password helper (`Leaf\Helpers\Password::ARGON2`). **Authenticator secrets** are the one encrypted column: `SecretCipher` encrypts them with a key derived from `APP_KEY`, bound to `totp-secret:<user id>`, so a copy of the database alone can't generate codes. Changing `APP_KEY` makes every enrolled authenticator unreadable; users would need an admin password reset.
-6. **Session revocation.** The session holds only the user id and `session_version`. Bumping `users.session_version` signs that user out everywhere; password changes and admin resets do this. A password change then restarts the current session.
+5. **One-time passwords** are Argon2id hashes via Leaf's password helper (`Leaf\Helpers\Password::ARGON2`). **Authenticator secrets** are encrypted: `SecretCipher` with a key derived from `APP_KEY`, bound to `totp-secret:<user id>`, so a copy of the database alone can't generate codes. Changing `APP_KEY` makes every enrolled authenticator unreadable; users would need an admin reset.
+6. **Session revocation.** The session holds only the user id and `session_version`. Bumping `users.session_version` signs that user out everywhere; admin resets and `app:reset-admin` do this.
+7. **Re-confirming** (revealing a tracked account's password) takes a fresh authenticator code (`AuthService::confirm`), rate limited like a sign-in. Codes are single-use, so it needs the app's next code after signing in.
 
-### Sign-in flow (`AuthService`)
+### Sign-in flow (`AuthService`, `AuthController`)
 
-1. Rate limit check (before any password hashing).
-2. Look up the username and verify the password. Unknown usernames still run a hash check so they take as long as a wrong password.
-3. `must_change_password` or no authenticator → the setup page.
-4. Check the code against the decrypted TOTP secret; record its time step in `totp_last_step` so it can't be reused.
-5. `AuthSessionService::start()` creates the session. If the password has expired, the middleware then sends the user to `/password`.
+- `/login` has username, code, and (under "First sign-in?") a one-time password field. With a code: rate limit check, look up the user, refuse users still in setup, check the code against the decrypted secret and record its time step in `totp_last_step` so it can't be reused, then `AuthSessionService::start()`.
+- With a one-time password: rate limit check, verify it (unknown usernames still run a hash check so they take as long), then `AuthSessionService::beginSetup()` keeps the user, their session version and a new authenticator secret in the session for 10 minutes and redirects to `/setup`, which shows the QR code. The secret never goes through a form, and the one-time password isn't sent twice.
+- Wrong username, wrong code and wrong one-time password all look the same (`InvalidCredentials`).
 
-Wrong username, wrong password and wrong code all return the same `InvalidCredentials` status and message.
+**Default admin.** On a fresh install (no users), the first request to `/login` creates `admin` with the one-time password `changeme` (`AuthService::DEFAULT_ADMIN_*`), which only reaches setup. Until setup is done, anyone who reaches the site can claim that account, so finish setup right after installing. `ensureDefaultAdmin()` also clears password hashes left from before sign-in was code-only.
 
-**Default admin.** On a fresh install (no users), the first request to `/login` creates `admin` with the temporary password `changeme` (`AuthService::DEFAULT_ADMIN_*`), which only reaches the setup page. Until setup is done, anyone who reaches the site can claim that account, so finish setup right after installing.
+**Locked out?** `php leaf app:reset-admin [username]` (`AppResetAdminCommand`, needs shell access) resets the user (default `admin`, recreated if missing) to the one-time password `changeme`, removes the authenticator, signs them out and clears their login lockout.
 
 ### Rate limiting
 
-Every route that hashes or checks a password (POST `/login`, `/setup`, `/password`, `/admin/users`, `/admin/users/{id}/reset-password`) is protected twice:
-
-- **Attempt limits** (`LoginThrottleService`, sliding 15-minute window): 20 failures per IP and 10 per username (any IP, case-insensitive). A limited request gets HTTP 429 with `Retry-After`, without doing any password work, and looks the same whether or not the username exists. A successful sign-in clears that username's failures but not the IP's. Anyone can lock a username out for 15 minutes by failing 10 times; that's the accepted trade-off. Attempts are stored as SHA-256 buckets in `login_attempts`, never the typed username or IP.
-- **Concurrency cap** (`LimitConcurrentLogins` middleware, `FileSemaphore` lock files in `storage/framework/locks`; lock files owned by another user are opened read-only, which `flock()` allows): at most 4 password hashes at once across all Apache workers (Argon2id uses 64 MiB each). Extra requests get HTTP 503 with `Retry-After: 5`. Controllers call `LimitConcurrentLogins::release()` as soon as the service returns.
+- **Attempt limits** (`LoginThrottleService`) for sign-in, setup and re-confirming: 20 failures per IP and 10 per username (any IP, case-insensitive) in a sliding 15-minute window, plus **30 per username per day**. The daily cap matters because a 6-digit code is the only secret at sign-in: with ±1 period there are 3 valid codes, so 30 guesses a day is about a 1-in-11,000 chance per day. A limited request gets HTTP 429 with `Retry-After`, without doing any hashing or code checking, and looks the same whether or not the username exists. A success clears that username's failures but not the IP's. Anyone can lock a username out (15 minutes, or a day after 30 failures) by failing on purpose; `app:reset-admin` clears it. Attempts are stored as SHA-256 buckets in `login_attempts` (kept a day), never the typed username or IP.
+- **Concurrency cap** (`LimitConcurrentLogins` middleware, `FileSemaphore` lock files in `storage/framework/locks`; lock files owned by another user are opened read-only, which `flock()` allows) on the routes that hash a one-time password (POST `/login`, `/admin/users`, `/admin/users/{id}/reset-password`): at most 4 Argon2id hashes at once across all Apache workers (64 MiB each). Extra requests get HTTP 503 with `Retry-After: 5`. Controllers call `LimitConcurrentLogins::release()` as soon as the service returns.
 
 ### Services (`app/services`)
 
-- `AuthService`: sign-in, first-login setup and password changes, returning a `LoginResult` with a `LoginStatus`; creates the default admin.
-- `AuthSessionService`: the signed-in session and the session cookie flags (`Secure`, `HttpOnly`, `SameSite=Strict`, strict mode), set from `public/index.php` because Leaf's CSRF module starts the session during boot.
-- `PasswordService`: hashing, policy, expiry, temporary passwords.
+- `AuthService`: sign-in, one-time password check (`startSetup`), `completeSetup`, `confirm`, returning a `LoginResult` with a `LoginStatus`; creates the default admin.
+- `AuthSessionService`: the signed-in session, the pending setup, and the session cookie flags (`Secure`, `HttpOnly`, `SameSite=Strict`, strict mode), set from `public/index.php` because Leaf's CSRF module starts the session during boot.
+- `PasswordService`: one-time passwords (hash, verify, policy, discard).
 - `TotpService`: authenticator codes (SHA-1, 6 digits, 30 s), ±1 period for clock drift, replay protection, and a server-rendered QR code so the secret never goes to a third-party QR service.
-- `SecretCipher`: `APP_KEY`-based XChaCha20-Poly1305 for authenticator secrets.
-- `UserAdminService`: create accounts, reset passwords (new temporary password, authenticator removed, sessions ended), promote/demote, delete. Every method re-checks that the acting user is an admin.
+- `SecretCipher`: `APP_KEY`-based XChaCha20-Poly1305 for authenticator secrets, the SSH private key and stored server/account passwords.
+- `UserAdminService`: create accounts, reset sign-in, promote/demote, delete (every method re-checks that the acting user is an admin), and `resetFromConsole()` for `app:reset-admin`.
 - `LoginThrottleService`: the attempt limits above.
+
+## Tracked accounts
+
+`/admin/accounts` (admins, right side of the navbar) tracks the logins used on servers: **local** (belongs to one server), **LDAP** and **shared** (can log into many servers). Each has the current password (`SecretCipher`, `account-password:<id>`), when it was last reset, a rotation period (days, optional) and notes. `AccountService::status()` says `ok`, `due_soon` (within the `account_warning_days` setting, default 7), `overdue`, `unknown` or `none` (no rotation). Recording a password here doesn't change it on any server; the app tracks passwords, it doesn't set them.
+
+- A server's SSH login is an account (`servers.ssh_account_id`): the server form's "Log in as" picks one, and a plain SSH username becomes a local account of that server. When SSH setup succeeds with a password, it's saved as that account's current password. `account_server.last_used_at` records when the app last logged in with it (`SshService`).
+- Revealing a password needs a fresh authenticator code, is logged in `password_reveals` (who, when) and is sent with `Cache-Control: no-store`. An account a server still logs in with can't be deleted.
+- `syncServers()` (run when the Accounts page loads) gives every SSH server an account and moves SSH passwords stored on servers before accounts existed (`ssh-password:<server id>`) into them.
 
 ## Settings
 
-App-wide settings live in the `settings` table (key/value) behind `SettingsService`, which holds each setting's default (`DEFAULTS`) and validation, so adding one needs no schema change. Admins edit them at `/admin/settings` (right side of the navbar). Current settings: `ssl_warning_days` (1–365, default 7).
+App-wide settings live in the `settings` table (key/value) behind `SettingsService`, which holds each setting's default (`DEFAULTS`) and validation, so adding one needs no schema change. Admins edit them at `/admin/settings` (right side of the navbar). Current settings: `ssl_warning_days` and `account_warning_days` (1–365, default 7).
 
 ## Navigation
 
-The navbar has monitoring on the left (**Servers** `/servers`, **SSL** `/ssl`; everyone signed in) and configuration/account on the right (**Configure** `/admin/servers` and **Users** for admins, **Password**, sign out). Keep new monitoring views on the left and settings on the right.
+The navbar has monitoring on the left (**Servers** `/servers`, **SSL** `/ssl`; everyone signed in) and configuration/account on the right (**Configure** `/admin/servers`, **Accounts**, **Users** and **Settings** for admins, then sign out). Keep new monitoring views on the left and settings on the right.
 
 ## Servers
 
-A server is a name and hostname plus **one or more** of SSH (`ssh_enabled`), MariaDB/MySQL (`mysql_enabled`) and SSL (`ssl_enabled`). `ServerService` validates input (at least one must be on) and owns the `servers` table. Configuration lives in `ServerConfigController` (`/admin/servers`); monitoring in `ServerController` (`/servers`, `/servers/{id}`, "Run checks now" runs health and SSL checks) and `SslController` (`/ssl`).
+A server is a name and hostname with optional SSH (`ssh_enabled`) and MariaDB/MySQL (`mysql_enabled`); SSL certificates are attached to servers from the SSL pages (see SSL monitoring), and the server form only lists them. `ServerService` validates input and owns the `servers` table. Configuration lives in `ServerConfigController` (`/admin/servers`); monitoring in `ServerController` (`/servers`, `/servers/{id}`, "Run checks now" runs health and SSL checks) and `SslController` (`/ssl`).
 
 - With SSH off, `ssh_username` is `''` and the host key and any stored password are forgotten. `SshService` and `SshSetupService` refuse to contact such a server, before any network traffic; `Server::sshReady()` is `ssh_enabled && host key trusted`. `ServerService` treats a *missing* `ssh_enabled` input key as on, for callers that predate optional SSH.
 
@@ -120,7 +125,8 @@ A server is a name and hostname plus **one or more** of SSH (`ssh_enabled`), Mar
   1. Trust the host key: the page shows its `SHA256:` fingerprint (same format as `ssh-keygen -lf`); the admin confirms it, and the key is re-fetched and must still match.
   2. Try the app's key. If it works, done.
   3. Only if the server allows password login (`ssh_password_allowed`, **off by default**): log in once with the password the admin enters, install the key with an idempotent `sh` script (`installCommand()`), and try the key again.
-  4. If the server still refuses key login, store the password encrypted (`ssh-password:<server id>`) and use password login for that server (`ssh_auth = password`).
+  4. If the server still refuses key login, keep using the password (stored as the server's account password, see Tracked accounts) with password login for that server (`ssh_auth = password`).
+- **Platform detection:** `ServerPlatform::fromIdentification()` reads the SSH banner (`SSH-2.0-OpenSSH_for_Windows_...` means Windows), which phpseclib has before any login. `SshService::probe()` returns host key and platform from one no-login connection; setup records it in `servers.ssh_platform` (forgotten with the host key). The setup page shows only the matching commands (Windows host keys are in `%ProgramData%\ssh`, and administrator accounts use `administrators_authorized_keys`), both when unknown. The password key install is a POSIX `sh` script, so it's refused on Windows before anything runs. Don't probe this machine's own sshd: it runs fail2ban.
 - **No password attempts unless allowed.** This machine runs fail2ban set to ban on the first password attempt. `SshService::connectWithPassword()` refuses (before any network traffic) when the server doesn't allow passwords, and `SshSetupService` checks too; tests cover both guards. phpseclib key logins send only `none` then `publickey`, never a password. Each setup step tries a login at most once. A key login before the key is installed still logs one "Failed publickey", which some fail2ban modes count.
 - **MySQL** (`MysqlService`) is PDO over direct TCP with a 5-second timeout. The password is encrypted with `SecretCipher` (`mysql-password:<server id>`), write-only in the UI (blank on edit keeps it), and cleared when MySQL is turned off for a server.
 - **MySQL TLS** (`servers.mysql_tls`): `verify` (default for new servers: chain and hostname checked against the pasted CA in `mysql_tls_ca`, or the system CA bundle), `encrypt` (TLS without checking the certificate) or `off`. Behaviour of PHP's mysqlnd, verified against a real MariaDB:
@@ -148,9 +154,12 @@ A server is a name and hostname plus **one or more** of SSH (`ssh_enabled`), Mar
 
 ## SSL monitoring
 
-`SslCheckService::check($host, $port)` downloads the certificate straight from the site and judges it; `SslMonitorService` runs it for each of a server's `sslTargets()` (the `ssl_hosts` list, one `host` or `host:port` per line, normalised by `ServerService`; empty means the server hostname on 443), stores results in `ssl_checks` (30 days) and the worst status in `servers.last_ssl_status`.
+A **certificate** (`ssl_certificates`) has a name (free text, e.g. "Main site") and the hostnames it should cover (the first is sent as SNI and can't be a wildcard). **Bindings** (`ssl_bindings`) say where it's served: a server and port, or directly via DNS (`server_id` null). Several servers can serve the same certificate, and one server can serve several on different ports. Admins add certificates at the bottom of `/ssl` and manage bindings on `/ssl/{id}`; the server form shows its bindings read-only.
 
-- Two TLS connections via `stream_socket_client` with SNI: one fully verified (system CA bundle, or a CA file passed to the constructor, which tests use) gives the verdict; when that fails, one unverified connection reads the certificate to explain why. The judgement is a pure `evaluate()`.
+- `SslMonitorService` checks each binding separately: `SslCheckService::check($sniHost, $port, $connectTo, $expectedNames)` connects to the server's own hostname/IP (or resolves the hostname for direct bindings), sends the SNI name, verifies, and warns about listed hostnames the certificate doesn't cover (`covers()`: one wildcard label). Results go to `ssl_checks` (`binding_id`, 30 days); the worst status is kept on the binding, the certificate and the server (`last_ssl_status`).
+- `convertLegacy()` turns the old per-server `ssl_hosts` lists into certificates and bindings (runs when `/servers` loads).
+- The CA bundle comes from `CaCertificateService::systemBundle()` (`composer/ca-bundle`): the system's (`openssl.cafile`, `curl.cainfo`, `SSL_CERT_FILE`, usual Linux paths), else the bundled Mozilla list. PHP on Windows has no system bundle file, so it uses the bundled one; certificates from an internal CA then show as untrusted unless `openssl.cafile` points at a bundle that includes it.
+- Two TLS connections via `stream_socket_client` with SNI: one fully verified (the CA bundle above, or a CA file passed to the constructor, which tests use) gives the verdict; when that fails, one unverified connection reads the certificate to explain why. The judgement is a pure `evaluate()`.
 - Verified PHP behaviour: a hostname mismatch gives a specific "Peer certificate CN=... did not match" warning, but expired, self-signed and untrusted certificates all give only "certificate verify failed", so `evaluate()` works out the reason from the certificate itself. TLS errors arrive as PHP warnings; `SslCheckService` collects them with a temporary error handler (Leaf would otherwise turn them into 500s).
 - An invalid certificate (expired, wrong name, untrusted, unreachable) is critical. A valid one is a warning once it expires within the warning period (days left <= `ssl_warning_days`, an admin setting, default 7), never critical. Checked against badssl.com (valid, expired, wrong host, self-signed, untrusted root, incomplete chain) with the expected verdicts.
 - Test certificates made with PHP's `openssl_csr_sign` need `'digest_alg' => 'sha256'`, or OpenSSL servers refuse them ("ca md too weak"). `tests/checks/SslCheck.test.php` starts real `openssl s_server` instances.

@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\DTOs\HostKey;
+use App\Enums\ServerPlatform;
 use App\Exceptions\AuthorizationException;
+use App\Models\Account;
 use App\Models\HealthCheck;
 use App\Models\Server;
 use App\Models\SslCheck;
@@ -18,6 +20,8 @@ use DomainException;
  */
 class ServerService
 {
+    private ?AccountService $accounts = null;
+
     public function __construct(
         private readonly SecretCipher $cipher = new SecretCipher(),
         private readonly CaCertificateService $certificates = new CaCertificateService(),
@@ -82,7 +86,19 @@ class ServerService
     }
 
     /**
-     * Log in with the app's key from now on; forget any stored SSH password.
+     * Remember the platform read from the server's SSH banner.
+     */
+    public function recordPlatform(Server $server, ServerPlatform $platform): void
+    {
+        if ($platform !== ServerPlatform::Unknown && $server->ssh_platform !== $platform->value) {
+            $server->ssh_platform = $platform->value;
+            $server->save();
+        }
+    }
+
+    /**
+     * Log in with the app's key from now on. The account keeps its password:
+     * it's tracked, even when the app doesn't need it.
      */
     public function useKeyAuth(Server $server): void
     {
@@ -92,7 +108,8 @@ class ServerService
     }
 
     /**
-     * Fallback for servers that refuse key login: store the SSH password (encrypted).
+     * Fallback for servers that refuse key login: log in with the password
+     * of the server's SSH account.
      */
     public function usePasswordAuth(Server $server, string $password): void
     {
@@ -100,14 +117,53 @@ class ServerService
             throw new DomainException("Password login is not allowed for {$server->name}.");
         }
 
+        $this->storeSshPassword($server, $password);
         $server->ssh_auth = Server::SSH_AUTH_PASSWORD;
-        $server->ssh_password = $this->cipher->encrypt($password, $this->sshPasswordContext($server));
         $server->save();
     }
 
+    /**
+     * Save a password that worked for the server's SSH account.
+     */
+    public function storeSshPassword(Server $server, string $password): void
+    {
+        $account = $this->accounts()->forServer($server);
+
+        if ($account !== null) {
+            $this->accounts()->storePassword($account, $password);
+        }
+    }
+
+    /**
+     * The password of the server's SSH account, for password logins.
+     */
     public function sshPassword(Server $server): ?string
     {
+        $account = $this->accounts()->forServer($server);
+
+        return $account === null ? null : $this->accounts()->password($account);
+    }
+
+    /**
+     * An SSH password stored on the server itself, from before accounts
+     * existed; AccountService::syncServers() moves it into the account.
+     */
+    public function legacySshPassword(Server $server): ?string
+    {
         return $server->ssh_password === null ? null : $this->cipher->decrypt($server->ssh_password, $this->sshPasswordContext($server));
+    }
+
+    /**
+     * Note a successful SSH login with the server's account.
+     */
+    public function recordSshUse(Server $server): void
+    {
+        $this->accounts()->recordUse($server);
+    }
+
+    private function accounts(): AccountService
+    {
+        return $this->accounts ??= new AccountService($this->cipher);
     }
 
     public function mysqlPassword(Server $server): ?string
@@ -136,7 +192,6 @@ class ServerService
         // The form always sends ssh_enabled; callers that predate optional SSH don't.
         $sshEnabled = array_key_exists('ssh_enabled', $input) ? filter_var($input['ssh_enabled'], FILTER_VALIDATE_BOOL) : true;
         $mysqlEnabled = filter_var($input['mysql_enabled'] ?? false, FILTER_VALIDATE_BOOL);
-        $sslEnabled = filter_var($input['ssl_enabled'] ?? false, FILTER_VALIDATE_BOOL);
         $mysqlPassword = '';
 
         if ($name === '' || mb_strlen($name) > 64) {
@@ -149,26 +204,31 @@ class ServerService
 
         $this->requireHost($hostname, 'Hostname');
 
-        if (!$sshEnabled && !$mysqlEnabled && !$sslEnabled) {
-            throw new DomainException('Turn on at least one of SSH, MariaDB/MySQL or SSL.');
-        }
+        $sshAccountId = filter_var($input['ssh_account_id'] ?? null, FILTER_VALIDATE_INT) ?: null;
 
         if ($sshEnabled) {
             $sshPort = $this->port($input['ssh_port'] ?? 22, 'SSH port');
             $sshUsername = trim((string) ($input['ssh_username'] ?? ''));
 
-            if (preg_match('/^[a-z_][a-z0-9_.-]{0,31}$/i', $sshUsername) !== 1) {
-                throw new DomainException('Enter the SSH username (letters, numbers, dots, dashes and underscores).');
+            if ($sshAccountId !== null) {
+                $chosen = Account::query()->find($sshAccountId);
+
+                if (!$chosen instanceof Account || ($chosen->type === Account::TYPE_LOCAL && $chosen->server_id !== $server->id)) {
+                    throw new DomainException('Choose an account this server can use.');
+                }
+
+                $sshUsername = $chosen->username;
+            } elseif (preg_match('/^[a-z_][a-z0-9_.-]{0,31}$/i', $sshUsername) !== 1) {
+                throw new DomainException('Enter the SSH username (letters, numbers, dots, dashes and underscores), or choose an account.');
             }
         } else {
             $sshPort = $server->ssh_port ?? 22;
             $sshUsername = '';
         }
 
-        $sslHosts = $sslEnabled ? $this->sslHosts((string) ($input['ssl_hosts'] ?? '')) : null;
-
         if (!$creating && (!$sshEnabled || $server->hostname !== $hostname || $server->ssh_port !== $sshPort)) {
             $server->ssh_host_key = null;
+            $server->ssh_platform = null;
         }
 
         // A stored SSH password belongs to one user on one server; start setup over.
@@ -183,8 +243,6 @@ class ServerService
         $server->ssh_port = $sshPort;
         $server->ssh_username = $sshUsername;
         $server->ssh_password_allowed = $sshEnabled && filter_var($input['ssh_password_allowed'] ?? false, FILTER_VALIDATE_BOOL);
-        $server->ssl_enabled = $sslEnabled;
-        $server->ssl_hosts = $sslHosts;
 
         if (!$server->ssh_password_allowed) {
             $server->ssh_auth = Server::SSH_AUTH_KEY;
@@ -231,7 +289,15 @@ class ServerService
             $server->mysql_tls_ca = null;
         }
 
+        if (!$sshEnabled) {
+            $server->ssh_account_id = null;
+        }
+
         $server->save();
+
+        if ($sshEnabled) {
+            $this->accounts()->assign($server, $sshAccountId, $sshUsername);
+        }
 
         // A blank password on edit keeps the stored one. Encrypted after saving
         // so a new server's context can include its id.
@@ -239,36 +305,6 @@ class ServerService
             $server->mysql_password = $this->cipher->encrypt($mysqlPassword, $this->passwordContext($server));
             $server->save();
         }
-    }
-
-    /**
-     * Validate the SSL host list: one "host" or "host:port" per line.
-     * Normalised: lower case, no duplicates, ":443" left out. Empty means
-     * the server's own hostname.
-     */
-    private function sslHosts(string $input): ?string
-    {
-        $hosts = [];
-
-        foreach (preg_split('/[\s,]+/', strtolower(trim($input))) ?: [] as $entry) {
-            if ($entry === '') {
-                continue;
-            }
-
-            $entry = preg_replace('#^https://|/.*$#', '', $entry) ?? $entry;
-            [$host, $port] = array_pad(explode(':', $entry, 2), 2, '443');
-            $this->requireHost($host, "SSL host \"$host\"");
-            $port = $this->port($port, "The port for $host");
-            $hosts[] = $port === 443 ? $host : "$host:$port";
-        }
-
-        $hosts = array_values(array_unique($hosts));
-
-        if (count($hosts) > 50) {
-            throw new DomainException('Monitor at most 50 SSL hosts per server.');
-        }
-
-        return $hosts === [] ? null : implode("\n", $hosts);
     }
 
     private function port(mixed $value, string $label): int

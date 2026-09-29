@@ -8,25 +8,16 @@ use Leaf\Middleware;
 
 /**
  * Requires a signed-in user and passes their AuthContext to the controller
- * as request()->next('auth'). Users whose password has expired are sent to
- * the change-password page until they change it.
+ * as request()->next('auth').
  */
 class Authenticate extends Middleware
 {
-    protected bool $allowExpiredPassword = false;
-
     public function call()
     {
         $context = (new AuthSessionService())->current();
 
         if ($context === null) {
             response()->redirect('/login');
-
-            return;
-        }
-
-        if ($context->passwordExpired && !$this->allowExpiredPassword) {
-            response()->redirect('/password');
 
             return;
         }

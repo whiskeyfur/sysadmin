@@ -2,19 +2,17 @@
 
 namespace App\Models;
 
-use Carbon\Carbon;
-
 /**
- * A user account. Created by admins only.
+ * A user account. Created by admins only. Signs in with username and
+ * authenticator code; $password is only an unused one-time password.
  *
  * @property int $id
  * @property string $username
- * @property string $password Argon2id hash
+ * @property string|null $password Argon2id hash of the one-time password, null once used
  * @property string $role "admin" or "user"
  * @property string|null $totp_secret encrypted with SecretCipher
  * @property int|null $totp_last_step
- * @property bool $must_change_password
- * @property Carbon|null $password_changed_at
+ * @property bool $must_change_password one-time password pending setup
  * @property int $session_version
  */
 class User extends Model
@@ -28,7 +26,7 @@ class User extends Model
      */
     protected $fillable = [
         'username', 'password', 'role', 'totp_secret', 'totp_last_step',
-        'must_change_password', 'password_changed_at', 'session_version',
+        'must_change_password', 'session_version',
     ];
 
     /**
@@ -42,7 +40,6 @@ class User extends Model
     protected $casts = [
         'totp_last_step' => 'integer',
         'must_change_password' => 'boolean',
-        'password_changed_at' => 'datetime',
         'session_version' => 'integer',
     ];
 

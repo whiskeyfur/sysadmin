@@ -111,3 +111,21 @@ test('real TLS handshakes against a local openssl server', function () {
         rmdir($dir);
     }
 });
+
+test('certificate names cover hostnames like a browser: one wildcard label', function (string $pattern, string $host, bool $expected) {
+    expect(SslCheckService::covers($pattern, $host))->toBe($expected);
+})->with([
+    ['shop.example.com', 'SHOP.example.com', true],
+    ['*.example.com', 'www.example.com', true],
+    ['*.example.com', 'a.b.example.com', false],
+    ['*.example.com', 'example.com', false],
+    ['www.example.com', 'shop.example.com', false],
+]);
+
+test('a valid certificate that misses a listed hostname is a warning', function () {
+    $result = $this->ssl->evaluate('example.com', 443, true, null, ($this->leaf)(-30, 90), null, null, $this->now, ['example.com', 'www.example.com', 'shop.example.com']);
+
+    expect($result->status)->toBe(HealthStatus::Warning)
+        ->and($result->summary)->toContain("Doesn't cover shop.example.com")
+        ->and($result->details['uncovered'])->toBe(['shop.example.com']);
+});

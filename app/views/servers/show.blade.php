@@ -22,7 +22,7 @@
                     @else
                         off
                     @endif
-                    · SSL: {{ $server->ssl_enabled ? count($server->sslTargets()) . ' site(s)' : 'off' }}
+                    · SSL: {{ count($bindings) ? count($bindings) . ' certificate(s)' : 'none' }}
                     @if ($auth->isAdmin()) · <a href="/admin/servers/{{ $server->id }}/edit">Configure</a>@endif
                 </p>
             </div>
@@ -68,42 +68,39 @@
         @endif
     </div>
 
-    @if ($server->ssl_enabled)
+    @if (count($bindings))
     <div class="card">
         <h2>SSL certificates</h2>
-        @if (count($certificates) === 0)
-            <p class="muted">Not checked yet.</p>
-        @else
-            <p class="muted">Last checked {{ \App\Utils\LocalTime::format($server->last_ssl_checked_at) }}.</p>
-            <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr><th>Site</th><th>Status</th><th>Result</th><th>Recent runs</th></tr>
-                </thead>
-                <tbody>
-                    @foreach ($certificates as $certificate)
-                        <tr>
-                            <td>{{ $certificate->label() }}</td>
-                            <td><span class="badge {{ $certificate->status->value }}">{{ $certificate->status->label() }}</span></td>
-                            <td>
-                                {{ $certificate->summary }}
-                                @if (!empty($certificate->details['names']))
-                                    <br><span class="hint">Covers {{ implode(', ', array_slice($certificate->details['names'], 0, 6)) }}{{ count($certificate->details['names']) > 6 ? ' and ' . (count($certificate->details['names']) - 6) . ' more' : '' }}.{{ !empty($certificate->details['protocol']) ? ' ' . $certificate->details['protocol'] . '.' : '' }}</span>
-                                @endif
-                            </td>
-                            <td>
-                                <span class="history" aria-label="Recent runs, oldest first">
-                                    @foreach ($sslHistory[$certificate->host . ':' . $certificate->port] ?? [] as $past)
-                                        <span class="dot {{ $past->status->value }}" title="{{ \App\Utils\LocalTime::format($past->checked_at) }}: {{ $past->status->label() }}. {{ $past->summary }}"></span>
-                                    @endforeach
-                                </span>
-                            </td>
-                        </tr>
-                    @endforeach
-                </tbody>
-            </table>
-            </div>
-        @endif
+        <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Certificate</th><th>Port</th><th>Status</th><th>Result</th><th>Recent runs</th></tr>
+            </thead>
+            <tbody>
+                @foreach ($bindings as $binding)
+                    <tr>
+                        <td><a href="/ssl/{{ $binding->certificate->id }}">{{ $binding->certificate->name }}</a><br><span class="hint">{{ $binding->certificate->primaryHostname() }}</span></td>
+                        <td>{{ $binding->port }}</td>
+                        <td>
+                            @if ($binding->last_status)
+                                <span class="badge {{ $binding->last_status }}">{{ ucfirst($binding->last_status) }}</span>
+                            @else
+                                <span class="muted">Not checked</span>
+                            @endif
+                        </td>
+                        <td>{{ $binding->last_summary }}</td>
+                        <td>
+                            <span class="history" aria-label="Recent runs, oldest first">
+                                @foreach ($ssl->history($binding) as $past)
+                                    <span class="dot {{ $past->status->value }}" title="{{ \App\Utils\LocalTime::format($past->checked_at) }}: {{ $past->status->label() }}. {{ $past->summary }}"></span>
+                                @endforeach
+                            </span>
+                        </td>
+                    </tr>
+                @endforeach
+            </tbody>
+        </table>
+        </div>
     </div>
     @endif
 

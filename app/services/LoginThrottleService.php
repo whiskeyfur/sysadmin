@@ -7,12 +7,14 @@ use App\Utils\SystemClock;
 use Psr\Clock\ClockInterface;
 
 /**
- * Rate limits for everything that checks a password: sign-in, first-login
- * setup and password changes.
+ * Rate limits for everything that checks a code or one-time password:
+ * sign-in, first-login setup and re-confirming (revealing a password).
  *
  * Failures are counted per client IP and per username (across all IPs), in
- * a sliding window. Checks happen before any Argon2id work, and a limited
- * request gets the same answer whether or not the username exists.
+ * sliding windows. A 6-digit code is the only secret at sign-in, so a
+ * username also has a daily cap: at most MAX_FAILURES_PER_USERNAME_PER_DAY
+ * guesses a day. Checks happen before any hashing, and a limited request
+ * gets the same answer whether or not the username exists.
  */
 class LoginThrottleService
 {
@@ -21,6 +23,10 @@ class LoginThrottleService
     public const MAX_FAILURES_PER_IP = 20;
 
     public const MAX_FAILURES_PER_USERNAME = 10;
+
+    public const DAY_SECONDS = 86400;
+
+    public const MAX_FAILURES_PER_USERNAME_PER_DAY = 30;
 
     public function __construct(private readonly ClockInterface $clock = new SystemClock())
     {
@@ -34,6 +40,7 @@ class LoginThrottleService
         return max(
             $this->retryAfter($this->bucket('ip', $ip), self::MAX_FAILURES_PER_IP, self::WINDOW_SECONDS),
             $this->retryAfter($this->bucket('user', $username), self::MAX_FAILURES_PER_USERNAME, self::WINDOW_SECONDS),
+            $this->retryAfter($this->bucket('user', $username), self::MAX_FAILURES_PER_USERNAME_PER_DAY, self::DAY_SECONDS),
         );
     }
 
@@ -77,7 +84,7 @@ class LoginThrottleService
 
         LoginAttempt::query()->create(['bucket' => $bucket, 'attempted_at' => $now]);
         LoginAttempt::query()
-            ->where('attempted_at', '<=', $now - self::WINDOW_SECONDS)
+            ->where('attempted_at', '<=', $now - self::DAY_SECONDS)
             ->delete();
     }
 

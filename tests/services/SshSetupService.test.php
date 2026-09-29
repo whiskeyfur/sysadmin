@@ -1,7 +1,9 @@
 <?php
 
 use App\DTOs\HostKey;
+use App\Enums\ServerPlatform;
 use App\Exceptions\ServerConnectionException;
+use App\Models\Account;
 use App\Models\Server;
 use App\Models\User;
 use App\Services\ServerService;
@@ -25,6 +27,7 @@ beforeEach(function () {
         public int $passwordAttempts = 0;
         public int $keyAttempts = 0;
         public array $commands = [];
+        public ServerPlatform $platform = ServerPlatform::Unix;
 
         public function __construct(private HostKey $key)
         {
@@ -33,6 +36,16 @@ beforeEach(function () {
         public function presentedHostKey(Server $server): HostKey
         {
             return $this->key;
+        }
+
+        public function probe(Server $server): array
+        {
+            return [$this->key, $this->platform];
+        }
+
+        public function platformOf(SSH2 $ssh): ServerPlatform
+        {
+            return $this->platform;
         }
 
         public function connectWithKey(Server $server): SSH2
@@ -115,16 +128,21 @@ test('when the key already works, no password is used or stored', function () {
         ->and($server->fresh()->ssh_host_key)->toBe($this->hostKey->toString());
 });
 
-test('the password installs the key; once key login works it is not stored', function () {
+test('the password installs the key and is saved to the server\'s account; the key is used from then on', function () {
     $server = ($this->makeServer)(true);
     $this->ssh->keyResults = [false, true];
     $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), 'pw');
+    $account = Account::query()->find($server->fresh()->ssh_account_id);
 
     expect($result->ok)->toBeTrue()
         ->and($this->ssh->passwordAttempts)->toBe(1)
         ->and($this->ssh->commands[0])->toContain($this->keys->publicKey())
         ->and($server->fresh()->ssh_auth)->toBe(Server::SSH_AUTH_KEY)
-        ->and($server->fresh()->ssh_password)->toBeNull();
+        ->and($account->type)->toBe(Account::TYPE_LOCAL)
+        ->and($account->username)->toBe('deploy')
+        ->and($account->server_id)->toBe($server->id)
+        ->and($account->password_changed_at)->not->toBeNull()
+        ->and($this->servers->sshPassword($server->fresh()))->toBe('pw');
 });
 
 test('a server that refuses key login falls back to the stored, encrypted password', function () {
@@ -134,9 +152,12 @@ test('a server that refuses key login falls back to the stored, encrypted passwo
     $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), 'fallback-pw!');
     $server = $server->fresh();
 
+    $account = Account::query()->find($server->ssh_account_id);
+
     expect($result->ok)->toBeTrue()
         ->and($server->ssh_auth)->toBe(Server::SSH_AUTH_PASSWORD)
-        ->and($server->ssh_password)->not->toContain('fallback-pw!')
+        ->and($server->ssh_password)->toBeNull()
+        ->and($account->password)->not->toContain('fallback-pw!')
         ->and($this->servers->sshPassword($server))->toBe('fallback-pw!');
 });
 
@@ -229,3 +250,42 @@ test('a server with SSH turned off is never contacted', function () {
         ->and($this->setup->setUp($this->admin, $server, null, null)->ok)->toBeFalse()
         ->and(microtime(true) - $started)->toBeLessThan(1);
 });
+
+test('the platform read from the SSH banner is recorded during setup', function () {
+    $server = ($this->makeServer)(false);
+    $this->ssh->platform = ServerPlatform::Windows;
+    $this->ssh->keyResults = [true];
+    $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), null);
+
+    expect($server->fresh()->platform())->toBe(ServerPlatform::Windows);
+});
+
+test('on Windows the key is never installed with the sh script', function () {
+    $server = ($this->makeServer)(true);
+    $this->ssh->platform = ServerPlatform::Windows;
+    $this->ssh->keyResults = [false];
+    $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), 'pw');
+
+    expect($result->ok)->toBeFalse()
+        ->and($this->ssh->commands)->toBe([])
+        ->and(end($result->steps)['message'])->toContain('administrators_authorized_keys')
+        ->and($server->fresh()->ssh_password)->toBeNull();
+});
+
+test('changing the hostname forgets the recorded platform', function () {
+    $server = ($this->makeServer)(false);
+    $this->servers->recordPlatform($server, ServerPlatform::Windows);
+    $this->servers->update($this->admin, $server, ['name' => 'web', 'hostname' => 'other.example.com', 'ssh_port' => 22, 'ssh_username' => 'deploy']);
+
+    expect($server->fresh()->platform())->toBe(ServerPlatform::Unknown);
+});
+
+test('SSH banners are mapped to a platform', function (?string $banner, ServerPlatform $expected) {
+    expect(ServerPlatform::fromIdentification($banner))->toBe($expected);
+})->with([
+    ['SSH-2.0-OpenSSH_for_Windows_9.5', ServerPlatform::Windows],
+    ['SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.19', ServerPlatform::Unix],
+    ['SSH-2.0-OpenSSH_8.2', ServerPlatform::Unix],
+    [null, ServerPlatform::Unknown],
+    ['', ServerPlatform::Unknown],
+]);

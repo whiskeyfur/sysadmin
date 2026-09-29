@@ -10,8 +10,8 @@ use App\Services\UserAdminService;
 use DomainException;
 
 /**
- * Admin user management: create accounts, change roles, reset passwords
- * and delete users.
+ * Admin user management: create accounts (with a one-time password),
+ * change roles, reset sign-in and delete users.
  */
 class AdminUserController extends Controller
 {
@@ -31,7 +31,7 @@ class AdminUserController extends Controller
         $this->response->view('admin.users', [
             'auth' => $auth,
             'users' => $this->admins->listUsers($auth->user),
-            'passwords' => new PasswordService(),
+            'minLength' => PasswordService::MIN_LENGTH,
             'notice' => $this->request->flash('notice'),
             'error' => $this->request->flash('error'),
         ]);
@@ -50,7 +50,7 @@ class AdminUserController extends Controller
         }
 
         try {
-            $created = $this->admins->createUser($auth->user, $username, $role);
+            $created = $this->admins->createUser($auth->user, $username, $role, (string) $this->request->get('one_time_password', false));
         } catch (DomainException $e) {
             $this->response->withFlash('error', $e->getMessage())->redirect('/admin/users');
 
@@ -59,12 +59,8 @@ class AdminUserController extends Controller
             LimitConcurrentLogins::release();
         }
 
-        $this->showTemporaryPassword(
-            $auth,
-            "Created {$created['user']->username}",
-            "Give {$created['user']->username} their username and this temporary password outside this website. At first sign-in they must choose their own password and set up an authenticator app.",
-            $created['temporaryPassword'],
-        );
+        $this->response->withFlash('notice', "Created {$created->username}. Give them their username and the one-time password outside this website; at first sign-in they set up an authenticator app.")
+            ->redirect('/admin/users');
     }
 
     public function resetPassword($id)
@@ -77,7 +73,7 @@ class AdminUserController extends Controller
         }
 
         try {
-            $temporaryPassword = $this->admins->resetPassword($auth->user, $target);
+            $this->admins->resetPassword($auth->user, $target, (string) $this->request->get('one_time_password', false));
         } catch (DomainException $e) {
             $this->response->withFlash('error', $e->getMessage())->redirect('/admin/users');
 
@@ -86,12 +82,8 @@ class AdminUserController extends Controller
             LimitConcurrentLogins::release();
         }
 
-        $this->showTemporaryPassword(
-            $auth,
-            "Password reset for {$target->username}",
-            "Give {$target->username} this temporary password outside this website. They've been signed out, and at their next sign-in they must choose a new password and set up their authenticator again.",
-            $temporaryPassword,
-        );
+        $this->response->withFlash('notice', "Reset {$target->username}: they've been signed out and their authenticator removed. Give them the one-time password outside this website to set up a new one.")
+            ->redirect('/admin/users');
     }
 
     public function promote($id)
@@ -119,17 +111,6 @@ class AdminUserController extends Controller
 
             return "Deleted {$target->username}.";
         });
-    }
-
-    private function showTemporaryPassword(AuthContext $auth, string $title, string $message, string $temporaryPassword): void
-    {
-        $this->response->withHeader('Cache-Control', 'no-store');
-        $this->response->view('admin.done', [
-            'auth' => $auth,
-            'title' => $title,
-            'message' => $message,
-            'temporaryPassword' => $temporaryPassword,
-        ]);
     }
 
     /**

@@ -6,11 +6,15 @@ use App\DTOs\AuthContext;
 use App\DTOs\ServerTestResult;
 use App\DTOs\SshSetupResult;
 use App\Models\Server;
+use App\Models\Account;
+use App\Models\SslBinding;
+use App\Services\AccountService;
 use App\Services\CaCertificateService;
 use App\Services\ServerService;
 use App\Services\ServerTestService;
 use App\Services\SshKeyService;
 use App\Services\SshSetupService;
+use App\Services\SslMonitorService;
 use DomainException;
 
 /**
@@ -20,7 +24,7 @@ use DomainException;
  */
 class ServerConfigController extends Controller
 {
-    private const FIELDS = ['name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_username', 'ssh_password_allowed', 'ssl_enabled', 'ssl_hosts', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_tls', 'mysql_tls_ca'];
+    private const FIELDS = ['name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_tls', 'mysql_tls_ca'];
 
     private readonly ServerService $servers;
 
@@ -35,7 +39,10 @@ class ServerConfigController extends Controller
     {
         $auth = $this->authContext();
 
+        (new SslMonitorService())->convertLegacy();
+
         $this->response->view('servers.config', [
+            'sslCounts' => SslBinding::query()->whereNotNull('server_id')->get()->countBy('server_id')->all(),
             'auth' => $auth,
             'servers' => $this->servers->all(),
             'publicKey' => $auth->isAdmin() ? (new SshKeyService())->publicKey() : null,
@@ -145,6 +152,8 @@ class ServerConfigController extends Controller
             'auth' => $this->authContext(),
             'server' => $server,
             'caCertificates' => $server->mysql_tls_ca ? (new CaCertificateService())->describe($server->mysql_tls_ca) : [],
+            'bindings' => $server->exists ? (new SslMonitorService())->bindingsFor($server) : [],
+            'sharedAccounts' => array_values(array_filter((new AccountService())->selectableFor($server->exists ? $server : null), fn (Account $a) => $a->type !== Account::TYPE_LOCAL)),
             'error' => $error,
         ], $error === null ? 200 : 422);
     }

@@ -24,16 +24,25 @@
                     <input type="text" id="hostname" name="hostname" value="{{ $server->hostname }}" autocapitalize="none" required>
                 </div>
             </div>
-            <p class="hint">Turn on one or more of SSH, MariaDB and SSL below.</p>
+            <p class="hint">Turn on SSH and/or MariaDB below; SSL certificates are attached on the SSL page.</p>
 
             <fieldset>
                 <legend>SSH</legend>
                 <label class="check"><input type="checkbox" id="ssh_enabled" name="ssh_enabled" value="1" {{ $server->ssh_enabled ? 'checked' : '' }}> Monitor disk, load and memory over SSH</label>
                 <div id="ssh_fields">
+                @php($sharedSelected = collect($sharedAccounts)->firstWhere('id', $server->ssh_account_id))
+                <label for="ssh_account_id">Log in as</label>
+                <select id="ssh_account_id" name="ssh_account_id">
+                    <option value="">A local account on this server (username below)</option>
+                    @foreach ($sharedAccounts as $shared)
+                        <option value="{{ $shared->id }}" {{ $sharedSelected && $sharedSelected->id === $shared->id ? 'selected' : '' }}>{{ $shared->username }} ({{ $shared->typeLabel() }})</option>
+                    @endforeach
+                </select>
+                <p class="hint">The account is tracked under <a href="/admin/accounts">Accounts</a>, with where it's used and its password if one is set up.</p>
                 <div class="grid-2">
-                    <div>
+                    <div id="ssh_username_field">
                         <label for="ssh_username">Username</label>
-                        <input type="text" id="ssh_username" name="ssh_username" value="{{ $server->ssh_username }}" autocapitalize="none">
+                        <input type="text" id="ssh_username" name="ssh_username" value="{{ $sharedSelected ? '' : $server->ssh_username }}" autocapitalize="none">
                     </div>
                     <div>
                         <label for="ssh_port">Port</label>
@@ -91,12 +100,17 @@
 
             <fieldset>
                 <legend>SSL</legend>
-                <label class="check"><input type="checkbox" id="ssl_enabled" name="ssl_enabled" value="1" {{ $server->ssl_enabled ? 'checked' : '' }}> Monitor HTTPS certificates</label>
-                <div id="ssl_fields">
-                    <label for="ssl_hosts">Sites <span class="muted">(optional)</span></label>
-                    <textarea id="ssl_hosts" name="ssl_hosts" rows="4" spellcheck="false" placeholder="example.com&#10;shop.example.com&#10;mail.example.com:8443">{{ $server->ssl_hosts }}</textarea>
-                    <p class="hint">One hostname per line, with <code>:port</code> if it isn't 443. Leave empty to check the hostname above. The certificate is downloaded straight from each site and checked like a browser would.</p>
-                </div>
+                @if (count($bindings))
+                    <p>Serves:</p>
+                    <ul>
+                        @foreach ($bindings as $binding)
+                            <li><a href="/ssl/{{ $binding->certificate->id }}">{{ $binding->certificate->name }}</a> on port {{ $binding->port }}</li>
+                        @endforeach
+                    </ul>
+                @else
+                    <p class="muted">No certificates attached.</p>
+                @endif
+                <p class="hint">Certificates and the ports they're served on are managed on the <a href="/ssl">SSL page</a>.</p>
             </fieldset>
 
             <div class="actions">
@@ -111,8 +125,10 @@
             var toggle = document.getElementById('mysql_enabled');
             var fields = document.getElementById('mysql_fields');
             var tls = document.getElementById('mysql_tls');
-            var sections = [['ssh_enabled', 'ssh_fields'], ['ssl_enabled', 'ssl_fields']];
+            var sections = [['ssh_enabled', 'ssh_fields']];
+            var account = document.getElementById('ssh_account_id');
             function sync() {
+                document.getElementById('ssh_username_field').hidden = account.value !== '';
                 fields.hidden = !toggle.checked;
                 sections.forEach(function (pair) { document.getElementById(pair[1]).hidden = !document.getElementById(pair[0]).checked; });
                 document.querySelectorAll('[data-tls]').forEach(function (el) { el.hidden = el.dataset.tls !== tls.value; });
@@ -120,6 +136,7 @@
             toggle.addEventListener('change', sync);
             tls.addEventListener('change', sync);
             sections.forEach(function (pair) { document.getElementById(pair[0]).addEventListener('change', sync); });
+            account.addEventListener('change', sync);
             sync();
         })();
     </script>

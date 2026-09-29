@@ -6,7 +6,7 @@
 @section('content')
     <div class="card">
         <h1>Set up your account</h1>
-        <p class="muted">Before you can use sys, replace your temporary password and connect an authenticator app.</p>
+        <p class="muted">Connect an authenticator app for {{ $username }}. From now on you sign in with your username and a code from the app; the one-time password stops working.</p>
 
         @if ($error)
             <div class="alert error" role="alert">{{ $error }}</div>
@@ -14,21 +14,7 @@
 
         <form method="post" action="/setup">
             @csrf
-            <input type="hidden" name="username" value="{{ $username }}">
-
-            <label for="password">Temporary password</label>
-            <input type="password" id="password" name="password" autocomplete="current-password" required autofocus>
-
-            <label for="new_password">New password</label>
-            <input type="password" id="new_password" name="new_password" autocomplete="new-password" minlength="{{ $minLength }}" required>
-            <p class="hint">At least {{ $minLength }} characters. Passwords expire every 30 days.</p>
-
-            <label for="new_password_confirmation">Confirm new password</label>
-            <input type="password" id="new_password_confirmation" name="new_password_confirmation" autocomplete="new-password" minlength="{{ $minLength }}" required>
-
-            <div class="card" style="margin-top: 20px">
-                @include('partials.authenticator')
-            </div>
+            @include('partials.authenticator')
 
             <div class="actions">
                 <button type="submit">Finish setup</button>

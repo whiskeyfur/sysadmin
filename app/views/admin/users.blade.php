@@ -19,6 +19,10 @@
                 <input type="text" id="new_username" name="username" autocapitalize="none" pattern="[A-Za-z0-9_]{3,32}" required>
             </div>
             <div>
+                <label for="new_one_time_password">One-time password</label>
+                <input type="text" id="new_one_time_password" name="one_time_password" autocomplete="off" minlength="{{ $minLength }}" required>
+            </div>
+            <div>
                 <label for="new_role">Role</label>
                 <select id="new_role" name="role">
                     <option value="user">User</option>
@@ -27,7 +31,7 @@
             </div>
             <button type="submit">Create</button>
         </form>
-        <p class="hint">You'll get a temporary password to hand out. At first sign-in the user sets their own password and an authenticator app.</p>
+        <p class="hint">Users have no passwords: they sign in with their username and an authenticator code. The one-time password (at least {{ $minLength }} characters) is only for their first sign-in, where they set up an authenticator app. Hand it over outside this website.</p>
     </div>
 
     <div class="card">
@@ -46,8 +50,6 @@
                         <td class="muted">
                             @if ($user->must_change_password || !$user->hasAuthenticator())
                                 Waiting for first sign-in
-                            @elseif ($passwords->isExpired($user))
-                                Password expired
                             @else
                                 Active
                             @endif
@@ -67,9 +69,10 @@
                                         <button type="submit" class="secondary">Make admin</button>
                                     </form>
                                 @endif
-                                <form method="post" action="/admin/users/{{ $user->id }}/reset-password" data-confirm="Reset {{ $user->username }}'s password? They'll be signed out and must set a new password and authenticator.">
+                                <form method="post" action="/admin/users/{{ $user->id }}/reset-password" class="inline-form" data-confirm="Reset {{ $user->username }}? They'll be signed out, their authenticator removed, and they must set up a new one with this one-time password.">
                                     @csrf
-                                    <button type="submit" class="secondary">Reset password</button>
+                                    <input type="text" name="one_time_password" aria-label="New one-time password for {{ $user->username }}" placeholder="One-time password" autocomplete="off" minlength="{{ $minLength }}" required>
+                                    <button type="submit" class="secondary">Reset sign-in</button>
                                 </form>
                                 <form method="post" action="/admin/users/{{ $user->id }}/delete" data-confirm="Delete {{ $user->username }}? This can't be undone.">
                                     @csrf

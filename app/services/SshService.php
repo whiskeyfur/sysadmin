@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\DTOs\HostKey;
+use App\Enums\ServerPlatform;
 use App\Exceptions\HostKeyMismatchException;
 use App\Exceptions\HostKeyUnknownException;
 use App\Exceptions\ServerConnectionException;
@@ -35,14 +36,38 @@ class SshService
      */
     public function presentedHostKey(Server $server): HostKey
     {
+        return $this->probe($server)[0];
+    }
+
+    /**
+     * The host key and platform a server presents, without logging in: one
+     * key exchange, no authentication attempt.
+     *
+     * @return array{0: HostKey, 1: ServerPlatform}
+     *
+     * @throws ServerConnectionException
+     */
+    public function probe(Server $server): array
+    {
         $this->requireSshEnabled($server);
         $ssh = $this->open($server);
 
         try {
-            return $this->hostKeyOf($ssh);
+            return [$this->hostKeyOf($ssh), $this->platformOf($ssh)];
         } finally {
             $ssh->disconnect();
         }
+    }
+
+    public function platformOf(SSH2 $ssh): ServerPlatform
+    {
+        try {
+            $identification = $ssh->getServerIdentification();
+        } catch (Throwable) {
+            return ServerPlatform::Unknown;
+        }
+
+        return ServerPlatform::fromIdentification(is_string($identification) ? $identification : null);
     }
 
     /**
@@ -156,6 +181,7 @@ class SshService
             throw new ServerConnectionException($refusedMessage);
         }
 
+        $this->servers->recordSshUse($server);
         $ssh->setTimeout(self::COMMAND_TIMEOUT);
 
         return $ssh;

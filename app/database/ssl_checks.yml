@@ -1,8 +1,13 @@
-# One row per certificate per check (SslMonitorService). Kept SslMonitorService::RETENTION_DAYS.
+# One row per binding per check (SslMonitorService). Kept SslMonitorService::RETENTION_DAYS.
+# binding_id: the ssl_bindings row; null for rows from before certificates existed.
 # status: "ok", "warning", "critical" or "unknown"; days_left: until the certificate expires.
 # details: JSON (subject, issuer, names, validity dates, TLS version, verification error).
 timestamps: false
 columns:
+  binding_id:
+    type: integer
+    nullable: true
+    index: true
   server_id:
     type: integer
     index: true

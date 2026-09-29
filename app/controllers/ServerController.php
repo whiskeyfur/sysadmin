@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\DTOs\AuthContext;
 use App\Models\Server;
+use App\Models\SslBinding;
 use App\Services\HealthCheckService;
 use App\Services\ServerService;
 use App\Services\SslMonitorService;
@@ -17,9 +18,12 @@ class ServerController extends Controller
 {
     public function index()
     {
+        (new SslMonitorService())->convertLegacy();
+
         $this->response->view('servers.index', [
             'auth' => $this->authContext(),
             'servers' => (new ServerService())->all(),
+            'sslCounts' => SslBinding::query()->whereNotNull('server_id')->get()->countBy('server_id')->all(),
         ]);
     }
 
@@ -40,9 +44,9 @@ class ServerController extends Controller
             'checks' => $health->latest($server),
             'history' => $health->history($server),
             'health' => $health,
-            'canCheck' => $health->canCheck($server) || $server->ssl_enabled,
-            'certificates' => $ssl->latest($server),
-            'sslHistory' => $ssl->history($server),
+            'canCheck' => $health->canCheck($server) || $ssl->bindingsFor($server) !== [],
+            'bindings' => $ssl->bindingsFor($server),
+            'ssl' => $ssl,
             'notice' => $this->request->flash('notice'),
             'error' => $this->request->flash('error'),
         ]);
@@ -67,9 +71,7 @@ class ServerController extends Controller
                 $health->run($user, $server);
             }
 
-            if ($server->ssl_enabled) {
-                (new SslMonitorService())->check($user, $server);
-            }
+            (new SslMonitorService())->checkServer($user, $server);
         } catch (DomainException $e) {
             $this->response->withFlash('error', $e->getMessage())->redirect("/servers/{$server->id}");
 

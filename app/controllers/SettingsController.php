@@ -21,6 +21,7 @@ class SettingsController extends Controller
         try {
             (new SettingsService())->update($this->authContext()->user, [
                 SettingsService::SSL_WARNING_DAYS => $this->request->get(SettingsService::SSL_WARNING_DAYS, false),
+                SettingsService::ACCOUNT_WARNING_DAYS => $this->request->get(SettingsService::ACCOUNT_WARNING_DAYS, false),
             ]);
         } catch (DomainException $e) {
             $this->renderPage(error: $e->getMessage(), status: 422);

@@ -19,7 +19,8 @@
         "spomky-labs/otphp": "^11.5",
         "chillerlan/php-qrcode": "^6.0",
         "leafs/password": "^5.0",
-        "phpseclib/phpseclib": "^3.0"
+        "phpseclib/phpseclib": "^3.0",
+        "composer/ca-bundle": "^1.5"
     },
     "require-dev": {
         "fakerphp/faker": "^1.24",

@@ -1,0 +1,13 @@
+# Which accounts are used to log into which servers, and when the app last
+# logged in with each (AccountService::recordUse).
+timestamps: false
+columns:
+  account_id:
+    type: integer
+    index: true
+  server_id:
+    type: integer
+    index: true
+  last_used_at:
+    type: timestamp
+    nullable: true

@@ -30,7 +30,7 @@ When your work is complete:
 
 ## Project Summary
 
-`sys` (served at `sys.localhost`): a system and network admin tool that tracks statistics and performance of multiple servers and websites, continuously monitoring PHP stacks and MariaDB servers (including crashed tables). Accounts are created by admins; sign-in needs a password and an authenticator app. Security rules are in `CLAUDE.md`.
+`sys` (served at `sys.localhost`): a system and network admin tool that tracks statistics and performance of multiple servers and websites, continuously monitoring PHP stacks and MariaDB servers (including crashed tables). Accounts are created by admins; sign-in needs the username and an authenticator code (no user passwords). Security rules are in `CLAUDE.md`.
 
 ---
 
@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
-* 2026-09-29 — SSL monitoring (certificates downloaded from each site, several per server) and optional SSH; servers have one or more of SSH/MariaDB/SSL; navbar split into monitoring (left) and configuration (right) (`SslCheckService`, `SslMonitorService`, `ServerConfigController`, `SslController`).
+* 2026-09-29 — Sign-in is username + authenticator code; admins set a one-time password used only to enrol the authenticator; no password expiry or /password page; revealing account passwords takes a code; daily per-username guess cap; `php leaf app:reset-admin` (`AuthService`, `AuthController`, `PasswordService`, `LoginThrottleService`, `AppResetAdminCommand`).
+* 2026-09-29 — SSL certificates as their own records (name + hostnames) bound to servers and ports or checked directly via DNS; SNI to each server's address; `composer/ca-bundle` fallback for Windows (`SslMonitorService`, `ssl_certificates.yml`, `ssl_bindings.yml`, `ssl/*.blade.php`).
+* 2026-09-29 — Tracked accounts (local, LDAP, shared) with current password, reset date, rotation, which servers use them and when; reveals logged (`AccountService`, `AccountController`, `accounts/*.blade.php`).
+* 2026-09-29 — SSH platform detection from the banner; Windows gets Windows commands and no sh key install (`ServerPlatform`, `SshService::probe()`).
 * 2026-09-29 — SSH health checks: disk (space + inodes), load per core, memory/swap, all in one SSH session per run (`DiskCheck`, `LoadCheck`, `MemoryCheck`, `HealthCheckService::sshScript()`).
-* 2026-09-29 — MariaDB health checks, run on demand: server status, connections, crashed tables (metadata + CHECK FAST QUICK), replication, buffer pool; 30-day history (`HealthCheckService`, `app/services/Checks/*`, `servers/show.blade.php`).
-* 2026-09-29 — SSH setup flow: trust host key, try the app key, optionally install it with a one-time password, fall back to a stored password only for servers refusing keys; password login is opt-in per server (`SshSetupService`, `servers/setup.blade.php`).
-* 2026-09-29 — MySQL TLS per server: verify (default, pasted CA or system CAs), encrypt-only, or off (`MysqlService`, `CaCertificateService`, `servers.yml`).
 
 ---
 
@@ -101,10 +101,10 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * This is a Leaf MVC app — all important files are in the `app` directory.
 * Leaf MVC best practice wins over other conventions — the user's explicit rule; the security rules in `CLAUDE.md` are the exception.
 * No encryption at rest, no master key, no key files, no self-registration — the client's decision (2026-09-29); the earlier encrypted design is in git history up to `863d3e9`.
-* Admins create accounts with a one-time temporary password; first sign-in forces a new password and authenticator enrolment — the client's requirement.
-* Passwords expire every 30 days — the client's requirement.
+* Users have no passwords: sign-in is username + authenticator code; admins set a one-time password used only to enrol the authenticator — the client's requirement (it replaced chosen passwords with 30-day expiry).
+* Code-only sign-in gets a 30-failures-per-day cap per username on top of the 15-minute limits — a 6-digit code is the only secret, so slow guessing must stay improbable; lockouts are cleared by `app:reset-admin`.
 * At least one admin; admins can't act on their own account — the client said one admin is fine.
-* Custom sign-in instead of `leafs/auth` — `leafs/auth` creates the session as soon as the password matches, before the authenticator code is checked.
+* Custom sign-in instead of `leafs/auth` — `leafs/auth` is built around passwords and creates the session as soon as one matches.
 * Authenticator secrets are encrypted with a key derived from `APP_KEY` — the user chose this so a copied database alone can't generate codes.
 * An authenticator (TOTP, Google Authenticator defaults) is required for every sign-in — the user asked for "no authenticator = no access".
 * Per-username lockouts (10 failures / 15 min) are accepted even though they let anyone lock an account out briefly.

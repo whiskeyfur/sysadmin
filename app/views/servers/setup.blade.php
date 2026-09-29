@@ -33,7 +33,20 @@
                     @if ($hostKey)
                         <p>{{ $server->hostname }} presents this host key. Check it on the server before trusting it, or you could be trusting an impostor:</p>
                         <p><code>{{ $hostKey->type }} {{ $hostKey->fingerprint() }}</code></p>
-                        <p class="hint">On the server: <code>ssh-keygen -lf /etc/ssh/ssh_host_{{ str_contains($hostKey->type, 'rsa') ? 'rsa' : (str_contains($hostKey->type, 'ecdsa') ? 'ecdsa' : 'ed25519') }}_key.pub</code></p>
+                        @php($keyFile = 'ssh_host_' . (str_contains($hostKey->type, 'rsa') ? 'rsa' : (str_contains($hostKey->type, 'ecdsa') ? 'ecdsa' : 'ed25519')) . '_key.pub')
+                        @php($platform = $server->platform()->value)
+                        <p class="hint">To see it, run this on the server itself (not over a new connection to it) and compare the <code>SHA256:</code> value:</p>
+                        <ul class="hint">
+                            @if ($platform !== 'windows')
+                                <li>@if ($platform === 'unknown')Linux, macOS, NAS: @endif<code>ssh-keygen -lf /etc/ssh/{{ $keyFile }}</code></li>
+                            @endif
+                            @if ($platform !== 'unix')
+                                <li>@if ($platform === 'unknown')Windows (OpenSSH Server), @endif in PowerShell: <code>ssh-keygen -lf $env:ProgramData\ssh\{{ $keyFile }}</code></li>
+                            @endif
+                        </ul>
+                        @if ($platform !== 'unknown')
+                            <p class="hint">Detected a {{ $server->platform()->label() }} server from its SSH banner.</p>
+                        @endif
                         <label class="check"><input type="checkbox" name="fingerprint" value="{{ $hostKey->fingerprint() }}" required> The fingerprint matches</label>
                     @else
                         <div class="alert error" role="alert">{{ $hostKeyError }}</div>
@@ -43,13 +56,28 @@
                 @endif
 
                 <h2 style="margin-top: 20px">{{ $server->ssh_host_key === null ? '2. ' : '' }}Install the app's key</h2>
-                <p>Add this line to {{ $server->ssh_username }}'s <code>~/.ssh/authorized_keys</code> on the server, then continue:</p>
+                @php($platform = $server->platform()->value)
+                @if ($platform === 'windows')
+                    <p>Add this line on the Windows server, then continue:</p>
+                    <ul>
+                        <li>if {{ $server->ssh_username }} is in the Administrators group: to <code>C:\ProgramData\ssh\administrators_authorized_keys</code></li>
+                        <li>otherwise: to <code>C:\Users\{{ $server->ssh_username }}\.ssh\authorized_keys</code></li>
+                    </ul>
+                @else
+                    <p>Add this line to {{ $server->ssh_username }}'s <code>~/.ssh/authorized_keys</code> on the server, then continue:</p>
+                @endif
                 <code class="pubkey">{{ $publicKey }}</code>
+                @if ($platform === 'unknown')
+                    <p class="hint">On a Windows server (OpenSSH Server), an administrator account uses <code>C:\ProgramData\ssh\administrators_authorized_keys</code> instead; other accounts use <code>C:\Users\{{ $server->ssh_username }}\.ssh\authorized_keys</code>.</p>
+                @endif
+                @if ($platform === 'windows')
+                    <p class="hint">Disk, load and memory checks support Linux servers only so far; on this server they'll report Unknown. Installing the key with a password also works on Linux/Unix only.</p>
+                @endif
 
                 @if ($server->ssh_password_allowed)
                     <label for="password">Or let the app install it: {{ $server->ssh_username }}'s SSH password <span class="muted">(optional)</span></label>
                     <input type="password" id="password" name="password" autocomplete="off">
-                    <p class="hint">Used once to log in and install the key; not stored unless the server refuses key login. Only sent after the host key is verified.</p>
+                    <p class="hint">Used to log in and install the key, then saved (encrypted) as the current password of {{ $server->ssh_username . '@' . $server->name }} under Accounts. Only sent after the host key is verified.</p>
                 @else
                     <p class="hint">Password login is not allowed for this server, so the app will never try a password. (Change this in the server's settings.)</p>
                 @endif

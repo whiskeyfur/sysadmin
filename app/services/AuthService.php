@@ -7,13 +7,13 @@ use App\Enums\LoginStatus;
 use App\Models\User;
 
 /**
- * Sign-in, first-login setup and password changes.
+ * Sign-in and first-login setup.
  *
- * A sign-in needs the username, the password and a code from the user's
- * authenticator. New accounts and admin resets have no authenticator and
- * a temporary password, so they can only reach setup (new password +
- * authenticator), never the app. Every check is rate limited before any
- * password hashing happens.
+ * A sign-in needs the username and a code from the user's authenticator;
+ * there are no user passwords. New accounts and admin resets have no
+ * authenticator, only a one-time password the admin set, which opens setup
+ * (enrol an authenticator) and nothing else. Every check is rate limited
+ * before any hashing or code checking happens.
  */
 class AuthService
 {
@@ -30,34 +30,29 @@ class AuthService
     }
 
     /**
-     * On a fresh install (no users at all), create the default admin. They
-     * must set a new password and enrol an authenticator at first sign-in.
+     * On a fresh install (no users at all), create the default admin with
+     * the one-time password "changeme". Also forgets passwords left from
+     * before sign-in was code-only.
      */
     public function ensureDefaultAdmin(): void
     {
+        User::query()->where('must_change_password', false)->whereNotNull('password')->update(['password' => null]);
+
         if (User::query()->exists()) {
             return;
         }
 
         $admin = new User(['username' => self::DEFAULT_ADMIN_USERNAME, 'role' => User::ROLE_ADMIN]);
-        $this->passwords->setTemporaryPassword($admin, self::DEFAULT_ADMIN_PASSWORD);
+        $this->passwords->setOneTimePassword($admin, self::DEFAULT_ADMIN_PASSWORD);
         $admin->save();
     }
 
-    public function attempt(string $username, string $password, string $code, string $ip): LoginResult
+    public function attempt(string $username, string $code, string $ip): LoginResult
     {
-        return $this->throttled($ip, $username, function () use ($username, $password, $code) {
-            $user = $this->checkPassword($username, $password);
+        return $this->throttled($ip, $username, function () use ($username, $code) {
+            $user = User::query()->where('username', $username)->first();
 
-            if ($user === null) {
-                return new LoginResult(LoginStatus::InvalidCredentials);
-            }
-
-            if ($this->needsSetup($user)) {
-                return new LoginResult(LoginStatus::NeedsSetup, $user);
-            }
-
-            if (!$this->consumeCode($user, $code)) {
+            if ($user === null || $this->needsSetup($user) || !$this->consumeCode($user, $code)) {
                 return new LoginResult(LoginStatus::InvalidCredentials);
             }
 
@@ -66,33 +61,49 @@ class AuthService
     }
 
     /**
-     * First sign-in or after an admin reset: choose a password and enrol an
-     * authenticator, then sign in.
+     * Check a one-time password. NeedsSetup (with the user) means the caller
+     * may show setup for that user.
      */
-    public function completeSetup(string $username, string $currentPassword, string $newPassword, string $totpSecret, string $code, string $ip): LoginResult
+    public function startSetup(string $username, string $oneTimePassword, string $ip): LoginResult
     {
-        return $this->throttled($ip, $username, function () use ($username, $currentPassword, $newPassword, $totpSecret, $code) {
-            // Check the new authenticator first: a wrong code then says nothing about the password.
+        return $this->throttled($ip, $username, function () use ($username, $oneTimePassword) {
+            $user = User::query()->where('username', $username)->first();
+
+            if ($user === null) {
+                $this->passwords->verifyAgainstNothing($oneTimePassword);
+
+                return new LoginResult(LoginStatus::InvalidCredentials);
+            }
+
+            if (!$user->must_change_password || !$this->passwords->verify($user, $oneTimePassword)) {
+                return new LoginResult(LoginStatus::InvalidCredentials);
+            }
+
+            return new LoginResult(LoginStatus::NeedsSetup, $user);
+        });
+    }
+
+    /**
+     * Enrol the authenticator the user was shown, discard the one-time
+     * password and sign in. $sessionVersion is the user's version when setup
+     * started: an admin reset in between invalidates the setup.
+     */
+    public function completeSetup(User $user, int $sessionVersion, string $totpSecret, string $code, string $ip): LoginResult
+    {
+        return $this->throttled($ip, $user->username, function () use ($user, $sessionVersion, $totpSecret, $code) {
+            $user = $user->fresh();
+
+            if (!$user instanceof User || !$user->must_change_password || $user->session_version !== $sessionVersion) {
+                return new LoginResult(LoginStatus::SetupExpired);
+            }
+
             $step = $this->totp->verify($totpSecret, $code);
 
             if ($step === null) {
                 return new LoginResult(LoginStatus::InvalidCode);
             }
 
-            $user = $this->checkPassword($username, $currentPassword);
-
-            // Only accounts that need setup: otherwise a password alone could replace the authenticator.
-            if ($user === null || !$this->needsSetup($user)) {
-                return new LoginResult(LoginStatus::InvalidCredentials);
-            }
-
-            $policyError = $this->passwords->policyError($newPassword, $currentPassword);
-
-            if ($policyError !== null) {
-                return new LoginResult(LoginStatus::PasswordRejected, $user, message: $policyError);
-            }
-
-            $this->passwords->setChosenPassword($user, $newPassword);
+            $this->passwords->discard($user);
             $user->totp_secret = $this->cipher->encrypt($totpSecret, $this->totpContext($user));
             $user->totp_last_step = $step;
             $user->save();
@@ -102,25 +113,15 @@ class AuthService
     }
 
     /**
-     * A signed-in user changing their password, voluntarily or because it
-     * expired. Ends their other sessions; the caller restarts this one.
+     * A signed-in user proving it's them again (e.g. to reveal a password),
+     * rate limited like a sign-in.
      */
-    public function changePassword(User $user, string $currentPassword, string $newPassword, string $ip): LoginResult
+    public function confirm(User $user, string $code, string $ip): LoginResult
     {
-        return $this->throttled($ip, $user->username, function () use ($user, $currentPassword, $newPassword) {
-            if (!$this->passwords->verify($user, $currentPassword)) {
-                return new LoginResult(LoginStatus::InvalidCredentials);
+        return $this->throttled($ip, $user->username, function () use ($user, $code) {
+            if ($this->needsSetup($user) || !$this->consumeCode($user, $code)) {
+                return new LoginResult(LoginStatus::InvalidCode);
             }
-
-            $policyError = $this->passwords->policyError($newPassword, $currentPassword);
-
-            if ($policyError !== null) {
-                return new LoginResult(LoginStatus::PasswordRejected, $user, message: $policyError);
-            }
-
-            $this->passwords->setChosenPassword($user, $newPassword);
-            $user->session_version = $user->session_version + 1;
-            $user->save();
 
             return new LoginResult(LoginStatus::Success, $user);
         });
@@ -157,27 +158,14 @@ class AuthService
     }
 
     /**
-     * The user if the password matches, else null. Unknown usernames take as
-     * long as wrong passwords.
-     */
-    private function checkPassword(string $username, string $password): ?User
-    {
-        $user = User::query()->where('username', $username)->first();
-
-        if ($user === null) {
-            $this->passwords->verifyAgainstNothing($password);
-
-            return null;
-        }
-
-        return $this->passwords->verify($user, $password) ? $user : null;
-    }
-
-    /**
      * Verify a code and record its time step so it can't be used again.
      */
     private function consumeCode(User $user, string $code): bool
     {
+        if (preg_match('/^\d{6}$/', $code) !== 1) {
+            return false;
+        }
+
         $secret = $this->cipher->decrypt((string) $user->totp_secret, $this->totpContext($user));
         $step = $this->totp->verify($secret, $code, $user->totp_last_step);
 

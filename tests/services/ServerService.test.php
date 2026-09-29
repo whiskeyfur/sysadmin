@@ -125,30 +125,6 @@ test('turning MySQL off also resets TLS', function () {
     expect($server->fresh()->mysql_tls)->toBe(Server::TLS_OFF);
 });
 
-test('SSH is optional, but at least one of SSH, MariaDB and SSL is needed', function () {
-    $sslOnly = $this->servers->create($this->admin, ['name' => 'site', 'hostname' => 'site.example.com', 'ssh_enabled' => '', 'ssl_enabled' => '1']);
-
-    expect($sslOnly->ssh_enabled)->toBeFalse()
-        ->and($sslOnly->ssh_username)->toBe('')
-        ->and(fn () => $this->servers->create($this->admin, ['name' => 'none', 'hostname' => 'none.example.com', 'ssh_enabled' => '']))->toThrow(DomainException::class, 'at least one');
-});
-
-test('SSL hosts are normalised: lower case, URLs and :443 stripped, duplicates removed', function () {
-    $server = $this->servers->create($this->admin, ['name' => 'site', 'hostname' => 'site.example.com', 'ssh_enabled' => '', 'ssl_enabled' => '1',
-        'ssl_hosts' => "https://Shop.Example.com/cart\nshop.example.com:443\n\nmail.example.com:8443, api.example.com"]);
-
-    expect($server->ssl_hosts)->toBe("shop.example.com\nmail.example.com:8443\napi.example.com")
-        ->and($server->sslTargets())->toBe([
-            ['host' => 'shop.example.com', 'port' => 443],
-            ['host' => 'mail.example.com', 'port' => 8443],
-            ['host' => 'api.example.com', 'port' => 443],
-        ]);
-});
-
-test('bad SSL hosts are rejected', function (string $hosts) {
-    $this->servers->create($this->admin, ['name' => 'site', 'hostname' => 'site.example.com', 'ssh_enabled' => '', 'ssl_enabled' => '1', 'ssl_hosts' => $hosts]);
-})->throws(DomainException::class)->with(['not a host!', 'example.com:99999']);
-
 test('turning SSH off forgets the host key and stored password', function () {
     $server = $this->servers->create($this->admin, array_merge($this->input, ['ssh_password_allowed' => '1']));
     $this->servers->trustHostKey($this->admin, $server, new HostKey('ssh-ed25519', base64_encode('key')));
@@ -159,4 +135,12 @@ test('turning SSH off forgets the host key and stored password', function () {
     expect($server->ssh_host_key)->toBeNull()
         ->and($server->ssh_password)->toBeNull()
         ->and($server->sshReady())->toBeFalse();
+});
+
+test('SSH is optional: a server can exist just to serve SSL certificates', function () {
+    $server = $this->servers->create($this->admin, ['name' => 'site', 'hostname' => 'site.example.com', 'ssh_enabled' => '']);
+
+    expect($server->ssh_enabled)->toBeFalse()
+        ->and($server->ssh_username)->toBe('')
+        ->and($server->ssh_account_id)->toBeNull();
 });

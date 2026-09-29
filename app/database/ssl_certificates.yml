@@ -1,0 +1,17 @@
+# SSL certificates to monitor (SslMonitorService). The name is a label; the
+# hostnames (one per line) are what the certificate should cover. Where it's
+# served is in ssl_bindings.
+columns:
+  name:
+    type: string
+    unique: true
+  hostnames: text
+  notes:
+    type: text
+    nullable: true
+  last_checked_at:
+    type: timestamp
+    nullable: true
+  last_status:
+    type: string
+    nullable: true

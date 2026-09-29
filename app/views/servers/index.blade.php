@@ -32,13 +32,13 @@
                                 @endif
                             </td>
                             <td>
-                                @if ($server->ssl_enabled && $server->last_ssl_status)
+                                @if (($sslCounts[$server->id] ?? 0) > 0 && $server->last_ssl_status)
                                     <span class="badge {{ $server->last_ssl_status }}">{{ ucfirst($server->last_ssl_status) }}</span>
                                 @else
                                     <span class="muted">—</span>
                                 @endif
                             </td>
-                            <td class="muted">{{ implode(', ', array_filter([$server->ssh_enabled ? 'SSH' : null, $server->mysql_enabled ? 'MariaDB' : null, $server->ssl_enabled ? 'SSL' : null])) }}</td>
+                            <td class="muted">{{ implode(', ', array_filter([$server->ssh_enabled ? 'SSH' : null, $server->mysql_enabled ? 'MariaDB' : null, ($sslCounts[$server->id] ?? 0) > 0 ? 'SSL' : null])) }}</td>
                             <td class="muted">{{ \App\Utils\LocalTime::format(collect([$server->last_checked_at, $server->last_ssl_checked_at])->filter()->max()) }}</td>
                         </tr>
                     @endforeach

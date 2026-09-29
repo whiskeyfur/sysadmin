@@ -40,11 +40,17 @@ class SslCheckService
         return $this->warningDays;
     }
 
-    public function check(string $host, int $port = 443): CheckResult
+    /**
+     * @param string $host the hostname the certificate is for: sent as SNI and verified
+     * @param string|null $connectTo the address to connect to (a server's hostname or IP); null = $host via DNS
+     * @param list<string> $expectedNames every hostname the certificate should cover; a gap is a warning
+     */
+    public function check(string $host, int $port = 443, ?string $connectTo = null, array $expectedNames = []): CheckResult
     {
-        [$verified, $verifyError] = $this->connect($host, $port, true);
+        $connectTo ??= $host;
+        [$verified, $verifyError] = $this->connect($connectTo, $host, $port, true);
         // Only needed when verification failed: read the certificate to explain why.
-        [$unverified, $connectError] = $verified === null ? $this->connect($host, $port, false) : [null, null];
+        [$unverified, $connectError] = $verified === null ? $this->connect($connectTo, $host, $port, false) : [null, null];
 
         $info = $verified ?? $unverified;
 
@@ -57,7 +63,26 @@ class SslCheckService
             $info === null ? null : $info['protocol'],
             $connectError,
             $this->clock->now()->getTimestamp(),
+            $expectedNames,
         );
+    }
+
+    /**
+     * Whether a certificate name (possibly "*.example.com") covers a hostname.
+     * A wildcard covers exactly one label, as browsers apply it.
+     */
+    public static function covers(string $pattern, string $hostname): bool
+    {
+        $pattern = strtolower($pattern);
+        $hostname = strtolower($hostname);
+
+        if (!str_starts_with($pattern, '*.')) {
+            return $pattern === $hostname;
+        }
+
+        $dot = strpos($hostname, '.');
+
+        return $dot !== false && substr($hostname, $dot) === substr($pattern, 1) && $dot > 0;
     }
 
     /**
@@ -65,7 +90,10 @@ class SslCheckService
      *
      * @param array<string, mixed>|null $leaf openssl_x509_parse() of the site's certificate
      */
-    public function evaluate(string $host, int $port, bool $verified, ?string $verifyError, ?array $leaf, ?string $protocol, ?string $connectError, int $now): CheckResult
+    /**
+     * @param list<string> $expectedNames
+     */
+    public function evaluate(string $host, int $port, bool $verified, ?string $verifyError, ?array $leaf, ?string $protocol, ?string $connectError, int $now, array $expectedNames = []): CheckResult
     {
         $key = 'ssl:' . $host . ':' . $port;
         $label = $port === 443 ? $host : "$host:$port";
@@ -110,13 +138,24 @@ class SslCheckService
             $summary .= " Expires within {$this->warningDays} days: renew it soon.";
         }
 
+        $uncovered = array_values(array_filter(
+            $expectedNames,
+            fn (string $name) => !array_filter($names ?: [$subject], fn (string $pattern) => self::covers($pattern, $name)),
+        ));
+
+        if ($uncovered !== []) {
+            $status = HealthStatus::Warning;
+            $summary .= ' Doesn\'t cover ' . implode(', ', $uncovered) . '.';
+            $details['uncovered'] = $uncovered;
+        }
+
         return new CheckResult($key, $label, $status, $summary, $daysLeft, 'days', $details);
     }
 
     /**
      * @return array{0: array{leaf: array<string, mixed>, protocol: ?string}|null, 1: ?string}
      */
-    private function connect(string $host, int $port, bool $verify): array
+    private function connect(string $address, string $host, int $port, bool $verify): array
     {
         $errors = [];
         $context = stream_context_create(['ssl' => [
@@ -137,7 +176,9 @@ class SslCheckService
         });
 
         try {
-            $stream = stream_socket_client("ssl://$host:$port", $errno, $errstr, self::TIMEOUT, STREAM_CLIENT_CONNECT, $context);
+            // Connect to the server's address; peer_name above sends $host as SNI and verifies against it.
+            $target = filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false ? "[$address]" : $address;
+            $stream = stream_socket_client("ssl://$target:$port", $errno, $errstr, self::TIMEOUT, STREAM_CLIENT_CONNECT, $context);
         } finally {
             restore_error_handler();
         }

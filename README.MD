@@ -138,7 +138,15 @@ php leaf app:start              # PHP's built-in web server at APP_URL (default 
 php leaf app:start --port=8080  # or pick the port (and --host=0.0.0.0 to allow other machines)
 ```
 
-Stop it with Ctrl+C. Then open <http://localhost:5500> (or the address it prints). On a fresh install, sign in as **`admin`** with password **`changeme`**. You'll be asked to choose a new password and set up an authenticator app (e.g. Google Authenticator) straight away. Do this right after installing: until then, anyone who can reach the site can claim that account.
+Stop it with Ctrl+C. Then open <http://localhost:5500> (or the address it prints). On a fresh install, sign in as **`admin`**: open "First sign-in?" and enter the one-time password **`changeme`**. You'll set up an authenticator app (e.g. Google Authenticator) straight away; from then on you sign in with your username and a code from the app (there are no user passwords). Do this right after installing: until then, anyone who can reach the site can claim that account.
+
+Locked out (lost phone, no other admin)? On the server, from the project folder:
+
+```bash
+php leaf app:reset-admin        # or: php leaf app:reset-admin <username>
+```
+
+It resets the account to the one-time password `changeme` and removes its authenticator; sign in and set up a new one straight away.
 
 To serve it with Apache instead, point the site's `DocumentRoot` at `public/` with `AllowOverride All`, and make `storage/` writable by the web server user (e.g. `chgrp -R www-data storage && chmod -R g+w storage`).
 

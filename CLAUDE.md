@@ -25,6 +25,7 @@ The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice
   - `request()->get($key)` HTML-escapes by default; pass `false` for passwords and other raw input. `request()->validate()` returns raw values.
   - Leaf validation rules are single-line regexes (`min:1` fails on multi-line input such as the key file JSON). Check such fields manually.
   - `Response` treats a `Content-Disposition: attachment` header as a file path to stream from disk. For in-memory downloads, send that header with `Leaf\Http\Headers::set()` (see `KeyFileController`).
+  - `request()->getIp()` trusts client-supplied `Client-IP`/`X-Forwarded-For` headers. Use `Controller::clientIp()` (`REMOTE_ADDR`) for anything security-related.
 - Write everything as object-oriented as possible, within Leaf's conventions. Don't add global functions, global variables or procedural logic beyond what Leaf's own entry points (`public/index.php`, `leaf`) require.
 - Target the server's current PHP (8.3.6 at the time of writing; check with `php -v`). The `sodium`, `pdo_sqlite` and `pdo_mysql` extensions are required.
 
@@ -55,6 +56,13 @@ Application data is stored in a **SQLite database that is encrypted at rest**. `
 7. A `pending` role means an admin hasn't approved the account yet.
 8. On success, `AuthSessionService::start()` seals the master key into the session and cookie (rule 7).
 
+### Rate limiting
+
+Every route that derives a password key (POST `/login`, `/setup`, `/key/replace`, `/register`) is protected twice:
+
+- **Attempt limits** (`LoginThrottleService`, sliding windows): 20 failures per IP and 10 failures per username (any IP, case-insensitive) per 15 minutes, and 5 registrations per IP per hour. A limited request gets HTTP 429 with `Retry-After`, without doing any password work, and looks the same whether or not the username exists. A successful sign-in clears that username's failures but not the IP's. Anyone can lock a username out for 15 minutes by failing 10 times; that's the accepted trade-off.
+- **Concurrency cap** (`LimitConcurrentLogins` middleware, `FileSemaphore` lock files in `storage/framework/locks`): at most 4 password derivations at once across all Apache workers, because each uses 256 MiB and Apache allows far more workers than there is RAM for. Extra requests get HTTP 503 with `Retry-After: 5`. Controllers call `LimitConcurrentLogins::release()` as soon as the auth service returns.
+
 Wrong username, wrong password and wrong code all return the same `InvalidCredentials` status and message. Each step that needs the password again (setup, key replacement) asks for it again rather than keeping it between requests.
 
 ```php
@@ -73,6 +81,7 @@ $masterKey = (new UserKeyService())->getMasterKeyFromUserDataField($user, $passw
 - `AuthService`: the sign-in, setup, key replacement and registration flows, returning a `LoginResult` with a `LoginStatus`. Also creates the default admin on a fresh install.
 - `AuthSessionService`: the signed-in session (rule 7 wiring) and the session cookie flags, set from `public/index.php` because Leaf's CSRF module starts the session during boot.
 - `UserAdminService`: listing users, approving/rejecting pending registrations, and counting admins for the two-admin rule.
+- `LoginThrottleService`: rate limits, stored in `login_attempts` as SHA-256 buckets (never the typed username or the IP). `AuthService` checks it before any Argon2id work and counts `InvalidCredentials`, `InvalidCode` and `InvalidKeyFile` results as failures.
 
 Following Leaf practice, `App\Models\User` is a plain Eloquent model that holds the stored (encrypted) columns, and the unwrapping logic lives in a service. Don't use `php leaf scaffold:auth` or `leafs/auth` as-is: login in this app *is* the successful unwrap of the user-data field, not a check against a stored password hash.
 

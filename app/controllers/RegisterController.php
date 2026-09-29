@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\Enums\LoginStatus;
+use App\Middleware\LimitConcurrentLogins;
 use App\Services\AuthService;
 use App\Services\TotpService;
 
@@ -62,7 +63,8 @@ class RegisterController extends Controller
             return;
         }
 
-        $result = $this->auth->register($data['username'], $data['password'], $keyFile, $secret, $data['code']);
+        $result = $this->auth->register($data['username'], $data['password'], $keyFile, $secret, $data['code'], $this->clientIp());
+        LimitConcurrentLogins::release();
 
         match ($result->status) {
             LoginStatus::Pending => $this->response
@@ -71,12 +73,23 @@ class RegisterController extends Controller
             LoginStatus::InvalidCode => $this->renderForm($secret, $username, 'That code does not match the authenticator. Try the current code.'),
             LoginStatus::UsernameTaken => $this->renderForm($secret, $username, 'That username is taken.'),
             LoginStatus::InvalidKeyFile => $this->renderForm($secret, $username, 'That key file is not valid or is out of date.'),
+            LoginStatus::TooManyAttempts => $this->renderForm(
+                $secret,
+                $username,
+                'Too many registrations from your address. Try again in ' . $this->retryMinutes($result->retryAfter) . ' minute(s).',
+                429,
+                $result->retryAfter,
+            ),
             default => $this->renderForm($secret, $username, 'Registration failed. Try again.'),
         };
     }
 
-    private function renderForm(string $secret, string $username = '', ?string $error = null): void
+    private function renderForm(string $secret, string $username = '', ?string $error = null, int $status = 200, int $retryAfter = 0): void
     {
+        if ($retryAfter > 0) {
+            $this->response->withHeader('Retry-After', (string) $retryAfter);
+        }
+
         $label = parse_url((string) _env('APP_URL', ''), PHP_URL_HOST) ?: TotpService::ISSUER;
 
         $this->response->view('auth.register', [
@@ -84,6 +97,6 @@ class RegisterController extends Controller
             'secret' => $secret,
             'qr' => $this->totp->qrCode($this->totp->provisioningUri($secret, $username !== '' ? $username : $label)),
             'error' => $error,
-        ]);
+        ], $status);
     }
 }

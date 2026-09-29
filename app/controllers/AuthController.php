@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\DTOs\LoginResult;
 use App\Enums\LoginStatus;
+use App\Middleware\LimitConcurrentLogins;
 use App\Services\AuthService;
 use App\Services\AuthSessionService;
 use App\Services\TotpService;
@@ -60,7 +61,7 @@ class AuthController extends Controller
             return;
         }
 
-        $result = $this->auth->attempt($data['username'], $data['password'], (string) ($data['code'] ?? ''));
+        $result = $this->auth->attempt($data['username'], $data['password'], (string) ($data['code'] ?? ''), $this->clientIp());
         $this->respond($result, $data['username']);
     }
 
@@ -95,7 +96,7 @@ class AuthController extends Controller
             return;
         }
 
-        $result = $this->auth->completeSetup($data['username'], $data['password'], $data['new_password'], $secret, $data['code']);
+        $result = $this->auth->completeSetup($data['username'], $data['password'], $data['new_password'], $secret, $data['code'], $this->clientIp());
         $this->respond($result, $data['username'], $secret);
     }
 
@@ -117,7 +118,7 @@ class AuthController extends Controller
             return;
         }
 
-        $result = $this->auth->replaceKey($data['username'], $data['password'], $data['code'], $keyFile);
+        $result = $this->auth->replaceKey($data['username'], $data['password'], $data['code'], $keyFile, $this->clientIp());
         $this->respond($result, $data['username']);
     }
 
@@ -129,6 +130,8 @@ class AuthController extends Controller
 
     private function respond(LoginResult $result, string $username, ?string $setupSecret = null): void
     {
+        LimitConcurrentLogins::release();
+
         switch ($result->status) {
             case LoginStatus::Success:
                 $this->sessions->start($result->user, (string) $result->masterKey);
@@ -162,14 +165,23 @@ class AuthController extends Controller
 
                 return;
 
+            case LoginStatus::TooManyAttempts:
+                $this->response->withHeader('Retry-After', (string) $result->retryAfter);
+                $this->renderLogin(
+                    error: 'Too many attempts. Try again in ' . $this->retryMinutes($result->retryAfter) . ' minute(s).',
+                    status: 429,
+                );
+
+                return;
+
             default:
                 $this->renderLogin(error: self::INVALID_CREDENTIALS);
         }
     }
 
-    private function renderLogin(?string $error = null, ?string $notice = null): void
+    private function renderLogin(?string $error = null, ?string $notice = null, int $status = 200): void
     {
-        $this->response->view('auth.login', ['error' => $error, 'notice' => $notice]);
+        $this->response->view('auth.login', ['error' => $error, 'notice' => $notice], $status);
     }
 
     private function renderSetup(string $username, string $secret, ?string $error = null): void

@@ -1,0 +1,10 @@
+# Rate limiting for sign-in and registration (LoginThrottleService).
+# bucket is a SHA-256 of "ip:<address>", "user:<username>" or
+# "register:<address>", so attempted usernames (which are sometimes
+# passwords typed into the wrong field) are never stored as typed.
+timestamps: false
+columns:
+  bucket:
+    type: string
+    index: true
+  attempted_at: integer

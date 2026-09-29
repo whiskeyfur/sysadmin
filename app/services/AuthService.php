@@ -17,8 +17,9 @@ use App\Models\User;
  * from the user's authenticator; an account with no authenticator can only
  * reach setup, never the app.
  *
- * Order of checks: password, then authenticator code, then master key
- * against the vault (stale?), then role (pending?).
+ * Order of checks: rate limit, then password, then authenticator code, then
+ * master key against the vault (stale?), then role (pending?). The rate
+ * limit comes first so a limited request does no Argon2id work.
  */
 class AuthService
 {
@@ -36,6 +37,7 @@ class AuthService
         ?UserKeyService $keys = null,
         private readonly TotpService $totp = new TotpService(),
         private readonly KeyFileService $keyFiles = new KeyFileService(),
+        private readonly LoginThrottleService $throttle = new LoginThrottleService(),
     ) {
         $this->vault = $vault ?? new VaultService($crypto);
         $this->keys = $keys ?? new UserKeyService($crypto, $this->vault);
@@ -59,7 +61,69 @@ class AuthService
         }
     }
 
-    public function attempt(string $username, string $password, string $code): LoginResult
+    public function attempt(string $username, string $password, string $code, string $ip): LoginResult
+    {
+        return $this->throttled($ip, $username, fn () => $this->attemptLogin($username, $password, $code));
+    }
+
+    /**
+     * Set a new password and enrol an authenticator, then sign in.
+     */
+    public function completeSetup(string $username, string $currentPassword, string $newPassword, string $totpSecret, string $code, string $ip): LoginResult
+    {
+        return $this->throttled($ip, $username, fn () => $this->setUpAccount($username, $currentPassword, $newPassword, $totpSecret, $code));
+    }
+
+    /**
+     * Upload the current key file after a rotation, then sign in.
+     */
+    public function replaceKey(string $username, string $password, string $code, string $keyFile, string $ip): LoginResult
+    {
+        return $this->throttled($ip, $username, fn () => $this->replaceStaleKey($username, $password, $code, $keyFile));
+    }
+
+    /**
+     * Create a pending account. Needs the key file and a working authenticator.
+     */
+    public function register(string $username, string $password, string $keyFile, string $totpSecret, string $code, string $ip): LoginResult
+    {
+        $retryAfter = $this->throttle->registrationRetryAfter($ip);
+
+        if ($retryAfter > 0) {
+            return new LoginResult(LoginStatus::TooManyAttempts, retryAfter: $retryAfter);
+        }
+
+        $this->throttle->recordRegistration($ip);
+
+        return $this->createPendingAccount($username, $password, $keyFile, $totpSecret, $code);
+    }
+
+    /**
+     * Refuse the request if the IP or username is rate limited; otherwise run
+     * it and count a failure, or clear the username's failures on success.
+     *
+     * @param callable(): LoginResult $action
+     */
+    private function throttled(string $ip, string $username, callable $action): LoginResult
+    {
+        $retryAfter = $this->throttle->loginRetryAfter($ip, $username);
+
+        if ($retryAfter > 0) {
+            return new LoginResult(LoginStatus::TooManyAttempts, retryAfter: $retryAfter);
+        }
+
+        $result = $action();
+
+        if (in_array($result->status, [LoginStatus::InvalidCredentials, LoginStatus::InvalidCode, LoginStatus::InvalidKeyFile], true)) {
+            $this->throttle->recordLoginFailure($ip, $username);
+        } elseif ($result->status === LoginStatus::Success) {
+            $this->throttle->recordLoginSuccess($username);
+        }
+
+        return $result;
+    }
+
+    private function attemptLogin(string $username, string $password, string $code): LoginResult
     {
         $user = $this->findUser($username);
 
@@ -90,10 +154,7 @@ class AuthService
         return $this->finishLogin($user, $unlocked);
     }
 
-    /**
-     * Set a new password and enrol an authenticator, then sign in.
-     */
-    public function completeSetup(string $username, string $currentPassword, string $newPassword, string $totpSecret, string $code): LoginResult
+    private function setUpAccount(string $username, string $currentPassword, string $newPassword, string $totpSecret, string $code): LoginResult
     {
         // Check the new authenticator first: a wrong code then says nothing about the password.
         $step = $this->totp->verify($totpSecret, $code);
@@ -119,10 +180,7 @@ class AuthService
         }
     }
 
-    /**
-     * Upload the current key file after a rotation, then sign in.
-     */
-    public function replaceKey(string $username, string $password, string $code, string $keyFile): LoginResult
+    private function replaceStaleKey(string $username, string $password, string $code, string $keyFile): LoginResult
     {
         $user = $this->findUser($username);
 
@@ -162,10 +220,7 @@ class AuthService
         return $this->finishLogin($user, $this->keys->decryptUserData($user, $password));
     }
 
-    /**
-     * Create a pending account. Needs the key file and a working authenticator.
-     */
-    public function register(string $username, string $password, string $keyFile, string $totpSecret, string $code): LoginResult
+    private function createPendingAccount(string $username, string $password, string $keyFile, string $totpSecret, string $code): LoginResult
     {
         $step = $this->totp->verify($totpSecret, $code);
 

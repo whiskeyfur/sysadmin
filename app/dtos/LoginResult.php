@@ -7,7 +7,8 @@ use App\Models\User;
 
 /**
  * Result of an AuthService call. On Success it carries the master key for
- * AuthSessionService::start(); call wipe() once it has been sealed.
+ * AuthSessionService::start(); call wipe() once it has been sealed. On
+ * TooManyAttempts, $retryAfter is the wait in seconds.
  */
 class LoginResult
 {
@@ -15,6 +16,7 @@ class LoginResult
         public readonly LoginStatus $status,
         public readonly ?User $user = null,
         public ?string $masterKey = null,
+        public readonly int $retryAfter = 0,
     ) {
     }
 

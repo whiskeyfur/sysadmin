@@ -11,7 +11,23 @@ namespace App\Controllers;
  */
 class Controller extends \Leaf\Controller
 {
-    // You can define methods here that would be used
-    // throughout your controller classes
-    // public function someMethod() {}
+    /**
+     * The address of the connecting client. Deliberately not Leaf's
+     * request()->getIp(), which trusts the Client-IP and X-Forwarded-For
+     * headers: any client can set those and dodge per-IP rate limits. If a
+     * reverse proxy is ever put in front of Apache, resolve the client IP
+     * from its header here, trusting only that proxy.
+     */
+    protected function clientIp(): string
+    {
+        return (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+    }
+
+    /**
+     * Minutes to show in a rate-limit message, rounded up.
+     */
+    protected function retryMinutes(int $seconds): int
+    {
+        return max(1, (int) ceil($seconds / 60));
+    }
 }

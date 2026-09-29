@@ -21,4 +21,6 @@ enum LoginStatus: string
     case UsernameTaken = 'username_taken';
     // Registered but not yet approved by an admin.
     case Pending = 'pending';
+    // Rate limited; LoginResult::$retryAfter says for how long.
+    case TooManyAttempts = 'too_many_attempts';
 }

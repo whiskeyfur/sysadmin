@@ -40,6 +40,7 @@ uses()->beforeEach(function () {
     Schema::setDbConnection($capsule);
     Schema::migrate('app/database/users.yml');
     Schema::migrate('app/database/vaults.yml');
+    Schema::migrate('app/database/login_attempts.yml');
 
     $this->crypto = new CryptoService(1, 8192 * 8);
 

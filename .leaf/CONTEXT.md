@@ -88,6 +88,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — Login rate limiting: per-IP/per-username/registration limits and a cap of 4 concurrent password derivations (`LoginThrottleService`, `LimitConcurrentLogins`, `login_attempts.yml`).
 * 2026-09-29 — Login, setup, registration with admin approval, required TOTP authenticator, default admin, key file download (`app/controllers/*`, `app/services/Auth*`, `TotpService`, `UserAdminService`, `app/views/*`).
 * 2026-09-29 — Built the users/vaults schemas and key services with tests (`app/database/*.yml`, `app/services/*`, `tests/services/*`); added Alchemy for test/lint/analyse.
 * 2026-09-29 — Installed the Leaf MVC v5 skeleton and added the project's PHP extension requirements (`composer.json`, `.gitignore`, `CLAUDE.md`).
@@ -104,6 +105,8 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * An authenticator (TOTP, Google Authenticator defaults) is required for every login; its secret lives inside the password-encrypted user-data field — the user asked for "no authenticator = no access", and this keeps the secret unreadable without the password.
 * New registrations are `pending` until an admin approves them — the user's requirement; stored in the encrypted role so it can't be flipped without the data key.
 * Default admin `admin`/`changeme` on a fresh install, forced to set a new password and authenticator — the user asked for default credentials at start.
+* Per-username lockouts (10 failures / 15 min) are accepted even though they let anyone lock an account out briefly — TOTP already blocks guessing, so the limits mainly stop Argon2id memory exhaustion.
+* Client IP comes from `REMOTE_ADDR`, not Leaf's `getIp()` — Leaf trusts spoofable forwarding headers and there is no proxy in front of Apache.
 * Only admins can rotate the master key — rotation locks every other user out until they upload the new key file.
 * Two-tier keys (master key wraps a data key) — rotating the master key after removing a user only re-wraps one row instead of re-encrypting all data.
 * MariaDB targets are reached through `pdo_mysql` — matches the PDO-based SQLite side.

@@ -114,6 +114,18 @@ class HealthCheckService
     {
         (new CheckCooldown($this->clock))->require($user, $server->last_checked_at, "{$server->name} was checked");
 
+        return $this->runNow($server);
+    }
+
+    /**
+     * Run the server's checks without a user (the scheduler, ScheduledCheckService).
+     *
+     * @return list<CheckResult>
+     *
+     * @throws DomainException if neither SSH nor MySQL is set up for the server.
+     */
+    public function runNow(Server $server): array
+    {
         if (!$this->canCheck($server)) {
             throw new DomainException("Nothing to check on {$server->name} yet: set up SSH or configure MySQL first.");
         }

@@ -57,3 +57,19 @@ test('charts are inline SVG with a line and hoverable points per series, and esc
         ->and($svg)->not->toContain('<used>')
         ->and(LineChart::render('Empty', [], 0, 1))->toContain('No data');
 });
+
+test('more runs than a chart can show are averaged into even intervals', function () {
+    // 30 days of runs every 5 minutes.
+    for ($i = 0; $i < 8000; $i += 1) {
+        $at = Carbon::instance($this->clock->now())->subMinutes($i * 5);
+        StoredCheck::query()->create(['server_id' => $this->server->id, 'check_key' => 'memory', 'status' => HealthStatus::Ok, 'summary' => 'x', 'value' => $i % 2 ? 40.0 : 60.0, 'details' => [], 'checked_at' => $at]);
+    }
+
+    $report = $this->reports->report($this->server, '30d');
+
+    expect($report['bucket_minutes'])->toBe(240)
+        ->and(count($report['memory']['Memory']))->toBeLessThanOrEqual(SshReportService::MAX_POINTS)
+        ->and(count($report['rows']))->toBeLessThanOrEqual(SshReportService::MAX_POINTS)
+        ->and($report['memory']['Memory'][10][1])->toBe(50.0)
+        ->and($this->reports->report($this->server, '24h')['bucket_minutes'])->toBeNull();
+});

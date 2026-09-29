@@ -150,6 +150,20 @@ It resets the account to the one-time password `changeme` and removes its authen
 
 To serve it with Apache instead, point the site's `DocumentRoot` at `public/` with `AllowOverride All`, and make `storage/` writable by the web server user (e.g. `chgrp -R www-data storage && chmod -R g+w storage`).
 
+## Scheduled checks
+
+Servers and certificates are checked every 5 minutes by `php leaf app:run-checks`, which runs whatever is due. Start it every minute:
+
+- **Linux / macOS** (cron): run `crontab -e` and add this line, with your path. `umask 002` keeps the database writable for the web server's group.
+
+  ```cron
+  * * * * * umask 002; cd /var/www/sys && /usr/bin/php leaf app:run-checks >/dev/null 2>&1
+  ```
+
+- **Windows**: in Task Scheduler, create a task that runs `php leaf app:run-checks` in the project folder every minute (Trigger: daily, repeat every 1 minute indefinitely). Or keep it running in a terminal with `php leaf app:run-checks --loop`.
+
+Runs never overlap. A server that can't be reached is retried less often (up to once an hour) so failed logins don't pile up on servers that ban them. Checks also run whenever someone clicks Check or Run checks now.
+
 ## Updating
 
 From the project folder (Windows, Linux and macOS):

@@ -230,7 +230,10 @@ class SslMonitorService
     /**
      * @return int number of bindings checked
      */
-    public function checkServer(User $user, Server $server): int
+    /**
+     * @param User|null $user null for the scheduler (no cooldown)
+     */
+    public function checkServer(?User $user, Server $server): int
     {
         $checked = $this->checkBindings($user, SslBinding::query()->with(['certificate', 'server'])->where('server_id', $server->id)->get()->all());
 
@@ -249,6 +252,22 @@ class SslMonitorService
         $this->removeOrphans();
 
         return $this->checkBindings($user, SslBinding::query()->with(['certificate', 'server'])->get()->all());
+    }
+
+    /**
+     * For the scheduler: check certificates served directly (via DNS, not on
+     * a tracked server) that weren't checked since $before.
+     *
+     * @return int number of bindings checked
+     */
+    public function checkDirectDue(Carbon $before): int
+    {
+        /** @var list<SslBinding> $due */
+        $due = SslBinding::query()->with('certificate')->whereNull('server_id')
+            ->where(fn ($q) => $q->whereNull('last_checked_at')->orWhere('last_checked_at', '<', $before))
+            ->get()->all();
+
+        return $this->checkBindings(null, $due);
     }
 
     /**
@@ -329,10 +348,12 @@ class SslMonitorService
     /**
      * @param list<SslBinding> $bindings
      */
-    private function checkBindings(User $user, array $bindings): int
+    private function checkBindings(?User $user, array $bindings): int
     {
-        $last = collect($bindings)->max(fn (SslBinding $b) => $b->last_checked_at?->getTimestamp());
-        (new CheckCooldown($this->clock))->require($user, $last === null ? null : Carbon::createFromTimestamp($last), 'These certificates were checked');
+        if ($user !== null) {
+            $last = collect($bindings)->max(fn (SslBinding $b) => $b->last_checked_at?->getTimestamp());
+            (new CheckCooldown($this->clock))->require($user, $last === null ? null : Carbon::createFromTimestamp($last), 'These certificates were checked');
+        }
 
         $now = Carbon::instance($this->clock->now())->startOfSecond();
         $certificates = [];

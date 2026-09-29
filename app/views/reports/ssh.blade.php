@@ -25,7 +25,7 @@
                 </form>
             @endif
         </div>
-        <p class="muted">Disk, load and memory from each SSH check run. Runs happen when someone runs checks (SSH › Test); results are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days. Hover a point for its value.</p>
+        <p class="muted">Disk, load and memory from each SSH check run: every {{ \App\Services\ScheduledCheckService::DEFAULT_INTERVAL_MINUTES }} minutes when checks are scheduled (<code>php leaf app:run-checks</code>), and whenever someone runs them. Results are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days. Hover a point for its value.</p>
 
         @if ($server === null)
             <p class="muted">No server has SSH monitoring turned on.</p>
@@ -53,6 +53,9 @@
 
         <div class="card">
             <h2>Data</h2>
+            @if ($report['bucket_minutes'])
+                <p class="hint">{{ count($report['rows']) }} intervals: each chart point and row is the average of the runs in {{ $report['bucket_minutes'] >= 60 ? ($report['bucket_minutes'] / 60) . ' hour' . ($report['bucket_minutes'] > 60 ? 's' : '') : $report['bucket_minutes'] . ' minutes' }}. Pick a shorter period for every run.</p>
+            @endif
             <div class="table-wrap">
             <table>
                 <thead>

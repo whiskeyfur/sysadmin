@@ -110,6 +110,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * Per-username lockouts (10 failures / 15 min) are accepted even though they let anyone lock an account out briefly.
 * Client IP comes from `REMOTE_ADDR`, not Leaf's `getIp()` — Leaf trusts spoofable forwarding headers and there is no proxy in front of Apache.
 * SSH uses phpseclib (user's preference) with one app-generated Ed25519 key; admins add its public key to servers — the private key never leaves the app.
+* SSL: a valid certificate is only ever a warning (within the admin-set warning period, default 7 days); critical means invalid — the user's rule.
 * Navbar: monitoring on the left (Servers, SSL), configuration and account on the right — the user's layout.
 * A server has one or more of SSH, MariaDB and SSL; SSL covers several hostnames per server — the user's choice.
 * Health checks run only on demand for now — the user's choice; the 5-minute interval and 30-day retention are stored/applied for a later scheduler.

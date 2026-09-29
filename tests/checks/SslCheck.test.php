@@ -22,7 +22,19 @@ test('a valid certificate is judged by the days left', function (int $days, Heal
         ->and($result->value)->toEqual((float) $days)
         ->and($result->key)->toBe('ssl:example.com:443')
         ->and($result->details['names'])->toBe(['example.com', 'www.example.com']);
-})->with([[60, HealthStatus::Ok], [21, HealthStatus::Ok], [20, HealthStatus::Warning], [7, HealthStatus::Warning], [6, HealthStatus::Critical]]);
+})->with([[60, HealthStatus::Ok], [8, HealthStatus::Ok], [7, HealthStatus::Warning], [1, HealthStatus::Warning]]);
+
+test('a valid certificate is never critical, however close to expiry', function () {
+    expect($this->ssl->evaluate('example.com', 443, true, null, ($this->leaf)(-30, 0), null, null, $this->now)->status)->toBe(HealthStatus::Warning);
+});
+
+test('the warning period is configurable', function () {
+    $ssl = new SslCheckService('/dev/null', warningDays: 30);
+
+    expect($ssl->evaluate('example.com', 443, true, null, ($this->leaf)(-30, 20), null, null, $this->now)->status)->toBe(HealthStatus::Warning)
+        ->and($ssl->evaluate('example.com', 443, true, null, ($this->leaf)(-30, 20), null, null, $this->now)->summary)->toContain('within 30 days')
+        ->and($ssl->evaluate('example.com', 443, true, null, ($this->leaf)(-30, 31), null, null, $this->now)->status)->toBe(HealthStatus::Ok);
+});
 
 test('failed verification is explained', function (array $leafArgs, ?string $error, string $reason) {
     $result = $this->ssl->evaluate('example.com', 443, false, $error, ($this->leaf)(...$leafArgs), 'TLSv1.3', null, $this->now);

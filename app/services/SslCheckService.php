@@ -14,24 +14,30 @@ use Psr\Clock\ClockInterface;
  * hostname, via SNI), which gives the verdict; and one without, which reads
  * the certificate so a failure can be explained precisely (PHP reports
  * expired, self-signed and untrusted certificates all as "certificate
- * verify failed"). Valid certificates are judged by the days left.
+ * verify failed").
+ *
+ * An invalid certificate is critical. A valid one is a warning once it
+ * expires within the warning period (an admin setting, default 7 days).
  */
 class SslCheckService
 {
-    public const WARNING_DAYS = 21;
-
-    public const CRITICAL_DAYS = 7;
-
     public const TIMEOUT = 10;
 
     /**
      * @param string|null $caFile trust anchors; null means the system CA bundle
+     * @param int $warningDays a valid certificate expiring within this many days is a warning
      */
     public function __construct(
         private readonly ?string $caFile = null,
         private readonly ClockInterface $clock = new SystemClock(),
         private readonly CaCertificateService $certificates = new CaCertificateService(),
+        private readonly int $warningDays = SettingsService::DEFAULTS[SettingsService::SSL_WARNING_DAYS],
     ) {
+    }
+
+    public function warningDays(): int
+    {
+        return $this->warningDays;
     }
 
     public function check(string $host, int $port = 443): CheckResult
@@ -98,14 +104,10 @@ class SslCheckService
         }
 
         $summary = "Valid, $expiry (" . ($daysLeft >= 1 ? floor($daysLeft) . ' days' : 'less than a day') . "), issued by $issuer.";
-        $status = match (true) {
-            $daysLeft < self::CRITICAL_DAYS => HealthStatus::Critical,
-            $daysLeft < self::WARNING_DAYS => HealthStatus::Warning,
-            default => HealthStatus::Ok,
-        };
+        $status = $daysLeft <= $this->warningDays ? HealthStatus::Warning : HealthStatus::Ok;
 
         if ($status !== HealthStatus::Ok) {
-            $summary .= ' Renew it soon.';
+            $summary .= " Expires within {$this->warningDays} days: renew it soon.";
         }
 
         return new CheckResult($key, $label, $status, $summary, $daysLeft, 'days', $details);

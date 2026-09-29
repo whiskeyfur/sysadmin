@@ -21,10 +21,16 @@ class SslMonitorService
 {
     public const RETENTION_DAYS = 30;
 
+    private readonly SslCheckService $checker;
+
+    /**
+     * @param SslCheckService|null $checker defaults to one using the admin's warning period
+     */
     public function __construct(
-        private readonly SslCheckService $checker = new SslCheckService(),
+        ?SslCheckService $checker = null,
         private readonly ClockInterface $clock = new SystemClock(),
     ) {
+        $this->checker = $checker ?? new SslCheckService(warningDays: (new SettingsService())->sslWarningDays());
     }
 
     /**

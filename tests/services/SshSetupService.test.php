@@ -130,13 +130,14 @@ test('the password installs the key; once key login works it is not stored', fun
 test('a server that refuses key login falls back to the stored, encrypted password', function () {
     $server = ($this->makeServer)(true);
     $this->ssh->keyResults = [false, false];
-    $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), 'pw');
+    // '-' and '!' never occur in base64, so the ciphertext can't contain this by chance.
+    $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), 'fallback-pw!');
     $server = $server->fresh();
 
     expect($result->ok)->toBeTrue()
         ->and($server->ssh_auth)->toBe(Server::SSH_AUTH_PASSWORD)
-        ->and($server->ssh_password)->not->toContain('pw')
-        ->and($this->servers->sshPassword($server))->toBe('pw');
+        ->and($server->ssh_password)->not->toContain('fallback-pw!')
+        ->and($this->servers->sshPassword($server))->toBe('fallback-pw!');
 });
 
 test('with password login not allowed, no password is ever tried or stored', function () {

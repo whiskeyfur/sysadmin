@@ -40,6 +40,7 @@ The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice
   - Leaf turns PHP warnings into exceptions (500s), so check `is_writable()` and similar before calls that may warn.
   - `Leaf\Controller` has public `render()` and `auth()` methods; don't name controller helpers that.
   - In Blade, `@{{` is an escape that prints a literal `{{`, so `{{ $a }}@{{ $b }}` breaks. Concatenate inside one echo instead: `{{ $a . '@' . $b }}`.
+  - A Blade directive glued to a letter or digit (`days@if (...)`) isn't compiled and prints literally. Put a space or newline before it.
 - Times are stored in UTC (PHP's default here). Show them with `App\Utils\LocalTime::format()`, which converts to `APP_TIMEZONE` from `.env` (America/Los_Angeles on this machine). Don't call `->format()` on a stored time directly in a view.
 - Write everything as object-oriented as possible, within Leaf's conventions. Don't add global functions, global variables or procedural logic beyond what Leaf's own entry points (`public/index.php`, `leaf`) and route files require.
 - SSH uses **phpseclib 3** (the user's preference). It has no port forwarding, so MySQL is reached over direct TCP only; don't add SSH tunnels without asking.
@@ -99,6 +100,10 @@ Every route that hashes or checks a password (POST `/login`, `/setup`, `/passwor
 - `UserAdminService`: create accounts, reset passwords (new temporary password, authenticator removed, sessions ended), promote/demote, delete. Every method re-checks that the acting user is an admin.
 - `LoginThrottleService`: the attempt limits above.
 
+## Settings
+
+App-wide settings live in the `settings` table (key/value) behind `SettingsService`, which holds each setting's default (`DEFAULTS`) and validation, so adding one needs no schema change. Admins edit them at `/admin/settings` (right side of the navbar). Current settings: `ssl_warning_days` (1–365, default 7).
+
 ## Navigation
 
 The navbar has monitoring on the left (**Servers** `/servers`, **SSL** `/ssl`; everyone signed in) and configuration/account on the right (**Configure** `/admin/servers` and **Users** for admins, **Password**, sign out). Keep new monitoring views on the left and settings on the right.
@@ -147,6 +152,6 @@ A server is a name and hostname plus **one or more** of SSH (`ssh_enabled`), Mar
 
 - Two TLS connections via `stream_socket_client` with SNI: one fully verified (system CA bundle, or a CA file passed to the constructor, which tests use) gives the verdict; when that fails, one unverified connection reads the certificate to explain why. The judgement is a pure `evaluate()`.
 - Verified PHP behaviour: a hostname mismatch gives a specific "Peer certificate CN=... did not match" warning, but expired, self-signed and untrusted certificates all give only "certificate verify failed", so `evaluate()` works out the reason from the certificate itself. TLS errors arrive as PHP warnings; `SslCheckService` collects them with a temporary error handler (Leaf would otherwise turn them into 500s).
-- Valid certificates: warning under 21 days left, critical under 7. Checked against badssl.com (valid, expired, wrong host, self-signed, untrusted root, incomplete chain) with the expected verdicts.
+- An invalid certificate (expired, wrong name, untrusted, unreachable) is critical. A valid one is a warning once it expires within the warning period (days left <= `ssl_warning_days`, an admin setting, default 7), never critical. Checked against badssl.com (valid, expired, wrong host, self-signed, untrusted root, incomplete chain) with the expected verdicts.
 - Test certificates made with PHP's `openssl_csr_sign` need `'digest_alg' => 'sha256'`, or OpenSSL servers refuse them ("ca md too weak"). `tests/checks/SslCheck.test.php` starts real `openssl s_server` instances.
 

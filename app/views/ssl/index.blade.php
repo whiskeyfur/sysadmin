@@ -17,7 +17,11 @@
                 </form>
             @endif
         </div>
-        <p class="muted">Certificates are downloaded straight from each site over HTTPS and checked like a browser would: trusted issuer, matching name, not expired. Warning under {{ \App\Services\SslCheckService::WARNING_DAYS }} days left, critical under {{ \App\Services\SslCheckService::CRITICAL_DAYS }}.</p>
+        <p class="muted">Certificates are downloaded straight from each site over HTTPS and checked like a browser would: trusted issuer, matching name, not expired. Invalid certificates are critical; valid ones are a warning once they expire within {{ $warningDays }} days.
+            @if ($auth->isAdmin())
+                <a href="/admin/settings">Change the warning period</a>.
+            @endif
+        </p>
 
         @if (count($certificates) === 0)
             <p class="muted">No certificates checked yet.

@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\DTOs\AuthContext;
+use App\Services\SettingsService;
 use App\Services\SslMonitorService;
 
 /**
@@ -18,6 +19,7 @@ class SslController extends Controller
         $this->response->view('ssl.index', [
             'auth' => $auth,
             'certificates' => (new SslMonitorService())->latest(),
+            'warningDays' => (new SettingsService())->sslWarningDays(),
             'notice' => $this->request->flash('notice'),
         ]);
     }

@@ -8,6 +8,8 @@ app()->group('/admin', ['middleware' => RequireAdmin::class, function () {
     app()->post('/users/{id}/promote', 'AdminUserController@promote');
     app()->post('/users/{id}/demote', 'AdminUserController@demote');
     app()->post('/users/{id}/delete', 'AdminUserController@delete');
+    app()->get('/settings', 'SettingsController@show');
+    app()->post('/settings', 'SettingsController@update');
 }]);
 
 /*

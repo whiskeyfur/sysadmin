@@ -103,6 +103,7 @@
                 @if ($auth->isAdmin())
                     <a href="/admin/servers" @if (str_starts_with($path, '/admin/servers')) aria-current="page" @endif>Configure</a>
                     <a href="/admin/users" @if (str_starts_with($path, '/admin/users')) aria-current="page" @endif>Users</a>
+                    <a href="/admin/settings" @if (str_starts_with($path, '/admin/settings')) aria-current="page" @endif>Settings</a>
                 @endif
                 <a href="/password" @if ($path === '/password') aria-current="page" @endif>Password</a>
                 <span class="muted">{{ $auth->user->username }}</span>

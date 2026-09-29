@@ -1,0 +1,7 @@
+# App-wide settings changed by admins (SettingsService). Missing keys use
+# the defaults in SettingsService::DEFAULTS.
+columns:
+  key:
+    type: string
+    unique: true
+  value: text

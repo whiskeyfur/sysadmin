@@ -6,6 +6,7 @@ use App\Exceptions\ServerConnectionException;
 use App\Models\Account;
 use App\Models\Server;
 use App\Models\User;
+use App\Services\AccountService;
 use App\Services\ServerService;
 use App\Services\SshKeyService;
 use App\Services\SshService;
@@ -25,6 +26,7 @@ beforeEach(function () {
         public bool $passwordWorks = true;
         public bool $installWorks = true;
         public int $passwordAttempts = 0;
+        public array $passwordsTried = [];
         public int $keyAttempts = 0;
         public array $commands = [];
         public ServerPlatform $platform = ServerPlatform::Unix;
@@ -63,6 +65,7 @@ beforeEach(function () {
         {
             // Count every call, so a missing guard in SshSetupService shows up.
             $this->passwordAttempts++;
+            $this->passwordsTried[] = $password;
 
             if (!$server->ssh_password_allowed) {
                 throw new ServerConnectionException('not allowed');
@@ -289,3 +292,43 @@ test('SSH banners are mapped to a platform', function (?string $banner, ServerPl
     [null, ServerPlatform::Unknown],
     ['', ServerPlatform::Unknown],
 ]);
+
+test('with no password typed, setup uses the one stored for the chosen account, once, and keeps its reset date', function () {
+    $accounts = new AccountService($this->cipher);
+    $ldap = $accounts->create($this->admin, ['username' => 'CORP\\svc', 'type' => 'ldap', 'password' => 'ldap-pw!', 'password_changed_at' => '2026-01-15']);
+    $server = $this->servers->create($this->admin, [
+        'name' => 'web', 'hostname' => 'web.example.com', 'ssh_port' => 22, 'ssh_account_id' => (string) $ldap->id, 'ssh_password_allowed' => '1',
+    ]);
+    $this->ssh->keyResults = [false, true];
+    $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), '');
+
+    expect($result->ok)->toBeTrue()
+        ->and($this->ssh->passwordsTried)->toBe(['ldap-pw!'])
+        ->and($this->ssh->commands[0])->toContain($this->keys->publicKey())
+        ->and($ldap->fresh()->password_changed_at->format('Y-m-d'))->toBe('2026-01-15')
+        ->and(collect($result->steps)->pluck('message')->implode(' '))->toContain('stored for CORP\\svc');
+});
+
+test('a typed password wins over the stored one', function () {
+    $server = ($this->makeServer)(true);
+    $this->servers->storeSshPassword($server, 'stored-pw!');
+    $this->ssh->keyResults = [false, true];
+    $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), 'typed-pw!');
+
+    expect($this->ssh->passwordsTried)->toBe(['typed-pw!'])
+        ->and($this->servers->sshPassword($server->fresh()))->toBe('typed-pw!');
+});
+
+test('a stored password is never tried when password login is off, or when there is none', function (bool $allowed, bool $stored) {
+    $server = ($this->makeServer)($allowed);
+
+    if ($stored) {
+        $this->servers->storeSshPassword($server, 'stored-pw!');
+    }
+
+    $this->ssh->keyResults = [false];
+    $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), null);
+
+    expect($result->ok)->toBeFalse()
+        ->and($this->ssh->passwordAttempts)->toBe(0);
+})->with([[false, true], [true, false]]);

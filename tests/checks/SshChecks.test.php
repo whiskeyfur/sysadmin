@@ -91,3 +91,12 @@ test('memory: old kernels without MemAvailable, heavy swap warns, no swap noted'
 test('memory without /proc/meminfo is unknown', function () {
     expect((new MemoryCheck())->evaluate('')->status)->toBe(HealthStatus::Unknown);
 });
+
+test('disk: custom levels apply to space and inodes', function () {
+    $df = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 100 60 40 60% /data\n--inodes--\nFilesystem Inodes IUsed IFree IUse% Mounted on\n/dev/sda1 100 10 90 10% /data\n";
+    $inodes = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 100 10 90 10% /data\n--inodes--\nFilesystem Inodes IUsed IFree IUse% Mounted on\n/dev/sda1 100 75 25 75% /data\n";
+
+    expect((new DiskCheck(50, 70))->evaluate($df)->status)->toBe(HealthStatus::Warning)
+        ->and((new DiskCheck(50, 70))->evaluate($inodes)->status)->toBe(HealthStatus::Critical)
+        ->and((new DiskCheck(90, 99))->evaluate($df)->summary)->toContain('below 90%');
+});

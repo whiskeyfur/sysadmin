@@ -145,6 +145,14 @@ class ServerService
     }
 
     /**
+     * Whether the server's SSH account has a stored password (without decrypting it).
+     */
+    public function hasSshPassword(Server $server): bool
+    {
+        return $this->accounts()->forServer($server)?->hasPassword() ?? false;
+    }
+
+    /**
      * An SSH password stored on the server itself, from before accounts
      * existed; AccountService::syncServers() moves it into the account.
      */

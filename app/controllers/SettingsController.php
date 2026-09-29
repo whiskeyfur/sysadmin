@@ -19,10 +19,13 @@ class SettingsController extends Controller
     public function update()
     {
         try {
-            (new SettingsService())->update($this->authContext()->user, [
-                SettingsService::SSL_WARNING_DAYS => $this->request->get(SettingsService::SSL_WARNING_DAYS, false),
-                SettingsService::ACCOUNT_WARNING_DAYS => $this->request->get(SettingsService::ACCOUNT_WARNING_DAYS, false),
-            ]);
+            $input = [];
+
+            foreach (array_keys(SettingsService::DEFAULTS) as $key) {
+                $input[$key] = $this->request->get($key, false);
+            }
+
+            (new SettingsService())->update($this->authContext()->user, $input);
         } catch (DomainException $e) {
             $this->renderPage(error: $e->getMessage(), status: 422);
 

@@ -2,6 +2,7 @@
 
 use App\Exceptions\AuthorizationException;
 use App\Models\User;
+use App\Services\HealthCheckService;
 use App\Services\SettingsService;
 use App\Services\SslMonitorService;
 
@@ -38,3 +39,22 @@ test('invalid values are rejected and nothing changes', function (string $value)
 test('only admins change settings', function () {
     $this->settings->update(new User(['role' => User::ROLE_USER]), ['ssl_warning_days' => '30']);
 })->throws(AuthorizationException::class);
+
+test('disk levels default to 85% and 95%, and the disk check uses the saved ones', function () {
+    expect($this->settings->diskWarningPercent())->toBe(85)
+        ->and($this->settings->diskCriticalPercent())->toBe(95);
+
+    $this->settings->update($this->admin, ['disk_warning_percent' => '70', 'disk_critical_percent' => '80']);
+    $disk = HealthCheckService::defaultSshChecks($this->settings)[0];
+    $df = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 100 75 25 75% /data\n";
+
+    expect($disk->evaluate($df)->status)->toBe(App\Enums\HealthStatus::Warning);
+});
+
+test('the disk warning level must be below the critical level', function (array $input) {
+    $this->settings->update($this->admin, $input);
+})->throws(DomainException::class, 'below the critical')->with([
+    [['disk_warning_percent' => '95', 'disk_critical_percent' => '90']],
+    [['disk_warning_percent' => '96']],
+    [['disk_critical_percent' => '85']],
+]);

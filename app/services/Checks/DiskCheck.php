@@ -8,13 +8,20 @@ use App\Enums\HealthStatus;
 /**
  * Space and inode usage on every real filesystem (`df -P`, which works with
  * GNU and BusyBox). Pseudo filesystems, snaps and loop devices are skipped;
- * they're often always full and never a problem.
+ * they're often always full and never a problem. The warning and critical
+ * percentages (admin settings) apply to both space and inodes.
  */
 class DiskCheck extends SshCheck
 {
     public const WARNING_PERCENT = 85;
 
     public const CRITICAL_PERCENT = 95;
+
+    public function __construct(
+        private readonly int $warningPercent = self::WARNING_PERCENT,
+        private readonly int $criticalPercent = self::CRITICAL_PERCENT,
+    ) {
+    }
 
     private const INODES_MARKER = '--inodes--';
 
@@ -64,8 +71,8 @@ class DiskCheck extends SshCheck
             $details[$mount] = ['used_percent' => $row['percent'], 'free_kb' => $row['available'], 'inode_percent' => $inode];
             $worst = max($worst, $row['percent']);
 
-            $diskStatus = self::threshold($row['percent'], self::WARNING_PERCENT, self::CRITICAL_PERCENT);
-            $inodeStatus = $inode === null ? HealthStatus::Ok : self::threshold($inode, self::WARNING_PERCENT, self::CRITICAL_PERCENT);
+            $diskStatus = self::threshold($row['percent'], $this->warningPercent, $this->criticalPercent);
+            $inodeStatus = $inode === null ? HealthStatus::Ok : self::threshold($inode, $this->warningPercent, $this->criticalPercent);
             $status = HealthStatus::worst([$status, $diskStatus, $inodeStatus]);
 
             if ($diskStatus !== HealthStatus::Ok) {
@@ -78,7 +85,7 @@ class DiskCheck extends SshCheck
         }
 
         $summary = $problems === []
-            ? 'All ' . count($mounts) . ' filesystems below ' . self::WARNING_PERCENT . "%; fullest is {$worst}%."
+            ? 'All ' . count($mounts) . ' filesystems below ' . $this->warningPercent . "%; fullest is {$worst}%."
             : implode('; ', $problems) . '.';
 
         return $this->result($status, $summary, $worst, '%', ['mounts' => $details]);

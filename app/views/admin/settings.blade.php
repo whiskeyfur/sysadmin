@@ -24,6 +24,15 @@
             </fieldset>
 
             <fieldset>
+                <legend>Disk space</legend>
+                <label for="disk_warning_percent">Warning at (% used)</label>
+                <input type="text" id="disk_warning_percent" name="disk_warning_percent" value="{{ $settings->diskWarningPercent() }}" inputmode="numeric" required>
+                <label for="disk_critical_percent">Critical at (% used)</label>
+                <input type="text" id="disk_critical_percent" name="disk_critical_percent" value="{{ $settings->diskCriticalPercent() }}" inputmode="numeric" required>
+                <p class="hint">The SSH disk check flags a filesystem once this much of its space, or of its inodes, is used (1–100, warning below critical; defaults {{ \App\Services\SettingsService::DEFAULTS['disk_warning_percent'] }} and {{ \App\Services\SettingsService::DEFAULTS['disk_critical_percent'] }}).</p>
+            </fieldset>
+
+            <fieldset>
                 <legend>Accounts</legend>
                 <label for="account_warning_days">Rotation warning period (days)</label>
                 <input type="text" id="account_warning_days" name="account_warning_days" value="{{ $settings->accountWarningDays() }}" inputmode="numeric" required>

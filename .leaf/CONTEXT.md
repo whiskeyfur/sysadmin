@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — Disk warning/critical levels are admin settings; SSH key install with a password falls back to the chosen account's stored password (`SettingsService`, `DiskCheck`, `HealthCheckService::defaultSshChecks()`, `SshSetupService`).
 * 2026-09-29 — Sign-in is username + authenticator code; admins set a one-time password used only to enrol the authenticator; no password expiry or /password page; revealing account passwords takes a code; daily per-username guess cap; `php leaf app:reset-admin` (`AuthService`, `AuthController`, `PasswordService`, `LoginThrottleService`, `AppResetAdminCommand`).
 * 2026-09-29 — SSL certificates as their own records (name + hostnames) bound to servers and ports or checked directly via DNS; SNI to each server's address; `composer/ca-bundle` fallback for Windows (`SslMonitorService`, `ssl_certificates.yml`, `ssl_bindings.yml`, `ssl/*.blade.php`).
 * 2026-09-29 — Tracked accounts (local, LDAP, shared) with current password, reset date, rotation, which servers use them and when; reveals logged (`AccountService`, `AccountController`, `accounts/*.blade.php`).
 * 2026-09-29 — SSH platform detection from the banner; Windows gets Windows commands and no sh key install (`ServerPlatform`, `SshService::probe()`).
-* 2026-09-29 — SSH health checks: disk (space + inodes), load per core, memory/swap, all in one SSH session per run (`DiskCheck`, `LoadCheck`, `MemoryCheck`, `HealthCheckService::sshScript()`).
 
 ---
 

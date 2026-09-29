@@ -61,13 +61,27 @@ class HealthCheckService
         private readonly SshService $ssh = new SshService(),
         ?array $sshChecks = null,
     ) {
-        $this->sshChecks = $sshChecks ?? [new DiskCheck(), new LoadCheck(), new MemoryCheck()];
+        $this->sshChecks = $sshChecks ?? self::defaultSshChecks(new SettingsService());
         $this->checks = $checks ?? [
             new ServerStatusCheck(),
             new ConnectionsCheck(),
             new CrashedTablesCheck(),
             new ReplicationCheck(),
             new BufferPoolCheck(),
+        ];
+    }
+
+    /**
+     * The SSH checks, with the disk levels from the admin settings.
+     *
+     * @return list<SshHealthCheck>
+     */
+    public static function defaultSshChecks(SettingsService $settings): array
+    {
+        return [
+            new DiskCheck($settings->diskWarningPercent(), $settings->diskCriticalPercent()),
+            new LoadCheck(),
+            new MemoryCheck(),
         ];
     }
 

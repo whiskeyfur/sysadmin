@@ -75,9 +75,13 @@
                 @endif
 
                 @if ($server->ssh_password_allowed)
-                    <label for="password">Or let the app install it: {{ $server->ssh_username }}'s SSH password <span class="muted">(optional)</span></label>
+                    <label for="password">Or let the app install it: {{ $server->ssh_username }}'s SSH password <span class="muted">({{ $storedPassword ? 'leave blank to use the stored one' : 'optional' }})</span></label>
                     <input type="password" id="password" name="password" autocomplete="off">
-                    <p class="hint">Used to log in and install the key, then saved (encrypted) as the current password of {{ $server->ssh_username . '@' . $server->name }} under Accounts. Only sent after the host key is verified.</p>
+                    @if ($storedPassword)
+                        <p class="hint">Left blank, the app logs in once with the password stored for {{ $server->ssh_username }} under Accounts to install the key. A password typed here is used instead and saved as the account's current password. Only sent after the host key is verified.</p>
+                    @else
+                        <p class="hint">Used to log in and install the key, then saved (encrypted) as the current password of {{ $server->ssh_username }} under Accounts. Only sent after the host key is verified.</p>
+                    @endif
                 @else
                     <p class="hint">Password login is not allowed for this server, so the app will never try a password. (Change this in the server's settings.)</p>
                 @endif

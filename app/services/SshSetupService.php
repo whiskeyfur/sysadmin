@@ -18,9 +18,10 @@ use App\Models\User;
  * 2. Try the app's key. If that works, nothing else is needed.
  * 3. With a password (only if the server allows password login), log
  *    in, install the app's public key in ~/.ssh/authorized_keys, and try the
- *    key again.
- *    A password that worked is saved (encrypted) to the server's SSH
- *    account in the account list, as the account's current password.
+ *    key again. The password is the one the admin typed, or else the one
+ *    stored for the server's SSH account ("Log in as") in Accounts.
+ *    A typed password that worked is saved (encrypted) to that account as
+ *    its current password.
  * 4. If the server still refuses key login, use password login for this
  *    server, with that account's password.
  *
@@ -38,7 +39,7 @@ class SshSetupService
 
     /**
      * @param string|null $confirmedFingerprint the fingerprint the admin checked, when the host key isn't trusted yet
-     * @param string|null $password the SSH password, used once; null or empty to skip
+     * @param string|null $password the SSH password, used once; null or empty to use the account's stored password, if any
      */
     public function setUp(User $admin, Server $server, ?string $confirmedFingerprint, ?string $password): SshSetupResult
     {
@@ -69,18 +70,27 @@ class SshSetupService
             return $result->finish(false);
         }
 
+        $typed = $password !== null;
+        $password ??= $this->servers->sshPassword($server);
+
         if ($password === null) {
-            $result->step(false, "Enter {$server->ssh_username}'s SSH password to install the key, or add the app's public key by hand.");
+            $result->step(false, "No password is stored for {$server->ssh_username} in Accounts. Enter its SSH password to install the key, or add the app's public key by hand.");
 
             return $result->finish(false);
+        }
+
+        if (!$typed) {
+            $result->step(true, "Using the password stored for {$server->ssh_username} in Accounts.");
         }
 
         if (!$this->installKey($server, $password, $result)) {
             return $result->finish(false);
         }
 
-        $this->servers->storeSshPassword($server, $password);
-        $result->step(true, "Saved the password as the current password of {$server->ssh_username}@{$server->name} in Accounts.");
+        if ($typed) {
+            $this->servers->storeSshPassword($server, $password);
+            $result->step(true, "Saved the password as the current password of {$server->ssh_username}@{$server->name} in Accounts.");
+        }
 
         if ($this->keyLoginWorks($server, $result)) {
             $this->servers->useKeyAuth($server);

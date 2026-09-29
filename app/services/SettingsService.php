@@ -17,12 +17,18 @@ class SettingsService
 
     public const ACCOUNT_WARNING_DAYS = 'account_warning_days';
 
+    public const DISK_WARNING_PERCENT = 'disk_warning_percent';
+
+    public const DISK_CRITICAL_PERCENT = 'disk_critical_percent';
+
     /**
      * @var array<string, int>
      */
     public const DEFAULTS = [
         self::SSL_WARNING_DAYS => 7,
         self::ACCOUNT_WARNING_DAYS => 7,
+        self::DISK_WARNING_PERCENT => 85,
+        self::DISK_CRITICAL_PERCENT => 95,
     ];
 
     /**
@@ -31,6 +37,8 @@ class SettingsService
     private const INTEGER_RANGES = [
         self::SSL_WARNING_DAYS => ['min' => 1, 'max' => 365],
         self::ACCOUNT_WARNING_DAYS => ['min' => 1, 'max' => 365],
+        self::DISK_WARNING_PERCENT => ['min' => 1, 'max' => 100],
+        self::DISK_CRITICAL_PERCENT => ['min' => 1, 'max' => 100],
     ];
 
     /**
@@ -47,6 +55,22 @@ class SettingsService
     public function accountWarningDays(): int
     {
         return $this->integer(self::ACCOUNT_WARNING_DAYS);
+    }
+
+    /**
+     * Disk (space or inode) use, in percent, at which the disk check warns.
+     */
+    public function diskWarningPercent(): int
+    {
+        return $this->integer(self::DISK_WARNING_PERCENT);
+    }
+
+    /**
+     * Disk (space or inode) use, in percent, at which the disk check is critical.
+     */
+    public function diskCriticalPercent(): int
+    {
+        return $this->integer(self::DISK_CRITICAL_PERCENT);
     }
 
     public function integer(string $key): int
@@ -87,6 +111,13 @@ class SettingsService
             $values[$key] = $value;
         }
 
+        $warning = $values[self::DISK_WARNING_PERCENT] ?? $this->diskWarningPercent();
+        $critical = $values[self::DISK_CRITICAL_PERCENT] ?? $this->diskCriticalPercent();
+
+        if ($warning >= $critical) {
+            throw new DomainException('The disk warning level must be below the critical level.');
+        }
+
         foreach ($values as $key => $value) {
             Setting::query()->updateOrCreate(['key' => $key], ['value' => (string) $value]);
         }
@@ -97,6 +128,8 @@ class SettingsService
         return match ($key) {
             self::SSL_WARNING_DAYS => 'SSL warning period',
             self::ACCOUNT_WARNING_DAYS => 'Account rotation warning period',
+            self::DISK_WARNING_PERCENT => 'Disk warning level',
+            self::DISK_CRITICAL_PERCENT => 'Disk critical level',
             default => $key,
         };
     }

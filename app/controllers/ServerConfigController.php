@@ -169,6 +169,7 @@ class ServerConfigController extends Controller
             'hostKey' => $hostKey,
             'hostKeyError' => $hostKeyError,
             'publicKey' => (new SshKeyService())->publicKey(),
+            'storedPassword' => $server->ssh_password_allowed && (new ServerService())->hasSshPassword($server),
             'result' => $result,
         ]);
     }

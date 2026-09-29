@@ -29,6 +29,7 @@ beforeEach(function () {
         public array $inodes = [];
         public array $outputs = [];
         public array $commands = [];
+        public array $containers = [];
 
         public function __construct()
         {
@@ -51,6 +52,22 @@ beforeEach(function () {
         public function exec(SSH2 $ssh, string $command): string
         {
             $this->commands[] = $command;
+
+            // `podman exec 'name' sh -c '<command>'`: run <command> against that container's files and outputs.
+            if (preg_match("/^(?:docker|podman) exec '([^']+)' sh -c '(.*)'$/s", $command, $m) === 1) {
+                if (!isset($this->containers[$m[1]])) {
+                    throw new ServerConnectionException("The command exited with status 125: no such container {$m[1]}");
+                }
+
+                $host = [$this->files, $this->outputs];
+                [$this->files, $this->outputs] = [$this->containers[$m[1]]['files'], $this->containers[$m[1]]['outputs']];
+
+                try {
+                    return $this->exec($ssh, str_replace("'\\''", "'", $m[2]));
+                } finally {
+                    [$this->files, $this->outputs] = $host;
+                }
+            }
 
             if (preg_match("/^(?:cat|tail -c \\+(\\d+)|\\{ ls -di) -- '([^']+)'/", $command, $m) === 1) {
                 $path = $m[2];
@@ -82,7 +99,7 @@ beforeEach(function () {
     $this->ssh->outputs = [
         'date +%z' => "+0000\n",
         'for b in apache2ctl' => "/usr/sbin/apache2ctl\n",
-        ' -v 2>&1' => "Server version: Apache/2.4.58 (Ubuntu)\n",
+        ' -V 2>&1' => "Server version: Apache/2.4.58 (Ubuntu)\n -D HTTPD_ROOT=\"/etc/apache2\"\n -D SERVER_CONFIG_FILE=\"apache2.conf\"\n",
         ' -S 2>&1' => "ServerRoot: \"/etc/apache2\"\nMain ErrorLog: \"/var/log/apache2/error.log\"\n",
         'DUMP_INCLUDES' => "Included configuration files:\n  (*) /etc/apache2/apache2.conf\n    (222) /etc/apache2/sites-enabled/shop.conf\n",
     ];
@@ -175,6 +192,108 @@ test('degrades gracefully: unreadable logs, or no Apache control program', funct
     expect($results)->toHaveCount(1)
         ->and($results[0]->status)->toBe(HealthStatus::Unknown)
         ->and($results[0]->summary)->toContain("control program");
+});
+
+test('without the control program, the configuration file set for the server is read with its includes', function () {
+    unset($this->ssh->outputs['for b in apache2ctl']);
+    $this->servers->update($this->admin, $this->server, ['apache_config_file' => '/etc/httpd/conf/httpd.conf'] + $this->servers->settingsAsInput($this->server));
+    $this->ssh->outputs['httpd/conf.modules.d'] = "/etc/httpd/conf.modules.d/00-base.conf\n/etc/httpd/conf.modules.d/README\n";
+    $this->ssh->outputs['httpd/conf.d'] = "/etc/httpd/conf.d/shop.conf\n/etc/httpd/conf.d/old/x.conf\n";
+    $this->ssh->files += [
+        '/etc/httpd/conf/httpd.conf' => "ServerRoot \"/etc/httpd\"\nListen 8080\nInclude conf.modules.d/*.conf\nErrorLog \"logs/error_log\"\nCustomLog \"logs/access_log\" combined\n<Location /server-status>\nSetHandler server-status\n</Location>\nIncludeOptional conf.d/*.conf\n",
+        '/etc/httpd/conf.modules.d/00-base.conf' => "LoadModule status_module modules/mod_status.so\n",
+        '/etc/httpd/conf.modules.d/README' => "ErrorLog /not/included\n",
+        '/etc/httpd/conf.d/shop.conf' => "<VirtualHost *:8080>\nInclude /etc/httpd/conf.d/shop.conf\nCustomLog /var/log/httpd/shop.log common\n</VirtualHost>\n",
+        '/etc/httpd/logs/error_log' => ($this->errorLine)(90, 'notice', 'AH00163: Apache/2.4.62 (Rocky Linux) configured -- resuming normal operations'),
+        '/etc/httpd/logs/access_log' => '',
+        '/var/log/httpd/shop.log' => '',
+    ];
+
+    $results = ($this->results)(($this->apache)()->run($this->server->fresh()));
+    $config = $this->server->fresh()->apache_config;
+
+    expect($config['binary'])->toBeNull()
+        ->and($config['config_file'])->toBe('/etc/httpd/conf/httpd.conf')
+        ->and($config['files'])->toBe(3)
+        ->and($config['error_logs'])->toBe(['/etc/httpd/logs/error_log' => ['main server']])
+        ->and($config['access_logs'])->toBe(['/etc/httpd/logs/access_log' => ['main server'], '/var/log/httpd/shop.log' => ['*:8080']])
+        ->and($config['status_url'])->toBe('http://127.0.0.1:8080/server-status?auto')
+        ->and($results['apache_server']->summary)->toContain('Apache/2.4.62 (Rocky Linux)');
+
+    $this->servers->update($this->admin, $this->server->fresh(), ['apache_config_file' => '/etc/httpd/nope.conf'] + $this->servers->settingsAsInput($this->server->fresh()));
+    $results = ($this->apache)()->run($this->server->fresh());
+
+    expect($results[0]->status)->toBe(HealthStatus::Unknown)
+        ->and($results[0]->summary)->toContain("Couldn't read Apache's configuration file /etc/httpd/nope.conf");
+
+    expect(fn () => $this->servers->update($this->admin, $this->server->fresh(), ['apache_config_file' => 'conf/httpd.conf'] + $this->servers->settingsAsInput($this->server->fresh())))
+        ->toThrow(DomainException::class, 'full path');
+});
+
+test('Apache 2.2 in a podman container: found, remembered, configuration followed from -V, output read with podman logs', function () {
+    unset($this->ssh->outputs['for b in apache2ctl']);
+    $this->ssh->outputs['for r in docker podman'] = "podman db mariadb:10\npodman apache-image registry.example.com/rhel6/rhel-php-gold:6.10.1\n";
+    $this->ssh->outputs['podman logs'] = '';
+    $at = fn (int $minutesAgo) => ($this->stamp)($minutesAgo)->utc()->format('Y-m-d\\TH:i:s.u') . '123Z';
+    $this->ssh->containers['apache-image'] = [
+        'outputs' => [
+            'date +%z' => "+0000\n",
+            'for b in apache2ctl' => "/usr/sbin/apachectl\n",
+            ' -S 2>&1' => "VirtualHost configuration:\nwildcard NameVirtualHosts and _default_ servers:\n_default_:443 localhost (/etc/httpd/conf.d/ssl.conf:74)\nSyntax OK\n",
+            ' -V 2>&1' => "Server version: Apache/2.2.15 (Unix)\n -D HTTPD_ROOT=\"/etc/httpd\"\n -D SERVER_CONFIG_FILE=\"conf/httpd.conf\"\n -D DEFAULT_ERRORLOG=\"logs/error_log\"\n",
+            'DUMP_INCLUDES' => "Syntax error: unknown define DUMP_INCLUDES\n",
+            'httpd/conf.d' => "/etc/httpd/conf.d/ssl.conf\n/etc/httpd/conf.d/php.conf\n",
+            'for p in' => "F\nF\nL /dev/stdout\n",
+        ],
+        'files' => [
+            '/etc/httpd/conf/httpd.conf' => "ServerRoot \"/etc/httpd\"\nListen 80\nInclude conf.d/*.conf\nErrorLog logs/error_log\nCustomLog logs/access_log combined\n",
+            '/etc/httpd/conf.d/ssl.conf' => "Listen 443\n<VirtualHost _default_:443>\nErrorLog logs/ssl_error_log\n</VirtualHost>\n",
+            '/etc/httpd/conf.d/php.conf' => "AddHandler php5-script .php\n",
+            '/etc/httpd/logs/error_log' => ($this->errorLine)(10, 'error', 'something broke'),
+            '/etc/httpd/logs/ssl_error_log' => '',
+        ],
+    ];
+    $this->ssh->outputs['podman logs'] = $at(3) . ' ' . ($this->accessLine)(3, 200) . $at(2) . ' ' . ($this->accessLine)(2, 500);
+
+    $results = ($this->results)(($this->apache)()->run($this->server));
+    $server = $this->server->fresh();
+    $config = $server->apache_config;
+
+    expect($server->apache_container)->toBe('podman:apache-image')
+        ->and($config['binary'])->toBe('/usr/sbin/apachectl')
+        ->and($config['version'])->toBe('Apache/2.2.15 (Unix)')
+        ->and($config['files'])->toBe(3)
+        ->and($config['error_logs'])->toBe(['/etc/httpd/logs/ssl_error_log' => ['_default_:443'], '/etc/httpd/logs/error_log' => ['main server']])
+        ->and($config['access_logs'])->toBe(['/etc/httpd/logs/access_log' => ['main server']])
+        ->and($config['streams'])->toBe(['/etc/httpd/logs/access_log' => 'stdout'])
+        ->and(implode(' ', $config['notes']))->toContain('Apache 2.2')->toContain('remembered')
+        ->and($results['apache_errors']->summary)->toContain('1')
+        ->and((int) ApacheTraffic::query()->where('server_id', $server->id)->sum('requests'))->toBe(2)
+        ->and(collect($this->ssh->commands)->contains(fn ($c) => str_starts_with($c, "podman logs --timestamps --tail 20000 'apache-image' 2>/dev/null")))->toBeTrue();
+
+    // Next time: the remembered container first (the host isn't searched), and the output continues after the last line.
+    $this->ssh->commands = [];
+    ($this->apache)()->run($server, rescan: true);
+
+    expect($this->ssh->commands[0])->toStartWith("podman exec 'apache-image' sh -c")
+        ->and(collect($this->ssh->commands)->contains(fn ($c) => str_contains($c, 'for r in docker podman')))->toBeFalse()
+        ->and(collect($this->ssh->commands)->contains(fn ($c) => str_starts_with($c, "podman logs --timestamps --since '" . $at(2) . "'")))->toBeTrue()
+        ->and((int) ApacheTraffic::query()->where('server_id', $server->id)->sum('requests'))->toBe(2);
+
+    // Gone: searched again; nothing found and no configuration file: the message asks for one.
+    $this->ssh->containers = [];
+    $this->ssh->outputs['for r in docker podman'] = "Error: permission denied\n";
+    $results = ($this->apache)()->run($server->fresh(), rescan: true);
+
+    expect($results[0]->summary)->toContain('no longer answers in podman:apache-image')->toContain("main configuration file");
+});
+
+test('a control program whose -S fails is passed over, as when it is missing', function () {
+    $this->ssh->outputs[' -S 2>&1'] = "AH00526: Syntax error on line 3 of /etc/apache2/apache2.conf:\nInvalid command 'Foo'\n";
+    $results = ($this->apache)()->run($this->server);
+
+    expect($results[0]->status)->toBe(HealthStatus::Unknown)
+        ->and($results[0]->summary)->toContain('/usr/sbin/apache2ctl -S failed on the server: AH00526');
 });
 
 test('Apache needs SSH; turning SSH off turns Apache off', function () {

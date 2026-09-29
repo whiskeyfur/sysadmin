@@ -25,7 +25,7 @@ class ServerConfigController extends Controller
 {
     private const BACK_PAGES = ['/', '/ssh', '/mariadb', '/apache'];
 
-    private const FIELDS = ['name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_tls', 'mysql_tls_ca', 'apache_enabled'];
+    private const FIELDS = ['name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_tls', 'mysql_tls_ca', 'apache_enabled', 'apache_config_file'];
 
     private readonly ServerService $servers;
 

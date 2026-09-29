@@ -156,6 +156,12 @@
                     <label class="check"><input type="checkbox" id="apache_enabled" name="apache_enabled" value="1" {{ $server->apache_enabled ? 'checked' : '' }}> Monitor Apache from its configuration and log files (needs SSH)</label>
                 @endif
                 <p class="hint">Nothing about locations is assumed: Apache's control program (apache2ctl, apachectl or httpd) lists its configuration files, which say where the error and access logs are. mod_status adds live worker figures if the configuration has it; without it, the error log is used. The SSH user needs read access to the logs (e.g. the adm group).</p>
+                <label for="apache_config_file">Configuration file (optional)</label>
+                <input type="text" id="apache_config_file" name="apache_config_file" value="{{ $server->apache_config_file }}" autocapitalize="none" placeholder="/etc/httpd/conf/httpd.conf" spellcheck="false">
+                <p class="hint">Only needed when Apache can't be found: its control program is looked for on the server, then in the Docker/Podman containers the SSH user can see (rootless containers only for the user that runs them; the one found is remembered). Failing both, Apache's main configuration file (httpd.conf or apache2.conf) is read directly with the files it includes.</p>
+                @if ($server->exists && $server->apache_container)
+                    <p class="hint">Apache runs in {{ str_replace(':', ' container ', $server->apache_container) }} (found automatically; tried first on each scan).</p>
+                @endif
                 @if ($server->exists && $server->apache_config)
                     <p class="hint">Last scan {{ \App\Utils\LocalTime::format($server->apache_scanned_at) }}: {{ $server->apache_config['version'] ?? 'Apache' }}, {{ count($server->apache_config['error_logs'] ?? []) }} error log(s), {{ count($server->apache_config['access_logs'] ?? []) }} access log(s){{ !empty($server->apache_config['status_url']) ? ', mod_status' : '' }}.</p>
                 @endif

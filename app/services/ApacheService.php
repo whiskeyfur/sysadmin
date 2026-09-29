@@ -25,7 +25,10 @@ use Psr\Clock\ClockInterface;
  *    every configuration file in use; those are read for ErrorLog,
  *    CustomLog and TransferLog. ${VARIABLES} are resolved from Define
  *    lines and from the main error log as `-S` reports it; relative paths
- *    are under ServerRoot. The scan is kept for SCAN_MINUTES.
+ *    are under ServerRoot. The scan is kept for SCAN_MINUTES. Without a
+ *    control program in the SSH user's PATH, the main configuration file
+ *    set for the server (apache_config_file) is read with its includes
+ *    (ApacheConfigFiles) instead.
  * 2. Each run reads only what's new in each log (RemoteLogs): error log
  *    entries go to apache_log_entries, access log lines are summarised per
  *    5 minutes into apache_traffic.
@@ -54,6 +57,18 @@ class ApacheService
     ];
 
     private ?RemoteLogs $remote = null;
+
+    /**
+     * Where this run reads Apache: the server itself, or the container Apache runs in.
+     */
+    private ?SshService $shell = null;
+
+    /**
+     * Log paths that are really the container's output (path => stdout|stderr), or not a regular file (special).
+     *
+     * @var array<string, string>
+     */
+    private array $streams = [];
 
     public function __construct(
         private readonly SshService $ssh = new SshService(),
@@ -92,11 +107,15 @@ class ApacheService
             $config = $server->apache_config;
 
             if ($rescan || $config === null || $server->apache_scanned_at === null || $server->apache_scanned_at->copy()->addMinutes(self::SCAN_MINUTES)->lessThan($now)) {
-                $config = $this->scan($connection);
+                $config = $this->scan($connection, $server->apache_config_file, $server->apache_container);
                 $server->apache_config = $config;
+                $server->apache_container = $config['container'] ?? null;
                 $server->apache_scanned_at = $now;
             }
 
+            $this->shell = ContainerShell::fromReference($this->ssh, $config['container'] ?? null) ?? $this->ssh;
+            $this->remote = new RemoteLogs($this->shell);
+            $this->streams = $config['streams'] ?? [];
             $zone = $this->remote()->zone($connection);
             $state = $server->apache_import_state ?? [];
             $problems = ['error' => [], 'access' => []];
@@ -128,35 +147,106 @@ class ApacheService
      * ServerRoot, error and access logs (path => virtual hosts), and the
      * mod_status location if there is one.
      *
+     * Where: in the container found last time, else on the server itself,
+     * else in a Docker/Podman container that has Apache (remembered in
+     * 'container'), else from the configuration file set for the server.
+     * "Found" means the control program answers `-S`.
+     *
+     * @param string|null $configFile Apache's main configuration file (servers.apache_config_file), read
+     *                                 directly when the control program can't be used
+     * @param string|null $container the container Apache was found in last time ("docker:web")
      * @return array<string, mixed>
      *
-     * @throws DomainException when Apache's control program isn't found
+     * @throws DomainException when Apache isn't found anywhere and no configuration file is set
      */
-    public function scan(SSH2 $connection): array
+    public function scan(SSH2 $connection, ?string $configFile = null, ?string $container = null): array
     {
-        $binary = trim(strtok($this->remote()->run($connection, 'for b in apache2ctl apachectl httpd; do command -v "$b" && break; done'), "\n") ?: '');
+        $notes = [];
+        $remembered = ContainerShell::fromReference($this->ssh, $container);
+
+        if ($remembered !== null) {
+            $found = $this->scanWith($remembered, $connection, $notes);
+
+            if ($found !== null) {
+                return $found;
+            }
+
+            $notes[] = "Apache no longer answers in {$remembered->reference()}; looked again.";
+        }
+
+        $found = $this->scanWith($this->ssh, $connection, $notes);
+
+        if ($found !== null) {
+            return $found;
+        }
+
+        foreach ($this->containers($connection, $notes) as $shell) {
+            if ($shell->reference() === $remembered?->reference()) {
+                continue;
+            }
+
+            $found = $this->scanWith($shell, $connection, $notes);
+
+            if ($found !== null) {
+                $found['notes'][] = "Apache runs in {$shell->runtime} container {$shell->container}; remembered for later scans.";
+
+                return $found;
+            }
+        }
+
+        if ($configFile !== null && $configFile !== '') {
+            $found = $this->scanFile($connection, $configFile);
+            $found['notes'] = [...$notes, ...$found['notes']];
+
+            return $found;
+        }
+
+        throw new DomainException("Apache's control program (apache2ctl, apachectl or httpd) wasn't found or didn't answer `-S`, on the server or in a Docker/Podman container the SSH user can see. "
+            . ($notes === [] ? '' : implode(' ', $notes) . ' ')
+            . "Set the path to Apache's main configuration file (httpd.conf or apache2.conf) in this server's Apache settings to read it directly.");
+    }
+
+    /**
+     * The scan through one shell (the server, or a container); null when
+     * the control program isn't there or `-S` fails.
+     *
+     * @param list<string> $notes why not, for the message when nothing works
+     * @return array<string, mixed>|null
+     */
+    private function scanWith(SshService $shell, SSH2 $connection, array &$notes): ?array
+    {
+        $remote = new RemoteLogs($shell);
+        $where = $shell instanceof ContainerShell ? "in {$shell->runtime} container {$shell->container}" : 'on the server';
+        $binary = trim(strtok($remote->run($connection, 'for b in apache2ctl apachectl httpd; do command -v "$b" && break; done'), "\n") ?: '');
 
         if ($binary === '') {
-            throw new DomainException("Apache's control program (apache2ctl, apachectl or httpd) wasn't found in the SSH user's PATH.");
+            return null;
         }
 
         $bin = escapeshellarg($binary);
-        $notes = [];
-        $version = preg_match('/Server version:\s*(.+)/', $this->remote()->run($connection, "$bin -v 2>&1"), $m) === 1 ? trim($m[1]) : null;
-        $runtime = $this->config->runtime($this->remote()->run($connection, "$bin -S 2>&1"));
-        $files = $this->config->includedFiles($this->remote()->run($connection, "$bin -t -D DUMP_INCLUDES 2>&1"));
+        $runtime = $this->config->runtime($output = $remote->run($connection, "$bin -S 2>&1"));
 
-        if ($files === []) {
-            $notes[] = "Couldn't list Apache's configuration files ($binary -t -D DUMP_INCLUDES); only the main error log is known.";
+        if (!$this->config->answered($output)) {
+            $first = trim((string) strtok(trim($output), "\n"));
+            $notes[] = "$binary -S failed $where" . ($first === '' ? '.' : ': ' . mb_substr($first, 0, 200) . '.');
+
+            return null;
         }
 
+        $scanNotes = [];
+        $compiled = $this->config->compiled($remote->run($connection, "$bin -V 2>&1"));
+        $version = $compiled['version'];
+        $runtime['server_root'] ??= $compiled['root'];
+        $files = $this->config->includedFiles($remote->run($connection, "$bin -t -D DUMP_INCLUDES 2>&1"));
         $directives = [];
+        $variables = [];
+        $fileCount = count($files);
 
         foreach ($files as $file) {
             try {
-                $text = $this->ssh->exec($connection, 'cat -- ' . escapeshellarg($file) . ' 2>&1');
+                $text = $shell->exec($connection, 'cat -- ' . escapeshellarg($file) . ' 2>&1');
             } catch (ServerConnectionException $e) {
-                $notes[] = "Couldn't read $file.";
+                $scanNotes[] = "Couldn't read $file.";
 
                 continue;
             }
@@ -166,7 +256,150 @@ class ApacheService
             }
         }
 
-        $variables = $this->variables($directives, $runtime['main_error_log']);
+        $mainFile = $compiled['config_file'] === null ? null
+            : (str_starts_with($compiled['config_file'], '/') || $runtime['server_root'] === null ? $compiled['config_file'] : rtrim($runtime['server_root'], '/') . '/' . $compiled['config_file']);
+
+        if ($files === [] && $mainFile !== null) {
+            // Apache 2.2 (no DUMP_INCLUDES): follow the includes from the main file ourselves.
+            try {
+                $read = (new ApacheConfigFiles($shell, $this->config))->read($connection, $mainFile);
+                $directives = $this->config->directives($read['text']);
+                $variables = $read['variables'];
+                $fileCount = $read['files'];
+                $runtime['server_root'] ??= $read['server_root'];
+                $scanNotes[] = "$binary can't list its configuration files (Apache 2.2); read $mainFile and its includes.";
+                $scanNotes = [...$scanNotes, ...$read['notes']];
+            } catch (DomainException $e) {
+                $scanNotes[] = $e->getMessage();
+            }
+        } elseif ($files === []) {
+            $scanNotes[] = "Couldn't list Apache's configuration files ($binary -t -D DUMP_INCLUDES); only the main error log is known.";
+        }
+
+        $hasMainErrorLog = collect($directives)->contains(fn ($d) => $d['name'] === 'errorlog' && $d['vhost'] === null);
+
+        if ($runtime['main_error_log'] === null && !$hasMainErrorLog && $compiled['error_log'] !== null && $runtime['server_root'] !== null) {
+            // No ErrorLog in the main server: Apache's built-in default.
+            $runtime['main_error_log'] = str_starts_with($compiled['error_log'], '/') ? $compiled['error_log'] : rtrim($runtime['server_root'], '/') . '/' . $compiled['error_log'];
+        }
+
+        $found = ['binary' => $binary, 'version' => $version, 'container' => null] + $this->logsAndStatus($directives, $runtime, $fileCount, $scanNotes, $variables);
+
+        if ($shell instanceof ContainerShell) {
+            $found['container'] = $shell->reference();
+            $found['streams'] = $this->streams($shell, $connection, [...array_keys($found['error_logs']), ...array_keys($found['access_logs'])]);
+        }
+
+        return $found;
+    }
+
+    /**
+     * Running containers the SSH user can see (docker, then podman), those
+     * whose name or image mentions Apache/httpd first.
+     *
+     * @param list<string> $notes
+     * @return list<ContainerShell>
+     */
+    private function containers(SSH2 $connection, array &$notes): array
+    {
+        $output = (new RemoteLogs($this->ssh))->run($connection, 'for r in docker podman; do command -v "$r" >/dev/null 2>&1 || continue; $r ps --format \'{{.Names}} {{.Image}}\' 2>&1 | sed "s/^/$r /"; done');
+        $found = [];
+
+        foreach (preg_split('/\R/', trim($output)) ?: [] as $line) {
+            if (preg_match('/^(docker|podman) ([A-Za-z0-9][A-Za-z0-9_.-]*)(?:,\S*)? (\S+)$/', trim($line), $m) === 1) {
+                $found[] = ['shell' => new ContainerShell($this->ssh, $m[1], $m[2]), 'apache' => preg_match('/httpd|apache/i', "$m[2] $m[3]") === 1];
+            } elseif (stripos($line, 'permission denied') !== false) {
+                $notes[] = 'The SSH user may not use ' . strtok($line, ' ') . ' (permission denied; it needs e.g. the docker group).';
+            }
+        }
+
+        usort($found, fn ($a, $b) => $b['apache'] <=> $a['apache']);
+
+        return array_slice(array_column($found, 'shell'), 0, 20);
+    }
+
+    /**
+     * Which log paths are really the container's stdout/stderr (e.g. the
+     * official httpd image's /proc/self/fd/2, or a symlink to /dev/stderr),
+     * read with `docker logs` instead; 'special' for anything else that
+     * isn't a regular file, which must not be read like one.
+     *
+     * @param list<string> $paths
+     * @return array<string, string>
+     */
+    private function streams(ContainerShell $shell, SSH2 $connection, array $paths): array
+    {
+        $streams = [];
+        $check = [];
+
+        foreach (array_unique($paths) as $path) {
+            $stream = ContainerShell::streamOf($path);
+
+            if ($stream !== null) {
+                $streams[$path] = $stream;
+            } else {
+                $check[] = $path;
+            }
+        }
+
+        if ($check === []) {
+            return $streams;
+        }
+
+        // One line per path: "L <target>" (symlink, one level), "F" (file), "S" (something else), "N" (missing).
+        $quoted = implode(' ', array_map('escapeshellarg', $check));
+        $lines = preg_split('/\R/', (new RemoteLogs($shell))->run($connection, "for p in $quoted; do if [ -L \"\$p\" ]; then echo \"L \$(readlink \"\$p\")\"; elif [ -f \"\$p\" ]; then echo F; elif [ -e \"\$p\" ]; then echo S; else echo N; fi; done")) ?: [];
+
+        foreach ($check as $i => $path) {
+            $line = trim((string) ($lines[$i] ?? ''));
+
+            if (str_starts_with($line, 'L ')) {
+                $target = substr($line, 2);
+                $target = str_starts_with($target, '/') ? $target : dirname($path) . "/$target";
+                $stream = ContainerShell::streamOf($target);
+
+                if ($stream !== null) {
+                    $streams[$path] = $stream;
+                }
+            } elseif ($line === 'S') {
+                $streams[$path] = 'special';
+            }
+        }
+
+        return $streams;
+    }
+
+    /**
+     * scan() without the control program: from the main configuration file,
+     * following its includes (ApacheConfigFiles). Without `-S`, ServerRoot
+     * comes from the file and the main error log from its ErrorLog.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws DomainException when the file can't be read
+     */
+    private function scanFile(SSH2 $connection, string $configFile): array
+    {
+        $read = (new ApacheConfigFiles($this->ssh, $this->config))->read($connection, $configFile);
+        $notes = ["Apache's control program isn't in the SSH user's PATH; read $configFile and its includes directly.", ...$read['notes']];
+        $runtime = ['server_root' => $read['server_root'], 'main_error_log' => null];
+
+        return ['binary' => null, 'config_file' => $configFile, 'version' => null, 'container' => null]
+            + $this->logsAndStatus($this->config->directives($read['text']), $runtime, $read['files'], $notes, $read['variables']);
+    }
+
+    /**
+     * Log files and the mod_status URL from the configuration's directives.
+     *
+     * @param list<array<string, mixed>> $directives
+     * @param array{server_root: ?string, main_error_log: ?string} $runtime
+     * @param list<string> $notes
+     * @param array<string, string> $environment variables from outside the configuration (Debian's envvars); Define wins
+     * @return array<string, mixed>
+     */
+    private function logsAndStatus(array $directives, array $runtime, int $fileCount, array $notes, array $environment = []): array
+    {
+        $variables = $this->variables($directives, $runtime['main_error_log']) + $environment;
         $resolve = function (string $path) use ($variables, $runtime, &$notes): ?string {
             if (str_starts_with($path, '|') || str_starts_with(strtolower($path), 'syslog')) {
                 $notes[] = "$path: piped or syslog logging can't be read as a file.";
@@ -246,10 +479,8 @@ class ApacheService
             : 'mod_status: not configured (' . ($statusLoaded ? 'no server-status location in the main server' : 'module not loaded') . '); worker figures come from the error log.';
 
         return [
-            'binary' => $binary,
-            'version' => $version,
             'server_root' => $runtime['server_root'],
-            'files' => count($files),
+            'files' => $fileCount,
             'error_logs' => $errorLogs,
             'access_logs' => $accessLogs,
             'status_url' => $statusUrl,
@@ -304,13 +535,13 @@ class ApacheService
     }
 
     /**
-     * @param array<string, array{inode: string, offset: int}> $state
+     * @param array<string, mixed> $state
      * @param array{error: list<string>, access: list<string>} $problems
      */
     private function importErrorLog(SSH2 $connection, Server $server, string $path, DateTimeZone $zone, array &$state, array &$problems): void
     {
         try {
-            $text = $this->remote()->readNew($connection, $path, $state);
+            $text = $this->readLog($connection, $path, $state);
         } catch (ServerConnectionException $e) {
             $problems['error'][] = $this->readProblem($path, $e);
 
@@ -336,13 +567,13 @@ class ApacheService
     }
 
     /**
-     * @param array<string, array{inode: string, offset: int}> $state
+     * @param array<string, mixed> $state
      * @param array{error: list<string>, access: list<string>} $problems
      */
     private function importAccessLog(SSH2 $connection, Server $server, string $path, array &$state, array &$problems): void
     {
         try {
-            $text = $this->remote()->readNew($connection, $path, $state);
+            $text = $this->readLog($connection, $path, $state);
         } catch (ServerConnectionException $e) {
             $problems['access'][] = $this->readProblem($path, $e);
 
@@ -440,12 +671,23 @@ class ApacheService
     }
 
     /**
+     * The version from the last start in the error log ("Apache/2.4.58 (Ubuntu) configured"), for servers
+     * read without the control program.
+     */
+    private function versionFromLog(Server $server): ?string
+    {
+        $message = ApacheLogEntry::query()->where('server_id', $server->id)->where('message', 'like', '%resuming normal operations%')->orderByDesc('logged_at')->value('message');
+
+        return is_string($message) && preg_match('#(Apache/[\d.]+(?: \([^)]*\))?)#', $message, $m) === 1 ? $m[1] : null;
+    }
+
+    /**
      * @param array<string, mixed> $config
      * @param array<string, string>|null $status
      */
     private function serverResult(Server $server, array $config, ?array $status, Carbon $now): CheckResult
     {
-        $version = $status['ServerVersion'] ?? $config['version'] ?? 'Apache';
+        $version = $status['ServerVersion'] ?? $config['version'] ?? $this->versionFromLog($server) ?? 'Apache';
         $window = $this->settings->integer(SettingsService::APACHE_RESTART_WARNING_MINUTES);
         $details = ['version' => $version, 'binary' => $config['binary'] ?? null];
 
@@ -557,6 +799,28 @@ class ApacheService
         }
 
         return new CheckResult('apache_workers', 'Workers', HealthStatus::Ok, 'Worker limit not reached in the last hour (from the error log; mod_status not available for live figures).');
+    }
+
+    /**
+     * What's new in a log: from the file, or from the container's output when the log goes there.
+     *
+     * @param array<string, mixed> $state
+     *
+     * @throws ServerConnectionException
+     */
+    private function readLog(SSH2 $connection, string $path, array &$state): string
+    {
+        $stream = $this->streams[$path] ?? null;
+
+        if ($stream === 'special') {
+            throw new ServerConnectionException("$path isn't a regular file");
+        }
+
+        if ($stream !== null && $this->shell instanceof ContainerShell) {
+            return $this->shell->readStream($connection, $stream, $path, $state);
+        }
+
+        return $this->remote()->readNew($connection, $path, $state);
     }
 
     private function readProblem(string $path, ServerConnectionException $e): string

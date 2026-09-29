@@ -95,6 +95,38 @@ class ApacheConfigParser
     }
 
     /**
+     * What Apache was built with, from `-V`: its version, default ServerRoot
+     * (HTTPD_ROOT), main configuration file and error log (relative to
+     * ServerRoot unless absolute). Apache 2.2 has no DUMP_INCLUDES, so this
+     * is where its configuration starts.
+     *
+     * @return array{version: ?string, root: ?string, config_file: ?string, error_log: ?string}
+     */
+    public function compiled(string $output): array
+    {
+        $define = fn (string $name) => preg_match('/-D ' . $name . '="([^"]+)"/', $output, $m) === 1 ? $m[1] : null;
+
+        return [
+            'version' => preg_match('/Server version:\s*(.+)/', $output, $m) === 1 ? trim($m[1]) : null,
+            'root' => $define('HTTPD_ROOT'),
+            'config_file' => $define('SERVER_CONFIG_FILE'),
+            'error_log' => $define('DEFAULT_ERRORLOG'),
+        ];
+    }
+
+    /**
+     * Whether `-S` worked: 2.4 prints ServerRoot and the main error log, 2.2
+     * only the virtual hosts and "Syntax OK".
+     */
+    public function answered(string $output): bool
+    {
+        $runtime = $this->runtime($output);
+
+        return $runtime['server_root'] !== null || $runtime['main_error_log'] !== null
+            || str_contains($output, 'VirtualHost configuration') || str_contains($output, 'Syntax OK');
+    }
+
+    /**
      * ServerRoot, the main error log and the listening addresses from `-S`.
      *
      * @return array{server_root: ?string, main_error_log: ?string}

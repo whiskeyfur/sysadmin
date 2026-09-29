@@ -71,8 +71,8 @@ class ServerService
     public const MODULE_FIELDS = [
         'ssh' => ['ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed'],
         'mysql' => ['mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca'],
-        // Apache is read over SSH: its form has no settings of its own (a new server brings SSH's).
-        'apache' => [],
+        // Apache is read over SSH (a new server brings SSH's settings).
+        'apache' => ['apache_config_file'],
     ];
 
     /**
@@ -173,6 +173,7 @@ class ServerService
             'mysql_tls' => $server->mysql_tls,
             'mysql_tls_ca' => $server->mysql_tls_ca ?? '',
             'apache_enabled' => $server->apache_enabled ? '1' : '',
+            'apache_config_file' => $server->apache_config_file ?? '',
         ];
     }
 
@@ -413,9 +414,16 @@ class ServerService
             $server->apache_config = null;
             $server->apache_scanned_at = null;
             $server->apache_import_state = null;
+            $server->apache_container = null;
         }
 
         $server->apache_enabled = $apacheEnabled;
+        $configFile = $apacheEnabled ? $this->apacheConfigFile($input['apache_config_file'] ?? null) : null;
+
+        if ($configFile !== $server->apache_config_file) {
+            $server->apache_config_file = $configFile;
+            $server->apache_scanned_at = null; // scan again with it
+        }
 
         $mysqlAccountId = filter_var($input['mysql_account_id'] ?? null, FILTER_VALIDATE_INT) ?: null;
         $mysqlUsername = '';
@@ -502,6 +510,26 @@ class ServerService
     /**
      * Whether a password is already stored for the database login the form chose.
      */
+    /**
+     * Apache's main configuration file as typed: an absolute path, or blank (null) to use the control program.
+     *
+     * @throws DomainException
+     */
+    private function apacheConfigFile(mixed $value): ?string
+    {
+        $path = trim((string) $value);
+
+        if ($path === '') {
+            return null;
+        }
+
+        if (!str_starts_with($path, '/') || strlen($path) > 500 || preg_match('/[\x00-\x1f\x7f]/', $path) === 1) {
+            throw new DomainException("Apache's configuration file must be a full path, e.g. /etc/httpd/conf/httpd.conf.");
+        }
+
+        return $path;
+    }
+
     private function mysqlPasswordKnown(Server $server, ?int $accountId, string $username): bool
     {
         if ($accountId !== null) {

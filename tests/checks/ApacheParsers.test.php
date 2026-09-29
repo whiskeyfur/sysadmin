@@ -1,7 +1,9 @@
 <?php
 
+use App\Services\ApacheConfigFiles;
 use App\Services\ApacheConfigParser;
 use App\Services\ApacheLogParser;
+use App\Services\SshService;
 
 test('configuration: directives with their virtual host and location, quotes and continued lines', function () {
     $directives = (new ApacheConfigParser())->directives(<<<'CONF'
@@ -65,4 +67,34 @@ test('access log: any format with the common core; other lines are counted as sk
         ->and(array_column($lines, 'bytes'))->toBe([5120, 0, 3998])
         ->and($lines[0]['time'])->toBe(strtotime('2026-09-29 22:12:01 UTC'))
         ->and($skipped)->toBe(1);
+});
+
+test('includes: files, whole directories and wildcards in any path component, in Apache\'s order', function () {
+    $files = new ApacheConfigFiles(new class () extends SshService {
+        public function __construct()
+        {
+        }
+    });
+
+    expect($files->matches('/etc/httpd/conf.d/*.conf', ['/etc/httpd/conf.d/b.conf', '/etc/httpd/conf.d/a.conf', '/etc/httpd/conf.d/README', '/etc/httpd/conf.d/.hidden.conf', '/etc/httpd/conf.d/sub/c.conf']))
+        ->toBe(['/etc/httpd/conf.d/a.conf', '/etc/httpd/conf.d/b.conf'])
+        ->and($files->matches('/etc/apache2/sites-enabled', ['/etc/apache2/sites-enabled/z.conf', '/etc/apache2/sites-enabled/a/b.conf']))
+        ->toBe(['/etc/apache2/sites-enabled/a/b.conf', '/etc/apache2/sites-enabled/z.conf'])
+        ->and($files->matches('/srv/*/apache/*.conf', ['/srv/one/apache/x.conf', '/srv/two/other/y.conf', '/srv/two/apache/y.txt']))
+        ->toBe(['/srv/one/apache/x.conf'])
+        ->and($files->matches('/etc/httpd/vhosts.d/*', ['/etc/httpd/vhosts.d/site/a.conf']))
+        ->toBe(['/etc/httpd/vhosts.d/site/a.conf']);
+});
+
+test('Debian envvars and ServerRoot, as read without the control program', function () {
+    $files = new ApacheConfigFiles(new class () extends SshService {
+        public function __construct()
+        {
+        }
+    });
+    $envvars = "unset HOME\nif [ \"\${APACHE_CONFDIR##/etc/apache2-}\" != \"\${APACHE_CONFDIR}\" ] ; then\n    SUFFIX=\"-\${APACHE_CONFDIR##/etc/apache2-}\"\nfi\nexport APACHE_RUN_USER=www-data\nexport APACHE_LOG_DIR=/var/log/apache2\$SUFFIX\nexport APACHE_LOCK_DIR=\"/var/lock/apache2\${SUFFIX}\" # lock\n";
+
+    expect($files->exports($envvars))->toBe(['APACHE_RUN_USER' => 'www-data', 'APACHE_LOG_DIR' => '/var/log/apache2', 'APACHE_LOCK_DIR' => '/var/lock/apache2'])
+        ->and($files->serverRoot("# ServerRoot \"/etc/apache2\"\nListen 80\n"))->toBeNull()
+        ->and($files->serverRoot("ServerRoot \"/etc/httpd/\"\n"))->toBe('/etc/httpd');
 });

@@ -29,8 +29,9 @@ class LineChart
     /**
      * @param array<string, list<array{0: int, 1: float}>> $series name => points
      * @param float|null $max a fixed top of the scale (e.g. 100 for percentages); null to fit the data
+     * @param float $min the bottom of the scale; raise it for values that sit in a narrow band (e.g. a 99% hit ratio)
      */
-    public static function render(string $title, array $series, int $from, int $to, string $unit = '', ?float $max = null): string
+    public static function render(string $title, array $series, int $from, int $to, string $unit = '', ?float $max = null, float $min = 0): string
     {
         $values = array_merge([], ...array_map(fn (array $points) => array_column($points, 1), array_values($series)));
 
@@ -39,12 +40,12 @@ class LineChart
         }
 
         $top = $max ?? self::niceCeiling(max($values) * 1.1);
-        $top = $top > 0 ? $top : 1;
+        $top = $top > $min ? $top : $min + 1;
         $span = max(1, $to - $from);
         $plotWidth = self::WIDTH - self::LEFT - self::RIGHT;
         $plotHeight = self::HEIGHT - self::TOP - self::BOTTOM;
         $x = fn (int $time) => self::LEFT + ($time - $from) / $span * $plotWidth;
-        $y = fn (float $value) => self::TOP + (1 - min($value, $top) / $top) * $plotHeight;
+        $y = fn (float $value) => self::TOP + (1 - (max($min, min($value, $top)) - $min) / ($top - $min)) * $plotHeight;
         $e = fn (string $text) => htmlspecialchars($text, ENT_QUOTES);
 
         $svg = [sprintf(
@@ -56,7 +57,7 @@ class LineChart
 
         // Horizontal grid lines with their values.
         for ($i = 0; $i <= 4; $i++) {
-            $value = $top * $i / 4;
+            $value = $min + ($top - $min) * $i / 4;
             $lineY = round($y($value), 1);
             $svg[] = sprintf('<line x1="%d" x2="%d" y1="%s" y2="%s" class="grid"/>', self::LEFT, self::WIDTH - self::RIGHT, $lineY, $lineY);
             $svg[] = sprintf('<text x="%d" y="%s" class="axis" text-anchor="end" dominant-baseline="middle">%s</text>', self::LEFT - 6, $lineY, $e(self::number($value) . $unit));

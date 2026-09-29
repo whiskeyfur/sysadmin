@@ -6,6 +6,7 @@ use App\DTOs\AuthContext;
 use App\Exceptions\InvalidCredentialsException;
 use App\Exceptions\TooManyAttemptsException;
 use App\Models\Account;
+use App\Models\Server;
 use App\Services\AccountService;
 use App\Services\ServerService;
 use DomainException;
@@ -47,6 +48,41 @@ class AccountController extends Controller
     public function mariadb()
     {
         $this->renderList(Account::SERVICE_MYSQL);
+    }
+
+    /**
+     * Import a MariaDB server's users ('user'@'%' only) as database accounts, without passwords.
+     */
+    public function importUsers()
+    {
+        $server = Server::query()->find((int) $this->request->get('server_id'));
+
+        if (!$server instanceof Server) {
+            $this->response->withFlash('error', 'Choose a MariaDB server to import users from.')->redirect(self::LISTS[Account::SERVICE_MYSQL]);
+
+            return;
+        }
+
+        try {
+            $result = $this->accounts->importMysqlUsers($this->authContext()->user, $server);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect(self::LISTS[Account::SERVICE_MYSQL]);
+
+            return;
+        }
+
+        $parts = [count($result['added']) === 0 ? 'No new users' : 'Imported ' . implode(', ', $result['added'])];
+
+        if ($result['existing'] !== []) {
+            $parts[] = 'already tracked: ' . implode(', ', $result['existing']);
+        }
+
+        if ($result['ignored'] > 0) {
+            $parts[] = "{$result['ignored']} ignored (roles, or a host other than '%')";
+        }
+
+        $this->response->withFlash('notice', "From {$server->name}: " . implode('; ', $parts) . '.' . ($result['added'] !== [] ? ' They have no password here, so they can\'t be used to log in until you record one.' : ''))
+            ->redirect(self::LISTS[Account::SERVICE_MYSQL]);
     }
 
     /**
@@ -194,6 +230,7 @@ class AccountController extends Controller
             'accounts' => $this->accounts->all($service),
             'area' => $service,
             'service' => $this->accounts,
+            'mysqlServers' => $service === Account::SERVICE_MYSQL ? array_values(array_filter((new ServerService())->all(), fn (Server $s) => $s->mysql_enabled)) : [],
             'notice' => $this->request->flash('notice'),
             'error' => $this->request->flash('error'),
         ]);
@@ -201,7 +238,7 @@ class AccountController extends Controller
 
     private function renderShow(Account $account, ?string $revealed = null, ?string $notice = null, ?string $error = null, int $status = 200): void
     {
-        $account->load(['servers', 'homeServer']);
+        $account->load(['servers', 'homeServer', 'originServer', 'originUser']);
 
         $this->response->view('accounts.show', [
             'auth' => $this->authContext(),

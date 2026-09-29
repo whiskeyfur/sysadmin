@@ -276,3 +276,75 @@ test('the server form offers only accounts of its own service', function () {
     expect(collect($this->accounts->selectableFor($web, Account::SERVICE_SSH))->pluck('id')->all())->toContain($sshLdap->id)->not->toContain($dbShared->id)
         ->and(collect($this->accounts->selectableFor(null, Account::SERVICE_MYSQL))->pluck('id')->all())->toBe([$dbShared->id]);
 });
+
+test('importing MariaDB users takes only name@%, without passwords, and records where each came from', function () {
+    $db = $this->servers->create($this->admin, [
+        'name' => 'db', 'hostname' => 'db.example.com', 'ssh_enabled' => '', 'mysql_enabled' => '1', 'mysql_username' => 'mon', 'mysql_password' => 'pw!',
+    ]);
+    $importer = new class ($this->cipher, $this->clock) extends AccountService {
+        public function __construct($cipher, $clock)
+        {
+            parent::__construct($cipher, null, new SettingsService(), $clock);
+        }
+
+        protected function mysqlUsers(Server $server): array
+        {
+            return [
+                ['name' => 'app', 'host' => '%', 'plugin' => 'mysql_native_password', 'role' => false],
+                ['name' => 'app', 'host' => 'localhost', 'plugin' => 'mysql_native_password', 'role' => false],
+                ['name' => 'root', 'host' => 'localhost', 'plugin' => 'unix_socket', 'role' => false],
+                ['name' => 'report', 'host' => '%', 'plugin' => '', 'role' => false],
+                ['name' => 'PUBLIC', 'host' => '', 'plugin' => '', 'role' => true],
+                ['name' => '', 'host' => '%', 'plugin' => '', 'role' => false],
+                ['name' => 'mon', 'host' => '%', 'plugin' => '', 'role' => false], // already tracked from the server's settings
+            ];
+        }
+    };
+
+    $result = $importer->importMysqlUsers($this->admin, $db);
+    $app = Account::query()->where('username', 'app')->first();
+
+    expect($result)->toBe(['added' => ['app', 'report'], 'existing' => ['mon'], 'ignored' => 4])
+        ->and($app->service)->toBe(Account::SERVICE_MYSQL)
+        ->and($app->server_id)->toBe($db->id)
+        ->and($app->password)->toBeNull()
+        ->and($app->canLogIn())->toBeFalse()
+        ->and($app->origin)->toBe(Account::ORIGIN_IMPORT)
+        ->and($app->origin_detail)->toBe("'app'@'%', mysql_native_password")
+        ->and($app->originLabel())->toContain("Imported from db's MariaDB users ('app'@'%', mysql_native_password) by admin")
+        ->and($app->servers)->toHaveCount(0)
+        ->and(Account::query()->find($db->mysql_account_id)->origin)->toBe(Account::ORIGIN_SERVER)
+        // Importing again adds nothing.
+        ->and($importer->importMysqlUsers($this->admin, $db)['added'])->toBe([]);
+});
+
+test('an imported account can\'t log in until its password is recorded', function () {
+    $db = $this->servers->create($this->admin, [
+        'name' => 'db', 'hostname' => 'db.example.com', 'ssh_enabled' => '', 'mysql_enabled' => '1', 'mysql_username' => 'mon', 'mysql_password' => 'pw!',
+    ]);
+    $imported = Account::query()->create(['username' => 'app', 'type' => 'local', 'server_id' => $db->id, 'service' => 'mysql', 'origin' => Account::ORIGIN_IMPORT, 'origin_server_id' => $db->id]);
+    $settings = ['name' => 'db', 'hostname' => 'db.example.com', 'ssh_enabled' => '', 'mysql_enabled' => '1', 'mysql_tls' => 'off'];
+
+    expect($imported->usableFor($db, Account::SERVICE_MYSQL))->toBeFalse()
+        ->and(fn () => $this->servers->update($this->admin, $db, $settings + ['mysql_account_id' => (string) $imported->id, 'mysql_password' => '']))->toThrow(DomainException::class, 'imported without a password')
+        // Naming it on the server form without a password is refused too ...
+        ->and(fn () => $this->servers->update($this->admin, $db->fresh(), $settings + ['mysql_username' => 'app', 'mysql_password' => '']))->toThrow(DomainException::class, 'none is stored');
+
+    // ... and with one, the password is recorded and the account can log in.
+    $this->servers->update($this->admin, $db->fresh(), $settings + ['mysql_username' => 'app', 'mysql_password' => 'app-pw!']);
+
+    expect($db->fresh()->mysql_account_id)->toBe($imported->id)
+        ->and($imported->fresh()->canLogIn())->toBeTrue()
+        ->and($this->servers->mysqlPassword($db->fresh()))->toBe('app-pw!');
+});
+
+test('accounts added by hand record who added them; only admins import', function () {
+    $shared = $this->accounts->create($this->admin, ['username' => 'dbmon', 'type' => 'shared', 'service' => 'mysql']);
+    $db = $this->servers->create($this->admin, ['name' => 'web2', 'hostname' => 'web2.example.com', 'ssh_enabled' => '']);
+
+    expect($shared->origin)->toBe(Account::ORIGIN_MANUAL)
+        ->and($shared->origin_user_id)->toBe($this->admin->id)
+        ->and($shared->originLabel())->toStartWith('Added by admin')
+        ->and(fn () => $this->accounts->importMysqlUsers(new User(['role' => User::ROLE_USER]), $db))->toThrow(AuthorizationException::class)
+        ->and(fn () => $this->accounts->importMysqlUsers($this->admin, $db))->toThrow(DomainException::class, 'no MariaDB');
+});

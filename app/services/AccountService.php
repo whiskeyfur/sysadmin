@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\LoginStatus;
 use App\Exceptions\AuthorizationException;
+use App\Exceptions\ServerConnectionException;
 use App\Exceptions\InvalidCredentialsException;
 use App\Exceptions\TooManyAttemptsException;
 use App\Models\Account;
@@ -45,6 +46,7 @@ class AccountService
         private ?AuthService $auth = null,
         private readonly SettingsService $settings = new SettingsService(),
         private readonly ClockInterface $clock = new SystemClock(),
+        private ?MysqlService $mysql = null,
     ) {
     }
 
@@ -54,7 +56,7 @@ class AccountService
      */
     public function all(?string $service = null): array
     {
-        return Account::query()->with(['servers', 'homeServer'])->get()
+        return Account::query()->with(['servers', 'homeServer', 'originServer'])->get()
             ->filter(fn (Account $a) => $service === null || $a->serviceName() === $service)
             ->sortBy(fn (Account $a) => [$this->statusRank($a), strtolower($a->username)])
             ->values()
@@ -86,7 +88,7 @@ class AccountService
     public function create(User $admin, array $input): Account
     {
         $this->requireAdmin($admin);
-        $account = new Account();
+        $account = new Account(['origin' => Account::ORIGIN_MANUAL, 'origin_user_id' => $admin->id]);
         $this->fill($account, $input);
         $password = (string) ($input['password'] ?? '');
 
@@ -312,6 +314,91 @@ class AccountService
     }
 
     /**
+     * Track a MariaDB server's user accounts as local database accounts of
+     * that server. Only accounts for any host ('user'@'%') are imported;
+     * roles and host-specific accounts are left out. No password is set:
+     * an imported account can't be used to log in until an admin records
+     * one (Account::canLogIn()). Users already tracked are left alone.
+     *
+     * @return array{added: list<string>, existing: list<string>, ignored: int}
+     *
+     * @throws DomainException when the server has no MariaDB monitoring or its users can't be read
+     */
+    public function importMysqlUsers(User $admin, Server $server): array
+    {
+        $this->requireAdmin($admin);
+
+        if (!$server->mysql_enabled) {
+            throw new DomainException("{$server->name} has no MariaDB monitoring to import users from.");
+        }
+
+        $result = ['added' => [], 'existing' => [], 'ignored' => 0];
+
+        foreach ($this->mysqlUsers($server) as $user) {
+            if ($user['host'] !== '%' || $user['role'] || $user['name'] === '') {
+                $result['ignored']++;
+
+                continue;
+            }
+
+            $tracked = Account::query()->where('type', Account::TYPE_LOCAL)->where('server_id', $server->id)->where('username', $user['name'])->get()
+                ->contains(fn (Account $a) => $a->serviceName() === Account::SERVICE_MYSQL);
+
+            if ($tracked) {
+                $result['existing'][] = $user['name'];
+
+                continue;
+            }
+
+            $account = Account::query()->create([
+                'username' => $user['name'],
+                'type' => Account::TYPE_LOCAL,
+                'server_id' => $server->id,
+                'service' => Account::SERVICE_MYSQL,
+                'origin' => Account::ORIGIN_IMPORT,
+                'origin_server_id' => $server->id,
+                'origin_user_id' => $admin->id,
+                'origin_detail' => "'{$user['name']}'@'%'" . ($user['plugin'] !== '' ? ", {$user['plugin']}" : ''),
+            ]);
+            // Not linked as "used on" the server: nothing logs in with it yet.
+            $result['added'][] = $user['name'];
+        }
+
+        return $result;
+    }
+
+    /**
+     * The server's MariaDB (or MySQL) accounts.
+     *
+     * @return list<array{name: string, host: string, plugin: string, role: bool}>
+     *
+     * @throws DomainException
+     */
+    protected function mysqlUsers(Server $server): array
+    {
+        $this->mysql ??= new MysqlService(new ServerService($this->cipher));
+
+        try {
+            $pdo = $this->mysql->connect($server);
+            // SELECT * copes with MariaDB (is_role) and MySQL (no is_role) alike.
+            $rows = $pdo->query('SELECT * FROM mysql.user')?->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        } catch (ServerConnectionException $e) {
+            throw new DomainException("Couldn't connect to {$server->name}'s MariaDB: " . $e->getMessage());
+        } catch (\PDOException $e) {
+            throw new DomainException(in_array((int) ($e->errorInfo[1] ?? 0), [1142, 1044], true)
+                ? "The monitoring user can't read mysql.user on {$server->name}; it needs SELECT on it (the usual GRANT SELECT ON *.* covers it)."
+                : "Couldn't read {$server->name}'s users: " . $e->getMessage());
+        }
+
+        return array_values(array_map(fn (array $row) => [
+            'name' => (string) ($row['User'] ?? $row['user'] ?? ''),
+            'host' => (string) ($row['Host'] ?? $row['host'] ?? ''),
+            'plugin' => (string) ($row['plugin'] ?? ''),
+            'role' => strtoupper((string) ($row['is_role'] ?? 'N')) === 'Y',
+        ], $rows));
+    }
+
+    /**
      * @return list<PasswordReveal>
      */
     public function reveals(Account $account, int $limit = 20): array
@@ -418,7 +505,10 @@ class AccountService
             ->where('username', $username)
             ->get();
         $account = $accounts->first(fn (Account $a) => $a->localService() === $service)
-            ?? Account::query()->create(['username' => $username, 'type' => Account::TYPE_LOCAL, 'server_id' => $server->id, 'service' => $service]);
+            ?? Account::query()->create([
+                'username' => $username, 'type' => Account::TYPE_LOCAL, 'server_id' => $server->id, 'service' => $service,
+                'origin' => Account::ORIGIN_SERVER, 'origin_server_id' => $server->id,
+            ]);
 
         return $this->link($server, $account, $service);
     }

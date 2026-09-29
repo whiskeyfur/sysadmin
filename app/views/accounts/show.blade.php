@@ -21,7 +21,13 @@
 
         <table>
             <tbody>
-                <tr><th>Password</th><td>{{ $account->hasPassword() ? 'Stored (encrypted)' : 'None recorded' }}</td></tr>
+                <tr><th>Origin</th><td>{{ $account->originLabel() }}</td></tr>
+                <tr><th>Password</th><td>
+                    {{ $account->hasPassword() ? 'Stored (encrypted)' : 'None recorded' }}
+                    @if (!$account->canLogIn())
+                        <div class="hint">Imported without a password, so it can't be used to log into a server until you record one below.</div>
+                    @endif
+                </td></tr>
                 <tr><th>Last reset</th><td>{{ \App\Utils\LocalTime::format($account->password_changed_at, 'Y-m-d') ?: '—' }}</td></tr>
                 <tr><th>Rotation</th><td>{{ $account->rotation_days ? 'Every ' . $account->rotation_days . ' days' : 'None' }}</td></tr>
                 <tr><th>Due</th><td>@include('accounts.due', ['status' => $service->status($account)])</td></tr>

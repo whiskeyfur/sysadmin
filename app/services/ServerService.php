@@ -402,6 +402,10 @@ class ServerService
             if ($mysqlAccountId !== null) {
                 $chosen = Account::query()->find($mysqlAccountId);
 
+                if ($chosen instanceof Account && !$chosen->canLogIn()) {
+                    throw new DomainException("{$chosen->username} was imported without a password. Record its password under MariaDB › Accounts before using it to log in.");
+                }
+
                 if (!$chosen instanceof Account || !$chosen->usableFor($server, Account::SERVICE_MYSQL)) {
                     throw new DomainException('Choose a database account this server can use.');
                 }

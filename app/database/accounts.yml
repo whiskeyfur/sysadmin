@@ -7,6 +7,11 @@
 #   admins only, and every reveal is logged in password_reveals.
 # password_changed_at: when the password was last reset (as recorded here).
 # rotation_days: change every N days; null = no rotation. Due = changed + N.
+# origin: where the account came from: "manual" (added by an admin: origin_user_id), "server" (created from a
+#   server's SSH or database login: origin_server_id) or "import" (imported from a MariaDB server's users:
+#   origin_server_id, origin_user_id who imported it, origin_detail the MariaDB account). Null for accounts from
+#   before origins were recorded. Imported accounts have no password until an admin records one, and can't be used
+#   to log in until then (Account::canLogIn()).
 columns:
   username: string
   type: string
@@ -28,5 +33,17 @@ columns:
     type: integer
     nullable: true
   notes:
+    type: text
+    nullable: true
+  origin:
+    type: string
+    nullable: true
+  origin_server_id:
+    type: integer
+    nullable: true
+  origin_user_id:
+    type: integer
+    nullable: true
+  origin_detail:
     type: text
     nullable: true

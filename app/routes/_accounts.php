@@ -8,6 +8,7 @@ app()->group('/admin/accounts', ['middleware' => RequireAdmin::class, function (
     app()->get('/', 'AccountController@home');
     app()->get('/ssh', 'AccountController@ssh');
     app()->get('/mariadb', 'AccountController@mariadb');
+    app()->post('/mariadb/import', 'AccountController@importUsers');
     app()->get('/new', 'AccountController@create');
     app()->post('/', 'AccountController@store');
     app()->get('/{id}', 'AccountController@show');

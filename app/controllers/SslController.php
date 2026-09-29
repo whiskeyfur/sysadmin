@@ -36,7 +36,6 @@ class SslController extends Controller
             'auth' => $auth,
             'certificates' => $this->ssl->certificates(),
             'warningDays' => (new SettingsService())->sslWarningDays(),
-            'servers' => $auth->isAdmin() ? (new ServerService())->all() : [],
             'notice' => $this->request->flash('notice'),
             'error' => $this->request->flash('error'),
         ]);
@@ -51,6 +50,14 @@ class SslController extends Controller
         }
     }
 
+    /**
+     * The "Add a certificate" page (SSL › Add).
+     */
+    public function create()
+    {
+        $this->renderCreate();
+    }
+
     public function store()
     {
         try {
@@ -61,7 +68,12 @@ class SslController extends Controller
             $added = $this->ssl->addNamesFromCertificate($this->authContext()->user, $certificate);
             $checked = $this->ssl->checkCertificate($this->authContext()->user, $certificate);
         } catch (DomainException $e) {
-            $this->response->withFlash('error', $e->getMessage())->redirect('/ssl');
+            $this->renderCreate($e->getMessage(), [
+                'name' => $this->request->get('name', false),
+                'hostnames' => $this->request->get('hostnames', false),
+                'server_id' => $this->request->get('server_id', false),
+                'port' => $this->request->get('port', false),
+            ]);
 
             return;
         }
@@ -191,6 +203,19 @@ class SslController extends Controller
         }
 
         $this->response->withFlash('notice', $count === 0 ? 'No certificates are attached to a server yet.' : "Checked $count certificate/server pair(s).")->redirect('/ssl');
+    }
+
+    /**
+     * @param array<string, mixed> $old the submitted values, after an error
+     */
+    private function renderCreate(?string $error = null, array $old = []): void
+    {
+        $this->response->view('ssl.create', [
+            'auth' => $this->authContext(),
+            'servers' => (new ServerService())->all(),
+            'error' => $error,
+            'old' => $old,
+        ], $error === null ? 200 : 422);
     }
 
     private function renderShow(SslCertificate $certificate): void

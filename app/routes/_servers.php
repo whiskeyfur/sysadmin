@@ -24,6 +24,7 @@ app()->post('/ssl/{id}/check', ['middleware' => Authenticate::class, 'SslControl
 
 // Managing certificates and where they're served: admins.
 app()->group('/admin/ssl', ['middleware' => RequireAdmin::class, function () {
+    app()->get('/new', 'SslController@create');
     app()->post('/', 'SslController@store');
     app()->post('/{id}', 'SslController@update');
     app()->post('/{id}/delete', 'SslController@delete');
@@ -31,6 +32,10 @@ app()->group('/admin/ssl', ['middleware' => RequireAdmin::class, function () {
     app()->post('/{id}/bindings', 'SslController@addBinding');
     app()->post('/{id}/bindings/{bindingId}/delete', 'SslController@removeBinding');
 }]);
+
+// Each module's Add menu item: that module's form for a new server (or one that lacks it).
+app()->get('/admin/ssh/new', ['middleware' => RequireAdmin::class, 'ServerConfigController@createSsh']);
+app()->get('/admin/mariadb/new', ['middleware' => RequireAdmin::class, 'ServerConfigController@createMariadb']);
 
 // Adding, editing and deleting servers, and SSH setup: admins, from the monitoring pages.
 app()->group('/admin/servers', ['middleware' => RequireAdmin::class, function () {

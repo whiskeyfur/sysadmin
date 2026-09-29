@@ -15,7 +15,7 @@
         <div class="actions" style="margin-top: 0; justify-content: space-between">
             <h1>{{ $title }}</h1>
             @if ($auth->isAdmin())
-                <a class="button" href="/admin/servers/new?kind={{ $kind }}&amp;back=/{{ $kind === 'ssh' ? 'ssh' : 'mariadb' }}">Add server</a>
+                <a class="button" href="/admin/{{ $kind === 'ssh' ? 'ssh' : 'mariadb' }}/new">Add server</a>
             @endif
         </div>
         @if ($kind === 'ssh')

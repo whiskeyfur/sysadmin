@@ -14,10 +14,15 @@
     <div class="card">
         <div class="actions" style="margin-top: 0; justify-content: space-between">
             <h1>SSL certificates</h1>
-            <form method="post" action="/ssl/check-all">
-                @csrf
-                <button type="submit">Check all now</button>
-            </form>
+            <div class="row-actions">
+                <form method="post" action="/ssl/check-all">
+                    @csrf
+                    <button type="submit">Check all now</button>
+                </form>
+                @if ($auth->isAdmin())
+                    <a class="button" href="/admin/ssl/new">Add certificate</a>
+                @endif
+            </div>
         </div>
         <p class="muted">Each certificate is checked on every server that serves it: the app connects to the server's own address and port and asks for the certificate's first hostname, then checks it like a browser would (trusted issuer, matching names, not expired). Invalid certificates are critical; valid ones are a warning once they expire within {{ $warningDays }} days or don't cover all their listed hostnames.
             @if ($auth->isAdmin())
@@ -26,7 +31,7 @@
         </p>
 
         @if (count($certificates) === 0)
-            <p class="muted">No certificates yet.{{ $auth->isAdmin() ? ' Add one below.' : '' }}</p>
+            <p class="muted">No certificates yet.@if ($auth->isAdmin()) <a href="/admin/ssl/new">Add one</a>.@endif</p>
         @else
             <div class="table-wrap">
             <table>
@@ -83,36 +88,6 @@
         @endif
     </div>
 
-    @if ($auth->isAdmin())
-        <div class="card">
-            <h2>Add a certificate</h2>
-            <form method="post" action="/admin/ssl">
-                @csrf
-                <div class="grid-2">
-                    <div>
-                        <label for="name">Name</label>
-                        <input type="text" id="name" name="name" placeholder="e.g. shop.example.com or Shop wildcard 2026" maxlength="100" required>
-                    </div>
-                    <div>
-                        <label for="port">Port</label>
-                        <input type="text" id="port" name="port" value="443" inputmode="numeric" required>
-                    </div>
-                </div>
-                <label for="hostnames">Hostnames it covers</label>
-                <textarea id="hostnames" name="hostnames" rows="3" spellcheck="false" placeholder="shop.example.com&#10;www.shop.example.com&#10;*.shop.example.com"></textarea>
-                <p class="hint">One per line. The first is sent to the server to ask for this certificate (SNI), so it must be a real hostname, not a wildcard. Leave empty to use the name as the hostname. Either way, the other hostnames the served certificate lists (SAN) are added automatically.</p>
-                <label for="server_id">Served on</label>
-                <select id="server_id" name="server_id">
-                    <option value="">Directly, via DNS (not on a tracked server)</option>
-                    @foreach ($servers as $server)
-                        <option value="{{ $server->id }}">{{ $server->name }} ({{ $server->hostname }})</option>
-                    @endforeach
-                </select>
-                <p class="hint">More servers and ports can be added on the certificate's page.</p>
-                <div class="actions"><button type="submit">Add and check</button></div>
-            </form>
-        </div>
-    @endif
     <script>
         // Hostnames fold out in a row under their certificate.
         document.querySelectorAll('button.fold').forEach(function (button) {

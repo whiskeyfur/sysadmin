@@ -118,11 +118,11 @@
         <nav class="primary" aria-label="Monitoring">
             <a class="brand" href="/">sys</a>
             @isset($auth)
-                {{-- Each area is a menu: reports and its test page (everyone), then accounts and settings (admins). --}}
+                {{-- Each area is a menu: reports and its test page (everyone), then add, accounts and settings (admins). --}}
                 @php($menus = [
-                    'SSL' => ['/ssl/reports' => 'Reports', '/ssl' => 'Test', '/admin/settings/ssl' => 'Settings'],
-                    'SSH' => ['/ssh/reports' => 'Reports', '/ssh' => 'Test', '/admin/accounts/ssh' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
-                    'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/admin/accounts/mariadb' => 'Accounts', '/admin/settings/mariadb' => 'Settings'],
+                    'SSL' => ['/ssl/reports' => 'Reports', '/ssl' => 'Test', '/admin/ssl/new' => 'Add', '/admin/settings/ssl' => 'Settings'],
+                    'SSH' => ['/ssh/reports' => 'Reports', '/ssh' => 'Test', '/admin/ssh/new' => 'Add', '/admin/accounts/ssh' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
+                    'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/admin/settings/mariadb' => 'Settings'],
                 ])
                 @foreach ($menus as $menu => $items)
                     {{-- The most specific item under the current page: /ssh/reports is Reports, not also Test (/ssh). --}}

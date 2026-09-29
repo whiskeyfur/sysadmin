@@ -51,15 +51,37 @@ class ServerConfigController extends Controller
      */
     public function create()
     {
-        $kind = $this->kind();
+        $this->renderCreate($this->kind());
+    }
 
+    /**
+     * SSH › Add.
+     */
+    public function createSsh()
+    {
+        $this->renderCreate('ssh', '/ssh');
+    }
+
+    /**
+     * MariaDB › Add.
+     */
+    public function createMariadb()
+    {
+        $this->renderCreate('mysql', '/mariadb');
+    }
+
+    /**
+     * @param 'ssh'|'mysql'|null $kind
+     */
+    private function renderCreate(?string $kind, ?string $back = null): void
+    {
         $this->renderForm(new Server([
             'ssh_enabled' => $kind !== 'mysql',
             'mysql_enabled' => $kind === 'mysql',
             'ssh_port' => 22,
             'mysql_port' => 3306,
             'mysql_tls' => Server::TLS_VERIFY,
-        ]), kind: $kind);
+        ]), kind: $kind, back: $back);
     }
 
     public function store()
@@ -206,7 +228,7 @@ class ServerConfigController extends Controller
     /**
      * @param 'ssh'|'mysql'|null $kind one module's form, or null for the full form
      */
-    private function renderForm(Server $server, ?string $error = null, ?string $kind = null): void
+    private function renderForm(Server $server, ?string $error = null, ?string $kind = null, ?string $back = null): void
     {
         $this->response->view('servers.form', [
             'auth' => $this->authContext(),
@@ -216,7 +238,7 @@ class ServerConfigController extends Controller
             'candidates' => $kind !== null && !$server->exists
                 ? array_values(array_filter($this->servers->all(), fn (Server $s) => !($kind === 'ssh' ? $s->ssh_enabled : $s->mysql_enabled)))
                 : [],
-            'back' => $this->back(),
+            'back' => $back ?? $this->back(),
             'caCertificates' => $server->mysql_tls_ca ? (new CaCertificateService())->describe($server->mysql_tls_ca) : [],
             'bindings' => $server->exists ? (new SslMonitorService())->bindingsFor($server) : [],
             'sharedAccounts' => $this->sharedAccounts($server, Account::SERVICE_SSH),

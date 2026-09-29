@@ -139,10 +139,12 @@ class ServerConfigController extends Controller
             return;
         }
 
-        $fingerprint = $this->request->get('fingerprint', false);
+        // The fingerprint shown on the page counts only with a choice of how it was checked.
+        $check = $this->request->get('host_key_check', false);
+        $fingerprint = in_array($check, ['manual', 'login'], true) ? $this->request->get('fingerprint', false) : null;
         $password = $server->ssh_password_allowed ? (string) $this->request->get('password', false) : null;
 
-        $result = (new SshSetupService())->setUp($this->authContext()->user, $server, is_string($fingerprint) ? $fingerprint : null, $password);
+        $result = (new SshSetupService())->setUp($this->authContext()->user, $server, is_string($fingerprint) ? $fingerprint : null, $password, $check === 'login');
         $this->renderSetup($server->fresh() ?? $server, $result);
     }
 

@@ -30,9 +30,39 @@ beforeEach(function () {
         public int $keyAttempts = 0;
         public array $commands = [];
         public ServerPlatform $platform = ServerPlatform::Unix;
+        /** @var list<HostKey>|null the host key files on the server; null means the presented key */
+        public ?array $serverKeys = null;
+        public int $unverifiedLogins = 0;
 
         public function __construct(private HostKey $key)
         {
+        }
+
+        public function connectForVerification(Server $server, HostKey $expected, ?string $password = null): SSH2
+        {
+            if (!$expected->sameKeyAs($this->key)) {
+                throw new ServerConnectionException('different key');
+            }
+
+            $this->unverifiedLogins++;
+
+            return $password === null ? $this->connectWithKeyUnchecked() : $this->connectWithPassword($server, $password);
+        }
+
+        public function hostKeysOnServer(SSH2 $ssh, ServerPlatform $platform): array
+        {
+            return $this->serverKeys ?? [$this->key];
+        }
+
+        private function connectWithKeyUnchecked(): SSH2
+        {
+            $this->keyAttempts++;
+
+            if (!(array_shift($this->keyResults) ?? false)) {
+                throw new ServerConnectionException('key refused');
+            }
+
+            return $this->fakeConnection();
         }
 
         public function presentedHostKey(Server $server): HostKey
@@ -332,3 +362,60 @@ test('a stored password is never tried when password login is off, or when there
     expect($result->ok)->toBeFalse()
         ->and($this->ssh->passwordAttempts)->toBe(0);
 })->with([[false, true], [true, false]]);
+
+test('verifying through the account with the app key trusts the key without any password', function () {
+    $server = ($this->makeServer)(true);
+    $this->ssh->keyResults = [true];
+    $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), 'pw', true);
+
+    expect($result->ok)->toBeTrue()
+        ->and($this->ssh->passwordAttempts)->toBe(0)
+        ->and($server->fresh()->ssh_host_key)->toBe($this->hostKey->toString())
+        ->and($server->fresh()->ssh_auth)->toBe(Server::SSH_AUTH_KEY);
+});
+
+test('verifying through the account with the stored password trusts the key and installs the app key in the same login', function () {
+    $server = ($this->makeServer)(true);
+    $this->servers->storeSshPassword($server, 'stored-pw!');
+    $this->ssh->keyResults = [false, true];
+    $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), '', true);
+
+    expect($result->ok)->toBeTrue()
+        ->and($this->ssh->passwordsTried)->toBe(['stored-pw!'])
+        ->and($this->ssh->commands[0])->toContain($this->keys->publicKey())
+        ->and($server->fresh()->ssh_host_key)->toBe($this->hostKey->toString())
+        ->and($server->fresh()->ssh_auth)->toBe(Server::SSH_AUTH_KEY);
+});
+
+test('a presented key missing from the server\'s own files is not trusted, and a used password is flagged', function () {
+    $server = ($this->makeServer)(true);
+    $this->ssh->serverKeys = [new HostKey('ssh-ed25519', base64_encode(random_bytes(51)))];
+    $this->ssh->keyResults = [false];
+    $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), 'typed-pw!', true);
+
+    expect($result->ok)->toBeFalse()
+        ->and($server->fresh()->ssh_host_key)->toBeNull()
+        ->and($this->ssh->commands)->toBe([])
+        ->and($this->servers->sshPassword($server->fresh()))->toBeNull()
+        ->and(end($result->steps)['message'])->toContain('intercepting')->toContain('change it');
+});
+
+test('verifying through the account never tries a password when password login is off', function () {
+    $server = ($this->makeServer)(false);
+    $this->ssh->keyResults = [false];
+    $result = $this->setup->setUp($this->admin, $server, $this->hostKey->fingerprint(), 'pw', true);
+
+    expect($result->ok)->toBeFalse()
+        ->and($this->ssh->passwordAttempts)->toBe(0)
+        ->and($server->fresh()->ssh_host_key)->toBeNull();
+});
+
+test('nothing is sent when the key differs from the one shown, or no check was chosen', function (?string $fingerprint, bool $byLogin) {
+    $server = ($this->makeServer)(true);
+    $this->ssh->keyResults = [true];
+    $result = $this->setup->setUp($this->admin, $server, $fingerprint, 'pw', $byLogin);
+
+    expect($result->ok)->toBeFalse()
+        ->and($this->ssh->unverifiedLogins + $this->ssh->keyAttempts + $this->ssh->passwordAttempts)->toBe(0)
+        ->and($server->fresh()->ssh_host_key)->toBeNull();
+})->with([['SHA256:other', true], [null, true], [null, false]]);

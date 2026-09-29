@@ -47,7 +47,10 @@
                         @if ($platform !== 'unknown')
                             <p class="hint">Detected a {{ $server->platform()->label() }} server from its SSH banner.</p>
                         @endif
-                        <label class="check"><input type="checkbox" name="fingerprint" value="{{ $hostKey->fingerprint() }}" required> The fingerprint matches</label>
+                        <input type="hidden" name="fingerprint" value="{{ $hostKey->fingerprint() }}">
+                        <label class="check"><input type="radio" name="host_key_check" value="manual" required> I checked it on the server: the fingerprint matches</label>
+                        <label class="check"><input type="radio" name="host_key_check" value="login" required> Verify it through the account: log in as {{ $server->ssh_username }} and look it up in the server's own host key files</label>
+                        <p class="hint">Verifying through the account logs in before the key is trusted: with the app's key if it's already installed, otherwise with the password below (only if password login is allowed), which then also installs the key. It catches a wrong or changed key, but it's weaker than checking on the server yourself: an impostor in the middle would see the password and could fake the answer.</p>
                     @else
                         <div class="alert error" role="alert">{{ $hostKeyError }}</div>
                     @endif

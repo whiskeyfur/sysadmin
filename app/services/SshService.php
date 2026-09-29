@@ -15,7 +15,9 @@ use Throwable;
  * SSH to a monitored server with phpseclib and the app's key.
  *
  * The host key is always checked before logging in: an untrusted or changed
- * host key stops the connection before any credentials are sent.
+ * host key stops the connection before any credentials are sent. The one
+ * exception is connectForVerification(), which an admin chooses during
+ * setup to check a not-yet-trusted key from inside the server.
  */
 class SshService
 {
@@ -123,6 +125,84 @@ class SshService
     }
 
     /**
+     * Log in to a server whose host key isn't trusted yet, so the key can be
+     * checked against the server's own host key files. The server must
+     * present $expected (the key the admin was shown); otherwise nothing is
+     * sent. Logs in with the app's key, or with $password when given (only
+     * if the server allows password login).
+     *
+     * @throws ServerConnectionException
+     */
+    public function connectForVerification(Server $server, HostKey $expected, ?string $password = null): SSH2
+    {
+        $this->requireSshEnabled($server);
+
+        if ($password !== null && !$server->ssh_password_allowed) {
+            throw new ServerConnectionException("Password login is not allowed for {$server->name}; no password was tried.");
+        }
+
+        $ssh = $this->open($server, $expected);
+        $presented = $this->hostKeyOf($ssh);
+
+        if (!$expected->sameKeyAs($presented)) {
+            $ssh->disconnect();
+
+            throw new ServerConnectionException('The server now presents a different host key (' . $presented->fingerprint() . ') from the one shown. Nothing was sent.');
+        }
+
+        return $this->logIn(
+            $server,
+            $ssh,
+            fn (SSH2 $ssh) => $password === null ? $ssh->login($server->ssh_username, $this->keys->privateKey()) : $ssh->login($server->ssh_username, $password),
+            $password === null
+                ? "SSH key login as {$server->ssh_username} was refused. The app's public key may not be in that user's ~/.ssh/authorized_keys yet."
+                : "SSH password login as {$server->ssh_username} was refused: wrong password, or the server doesn't allow password login.",
+        );
+    }
+
+    /**
+     * The host public keys a server keeps on disk, read over a logged-in
+     * connection (/etc/ssh on Linux/Unix, %ProgramData%\ssh on Windows).
+     *
+     * @return list<HostKey>
+     */
+    public function hostKeysOnServer(SSH2 $ssh, ServerPlatform $platform): array
+    {
+        $commands = [
+            ServerPlatform::Unix->value => "sh -c 'cat /etc/ssh/ssh_host_*_key.pub /etc/ssh_host_*_key.pub 2>/dev/null; true'",
+            ServerPlatform::Windows->value => 'powershell -NoProfile -NonInteractive -Command "Get-Content $env:ProgramData\\ssh\\ssh_host_*_key.pub"',
+        ];
+
+        if ($platform !== ServerPlatform::Unknown) {
+            $commands = [$commands[$platform->value]];
+        }
+
+        foreach ($commands as $command) {
+            try {
+                $output = $this->exec($ssh, $command);
+            } catch (ServerConnectionException) {
+                continue;
+            }
+
+            $keys = [];
+
+            foreach (preg_split('/\R/', $output) ?: [] as $line) {
+                try {
+                    $keys[] = HostKey::fromString($line);
+                } catch (\InvalidArgumentException) {
+                    // not a key line
+                }
+            }
+
+            if ($keys !== []) {
+                return $keys;
+            }
+        }
+
+        return [];
+    }
+
+    /**
      * Run a command on an open connection and return its output.
      *
      * @throws ServerConnectionException also when the command exits non-zero.
@@ -167,6 +247,14 @@ class SshService
             throw new HostKeyMismatchException($trusted, $presented);
         }
 
+        return $this->logIn($server, $ssh, $login, $refusedMessage);
+    }
+
+    /**
+     * @param callable(SSH2): bool $login
+     */
+    private function logIn(Server $server, SSH2 $ssh, callable $login, string $refusedMessage): SSH2
+    {
         try {
             $loggedIn = $login($ssh);
         } catch (Throwable $e) {

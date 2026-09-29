@@ -40,6 +40,7 @@
         details.menu .menu-items { position: absolute; top: calc(100% + 8px); left: 0; z-index: 10; min-width: 150px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 0; box-shadow: 0 6px 18px rgba(0, 0, 0, .15); }
         details.menu .menu-items a { padding: 6px 14px; text-decoration: none; }
         details.menu .menu-items a:hover { background: var(--code-bg); }
+        details.menu .menu-divider { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
         main { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
         main.narrow { max-width: 440px; }
         main.wide { max-width: 1440px; }
@@ -133,6 +134,10 @@
                         <div class="menu-items">
                             @foreach ($items as $href => $label)
                                 @if (in_array($label, ['Reports', 'Test'], true) || $auth->isAdmin())
+                                    @if ($label === 'Add')
+                                        {{-- Viewing items above, admin tools below. --}}
+                                        <hr class="menu-divider">
+                                    @endif
                                     <a href="{{ $href }}" @if ($href === $active) aria-current="page" @endif>{{ $label }}</a>
                                 @endif
                             @endforeach

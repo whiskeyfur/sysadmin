@@ -132,7 +132,7 @@ class MariadbReportService extends HistoryReport
             $bucket = $this->bucketMinutes($to->getTimestamp() - $from->getTimestamp());
             $seconds = $bucket * 60;
             foreach ($series as $key => $points) {
-                $series[$key] = $this->averageSeries($points, $seconds, worst: $key === 'crashed');
+                $series[$key] = $this->averageSeries($points, $seconds, $key === 'crashed' ? 'max' : 'average');
             }
 
             // Crashed tables: the worst in the bucket, so a crash isn't averaged away.

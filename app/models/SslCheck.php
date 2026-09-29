@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\HealthStatus;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * A stored SSL certificate check.
@@ -18,6 +19,7 @@ use Carbon\Carbon;
  * @property float|null $days_left
  * @property array<string, mixed>|null $details
  * @property Carbon $checked_at
+ * @property-read SslBinding|null $binding
  */
 class SslCheck extends Model
 {
@@ -38,6 +40,16 @@ class SslCheck extends Model
         'details' => 'array',
         'checked_at' => 'datetime',
     ];
+
+    /**
+     * Where the certificate was checked (null for rows from before certificates existed).
+     *
+     * @return BelongsTo<SslBinding, $this>
+     */
+    public function binding(): BelongsTo
+    {
+        return $this->belongsTo(SslBinding::class, 'binding_id');
+    }
 
     public function label(): string
     {

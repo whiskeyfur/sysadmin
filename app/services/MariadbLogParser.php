@@ -28,9 +28,20 @@ class MariadbLogParser
      */
     public function parseErrorLog(string $text, DateTimeZone $zone): array
     {
-        $entries = [];
+        return iterator_to_array($this->errorEntries($text, $zone), false);
+    }
 
-        foreach (preg_split('/\R/', $text) ?: [] as $line) {
+    /**
+     * parseErrorLog() one entry at a time, for logs too big to hold parsed
+     * all at once (a 5 MB log is ~100 MB as parsed entries).
+     *
+     * @return \Generator<int, array{time: Carbon, level: string, message: string}>
+     */
+    public function errorEntries(string $text, DateTimeZone $zone): \Generator
+    {
+        $pending = null;
+
+        foreach ($this->lines($text) as $line) {
             if (trim($line) === '' || str_starts_with($line, '-- ')) {
                 continue; // blank, or a journalctl banner ("-- No entries --", "-- Boot ... --")
             }
@@ -38,22 +49,20 @@ class MariadbLogParser
             $entry = $this->errorLine($line, $zone);
 
             if ($entry !== null) {
-                $entries[] = $entry;
-            } elseif ($entries !== []) {
+                if ($pending !== null) {
+                    yield $this->classify($pending);
+                }
+
+                $pending = $entry;
+            } elseif ($pending !== null && mb_strlen($pending['message']) < self::MAX_MESSAGE) {
                 // A line without a timestamp continues the entry above (e.g. a stack trace).
-                $last = &$entries[count($entries) - 1];
-                $last['message'] = mb_substr($last['message'] . "\n" . rtrim($line), 0, self::MAX_MESSAGE);
-                unset($last);
+                $pending['message'] = mb_substr($pending['message'] . "\n" . rtrim($line), 0, self::MAX_MESSAGE);
             }
         }
 
-        foreach ($entries as &$entry) {
-            if (preg_match('/\bgot (signal|exception)\b/i', $entry['message']) === 1) {
-                $entry['level'] = 'crash';
-            }
+        if ($pending !== null) {
+            yield $this->classify($pending);
         }
-
-        return $entries;
     }
 
     /**
@@ -63,19 +72,28 @@ class MariadbLogParser
      */
     public function parseSlowLog(string $text, DateTimeZone $zone): array
     {
-        $entries = [];
+        return iterator_to_array($this->slowEntries($text, $zone), false);
+    }
+
+    /**
+     * parseSlowLog() one entry at a time.
+     *
+     * @return \Generator<int, array{time: Carbon, level: string, message: string}>
+     */
+    public function slowEntries(string $text, DateTimeZone $zone): \Generator
+    {
         $time = null;
         $current = null;
 
-        foreach (preg_split('/\R/', $text) ?: [] as $line) {
+        foreach ($this->lines($text) as $line) {
             $trimmed = trim($line);
 
             if (preg_match('/^# Time: (.+)$/', $line, $m) === 1) {
-                $entries[] = $this->slowEntry($current, $time);
+                yield from $this->finished($current, $time);
                 $current = null;
                 $time = $this->slowLogTime(trim($m[1]), $zone) ?? $time;
             } elseif (preg_match('/^# User@Host: (\S+)/', $line, $m) === 1) {
-                $entries[] = $this->slowEntry($current, $time);
+                yield from $this->finished($current, $time);
                 $current = ['sql' => [], 'who' => $m[1], 'time' => null, 'stats' => []];
             } elseif ($current === null) {
                 continue; // file header ("Version:", "Tcp port:", "Time Id Command Argument")
@@ -96,9 +114,49 @@ class MariadbLogParser
             }
         }
 
-        $entries[] = $this->slowEntry($current, $time);
+        yield from $this->finished($current, $time);
+    }
 
-        return array_values(array_filter($entries));
+    /**
+     * @param array{sql: list<string>, who: string, time: ?Carbon, stats: array<string, string>}|null $query
+     * @return list<array{time: Carbon, level: string, message: string}> the query's entry, if it's complete
+     */
+    private function finished(?array $query, ?Carbon $time): array
+    {
+        $entry = $this->slowEntry($query, $time);
+
+        return $entry === null ? [] : [$entry];
+    }
+
+    /**
+     * The text's lines, without copying it into an array.
+     *
+     * @return \Generator<int, string>
+     */
+    private function lines(string $text): \Generator
+    {
+        $length = strlen($text);
+        $offset = 0;
+
+        while ($offset < $length) {
+            $end = strpos($text, "\n", $offset);
+            $end = $end === false ? $length : $end;
+            yield rtrim(substr($text, $offset, $end - $offset), "\r");
+            $offset = $end + 1;
+        }
+    }
+
+    /**
+     * @param array{time: Carbon, level: string, message: string} $entry
+     * @return array{time: Carbon, level: string, message: string}
+     */
+    private function classify(array $entry): array
+    {
+        if (preg_match('/\bgot (signal|exception)\b/i', $entry['message']) === 1) {
+            $entry['level'] = 'crash';
+        }
+
+        return $entry;
     }
 
     /**

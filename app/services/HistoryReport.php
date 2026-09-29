@@ -67,10 +67,11 @@ abstract class HistoryReport
 
     /**
      * @param list<array{0: int, 1: float}> $points
-     * @param bool $worst take each bucket's highest value instead of the average (e.g. crashed tables)
+     * @param 'average'|'max'|'min' $keep what each bucket keeps: the average, or the highest (e.g. crashed
+     *                                    tables) or lowest (e.g. days until expiry) value, so a bad moment isn't averaged away
      * @return list<array{0: int, 1: float}> one point per bucket, at the bucket's start
      */
-    protected function averageSeries(array $points, int $seconds, bool $worst = false): array
+    protected function averageSeries(array $points, int $seconds, string $keep = 'average'): array
     {
         $buckets = [];
 
@@ -81,7 +82,11 @@ abstract class HistoryReport
         $averaged = [];
 
         foreach ($buckets as $time => $values) {
-            $averaged[] = [$time, $worst ? max($values) : round(array_sum($values) / count($values), 2)];
+            $averaged[] = [$time, match ($keep) {
+                'max' => max($values),
+                'min' => min($values),
+                default => round(array_sum($values) / count($values), 2),
+            }];
         }
 
         return $averaged;

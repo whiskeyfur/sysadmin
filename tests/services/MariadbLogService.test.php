@@ -174,3 +174,28 @@ test('the same message twice in one second is kept twice, and still not again on
     expect(($this->service)()->import($this->admin, $this->server)['sources'][0]['imported'])->toBe(2)
         ->and(($this->service)()->import($this->admin, $this->server)['sources'][0]['imported'])->toBe(0);
 });
+
+test('a 5 MB log is imported in bounded memory', function () {
+    $lines = [];
+    $size = 0;
+    $second = $this->clock->now()->getTimestamp() - 20 * 86400;
+
+    while ($size < MariadbLogService::MAX_BYTES) {
+        $line = gmdate('Y-m-d H:i:s', $second += 30) . " 0 [Warning] Aborted connection $second to db: 'app' user: 'app' host: 'localhost' (Got an error reading communication packets)";
+        $lines[] = $line;
+        $size += strlen($line) + 1;
+    }
+
+    $this->ssh->outputs['date +%z'] = "+0000\n";
+    $this->ssh->files = ['/etc/my.cnf' => "[mysqld]\nlog_error=/logs/e.log\n", '/logs/e.log' => implode("\n", $lines)];
+    unset($lines);
+
+    memory_reset_peak_usage();
+    $before = memory_get_usage();
+    $result = ($this->service)()->import($this->admin, $this->server);
+    $peak = memory_get_peak_usage() - $before;
+
+    expect($result['sources'][0]['imported'])->toBeGreaterThan(30000)
+        // Parsed all at once this took over 128 MB (PHP's usual memory_limit).
+        ->and($peak)->toBeLessThan(48 * 1024 * 1024);
+});

@@ -43,6 +43,8 @@ class MariadbLogService
 
     public const MAX_JOURNAL_LINES = 20000;
 
+    private const BATCH = 500;
+
     private const MAX_OPTION_FILES = 50;
 
     private const DOCUMENTED_OPTION_FILES = ['/etc/my.cnf', '/etc/mysql/my.cnf'];
@@ -296,15 +298,35 @@ class MariadbLogService
         $problem = $source['type'] === 'journal' && str_contains($text, 'not seeing messages from other users')
             ? 'Only part of the journal is readable: the SSH user needs to be in the systemd-journal (or adm) group.'
             : null;
-        $entries = $source['type'] === 'slow' ? $this->parser->parseSlowLog($text, $zone) : $this->parser->parseErrorLog($text, $zone);
-        $entries = array_values(array_filter($entries, fn (array $e) => $e['time']->greaterThanOrEqualTo($cutoff)));
+        // Streamed and stored in batches: a whole log parsed at once can exceed PHP's memory limit.
+        $entries = $source['type'] === 'slow' ? $this->parser->slowEntries($text, $zone) : $this->parser->errorEntries($text, $zone);
         $type = $source['type'] === 'journal' ? 'journal' : $source['type'];
+        $read = 0;
+        $imported = 0;
+        $batch = [];
+        $repeats = ['second' => null, 'counts' => []];
+
+        foreach ($entries as $entry) {
+            if ($entry['time']->lessThan($cutoff)) {
+                continue;
+            }
+
+            $read++;
+            $batch[] = $entry;
+
+            if (count($batch) >= self::BATCH) {
+                $imported += $this->store($server, $type, $batch, $repeats);
+                $batch = [];
+            }
+        }
+
+        $imported += $this->store($server, $type, $batch, $repeats);
 
         return [
             'label' => $source['label'],
             'where' => $where,
-            'read' => count($entries),
-            'imported' => $this->store($server, $type, $entries),
+            'read' => $read,
+            'imported' => $imported,
             'problem' => $problem,
         ];
     }
@@ -313,24 +335,30 @@ class MariadbLogService
      * Store entries not imported before.
      *
      * @param list<array{time: Carbon, level: string, message: string}> $entries
+     * @param array{second: int|null, counts: array<string, int>} $repeats identical messages in the current second, across batches
      * @return int how many were new
      */
-    private function store(Server $server, string $source, array $entries): int
+    private function store(Server $server, string $source, array $entries, array &$repeats): int
     {
         $rows = [];
-        $occurrences = [];
 
         foreach ($entries as $entry) {
             $time = $entry['time']->copy()->utc()->startOfSecond();
-            $key = implode("\0", [$server->id, $source, $time->getTimestamp(), $entry['level'], $entry['message']]);
+            $second = $time->getTimestamp();
+            $key = implode("\0", [$server->id, $source, $second, $entry['level'], $entry['message']]);
+
             // The same message twice in one second is two events: number the repeats.
-            $occurrences[$key] = ($occurrences[$key] ?? 0) + 1;
-            $hash = hash('sha256', $key . "\0" . $occurrences[$key]);
+            if ($repeats['second'] !== $second) {
+                $repeats = ['second' => $second, 'counts' => []];
+            }
+
+            $repeats['counts'][$key] = ($repeats['counts'][$key] ?? 0) + 1;
+            $hash = hash('sha256', $key . "\0" . $repeats['counts'][$key]);
             $rows[$hash] = [
                 'server_id' => $server->id,
                 'source' => $source,
                 'level' => $entry['level'],
-                'logged_at' => $time,
+                'logged_at' => $time->format('Y-m-d H:i:s'),
                 'message' => $entry['message'],
                 'hash' => $hash,
             ];
@@ -338,18 +366,16 @@ class MariadbLogService
 
         $new = 0;
 
-        (new MariadbLogEntry())->getConnection()->transaction(function () use ($rows, &$new) {
-            foreach (array_chunk($rows, 500, true) as $chunk) {
-                $existing = MariadbLogEntry::query()->whereIn('hash', array_keys($chunk))->pluck('hash')->flip();
+        // One insert per batch (row by row, a big log is too slow for a web request).
+        foreach (array_chunk($rows, 250, true) as $chunk) {
+            $existing = MariadbLogEntry::query()->whereIn('hash', array_keys($chunk))->pluck('hash')->flip();
+            $fresh = array_values(array_diff_key($chunk, $existing->all()));
 
-                foreach ($chunk as $hash => $row) {
-                    if (!isset($existing[$hash])) {
-                        MariadbLogEntry::query()->create($row);
-                        $new++;
-                    }
-                }
+            if ($fresh !== []) {
+                MariadbLogEntry::query()->insert($fresh);
+                $new += count($fresh);
             }
-        });
+        }
 
         return $new;
     }

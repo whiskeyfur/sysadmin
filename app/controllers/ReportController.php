@@ -4,28 +4,39 @@ namespace App\Controllers;
 
 use App\DTOs\AuthContext;
 use App\Models\Server;
+use App\Models\SslCertificate;
 use App\Services\HistoryReport;
 use App\Services\MariadbLogService;
 use App\Services\MariadbReportService;
 use App\Services\ServerService;
+use App\Services\SettingsService;
 use App\Services\SshReportService;
+use App\Services\SslReportService;
 
 /**
- * Reports for each monitoring area (the first item of its menu). SSH and
- * MariaDB reports chart their check values over time; SSL is a placeholder
- * for now.
+ * Reports for each monitoring area (the first item of its menu): each
+ * charts its stored check values over time, with the data in a table.
  */
 class ReportController extends Controller
 {
-    private const AREAS = [
-        'ssl' => ['title' => 'SSL reports', 'test' => '/ssl'],
-        'ssh' => ['title' => 'SSH reports', 'test' => '/ssh'],
-        'mariadb' => ['title' => 'MariaDB reports', 'test' => '/mariadb'],
-    ];
-
+    /**
+     * ?certificate=<id> (else all)&range=24h|7d|30d
+     */
     public function ssl()
     {
-        $this->renderArea('ssl');
+        $certificates = SslCertificate::query()->get()->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)->values()->all();
+        $certificate = collect($certificates)->firstWhere('id', (int) $this->request->get('certificate'));
+        $range = (string) $this->request->get('range');
+        $range = isset(HistoryReport::RANGES[$range]) ? $range : HistoryReport::DEFAULT_RANGE;
+
+        $this->response->view('reports.ssl', [
+            'auth' => $this->authContext(),
+            'certificates' => $certificates,
+            'certificate' => $certificate,
+            'range' => $range,
+            'report' => (new SslReportService())->report($certificate, $range),
+            'warningDays' => (new SettingsService())->sslWarningDays(),
+        ]);
     }
 
     /**
@@ -78,15 +89,6 @@ class ReportController extends Controller
         $range = (string) $this->request->get('range');
 
         return [$servers, $server, isset(HistoryReport::RANGES[$range]) ? $range : HistoryReport::DEFAULT_RANGE];
-    }
-
-    private function renderArea(string $area): void
-    {
-        $this->response->view('reports.placeholder', [
-            'auth' => $this->authContext(),
-            'title' => self::AREAS[$area]['title'],
-            'test' => self::AREAS[$area]['test'],
-        ]);
     }
 
     private function authContext(): AuthContext

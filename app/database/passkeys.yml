@@ -1,0 +1,30 @@
+# Passkeys and hardware security keys (WebAuthn credentials) users sign in with (PasskeyService).
+# credential_id: base64url, as the authenticator gave it; credential_hash: its SHA-256 (hex), unique, for lookups
+#   (ids can be up to 1023 bytes, too long for a unique index).
+# public_key: PEM. sign_count: the authenticator's counter at the last use (0 if it doesn't keep one).
+# rp_id: the host it was registered on; it only works there.
+timestamps: false
+columns:
+  user_id:
+    type: integer
+    index: true
+  name: string
+  credential_id: text
+  credential_hash:
+    type: string
+    unique: true
+  public_key: text
+  sign_count:
+    type: bigInteger
+    default: 0
+  rp_id: string
+  aaguid:
+    type: string
+    nullable: true
+  backup_eligible:
+    type: boolean
+    default: false
+  created_at: timestamp
+  last_used_at:
+    type: timestamp
+    nullable: true

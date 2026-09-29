@@ -40,7 +40,7 @@
         <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>Username</th><th>Role</th><th>Status</th><th data-nosort><span class="muted">Actions</span></th></tr>
+                <tr><th>Username</th><th>Role</th><th>Status</th><th>Signs in with</th><th data-nosort><span class="muted">Actions</span></th></tr>
             </thead>
             <tbody>
                 @foreach ($users as $user)
@@ -48,11 +48,22 @@
                         <td>{{ $user->username }}</td>
                         <td><span class="badge {{ $user->role }}">{{ ucfirst($user->role) }}</span></td>
                         <td class="muted">
-                            @if ($user->must_change_password || !$user->hasAuthenticator())
+                            @if ($user->must_change_password)
                                 Waiting for first sign-in
+                            @elseif ($methods->missingRequired($user))
+                                Must set up {{ implode(', ', array_map(fn ($m) => strtolower(\App\Services\LoginMethodService::LABELS[$m]), $methods->missingRequired($user))) }}
                             @else
                                 Active
                             @endif
+                        </td>
+                        <td>
+                            @php($enrolled = $methods->enrolled($user))
+                            @foreach ($enrolled as $m)
+                                <span class="badge {{ in_array($m, $methods->enabled(), true) ? 'user' : 'unknown' }}" title="{{ in_array($m, $methods->enabled(), true) ? '' : 'Turned off' }}">{{ \App\Services\LoginMethodService::LABELS[$m] }}{{ $m === 'passkey' ? ' (' . $user->passkeys()->count() . ')' : '' }}</span>
+                            @endforeach
+                            @unless ($enrolled)
+                                <span class="muted">Nothing yet</span>
+                            @endunless
                         </td>
                         <td class="row-actions">
                             @if ($user->id === $auth->user->id)
@@ -69,7 +80,7 @@
                                         <button type="submit" class="secondary">Make admin</button>
                                     </form>
                                 @endif
-                                <form method="post" action="/admin/users/{{ $user->id }}/reset-password" class="inline-form" data-confirm="Reset {{ $user->username }}? They'll be signed out, their authenticator removed, and they must set up a new one with this one-time password.">
+                                <form method="post" action="/admin/users/{{ $user->id }}/reset-password" class="inline-form" data-confirm="Reset {{ $user->username }}? They'll be signed out, their password, authenticator and passkeys removed, and they must set up again with this one-time password.">
                                     @csrf
                                     <input type="text" name="one_time_password" aria-label="New one-time password for {{ $user->username }}" placeholder="One-time password" autocomplete="off" minlength="{{ $minLength }}" required>
                                     <button type="submit" class="secondary">Reset sign-in</button>

@@ -30,7 +30,7 @@ When your work is complete:
 
 ## Project Summary
 
-`sys` (served at `sys.localhost`): a system and network admin tool that tracks statistics and performance of multiple servers and websites, continuously monitoring PHP stacks and MariaDB servers (including crashed tables). Accounts are created by admins; sign-in needs the username and an authenticator code (no user passwords). Security rules are in `CLAUDE.md`.
+`sys` (served at `sys.localhost`): a system and network admin tool that tracks statistics and performance of multiple servers and websites, continuously monitoring PHP stacks and MariaDB servers (including crashed tables). Accounts are created by admins; sign-in needs the username and any one method an admin turned on (password, authenticator code, passkey/security key). Security rules are in `CLAUDE.md`.
 
 ---
 
@@ -98,6 +98,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Apache in Docker/Podman containers: found when the host has no working `-S`, remembered (`servers.apache_container`), commands run via `ContainerShell`, container output read with `logs --since`; Apache 2.2 read from `-V` + its main file (`ApacheConfigParser::compiled()`/`answered()`).
 * 2026-09-29 — Apache logs can be set by hand per server (`apache_error_logs`/`apache_access_logs`); virtual hosts discovered from the configuration (`apache_vhosts`), with a Vhosts menu: List (SSL coverage, Monitor link) and Reports (per-vhost traffic/errors from its logs).
 * 2026-09-29 — Database setup wizard (`/install/database`, install code) and `php leaf app:db-setup`: MariaDB/MySQL, PostgreSQL or SQLite; an admin account gets the database plus a restricted app user with a generated password; existing SQLite data copied; connection saved encrypted in storage/app/db/connection.json (`DatabaseConfig`, `DatabaseSetupService`).
+* 2026-09-29 — Sign-in methods set by admins (App settings): password, authenticator, passkey/security key, each Off/Optional/Required; required = must set up, any one signs in. Profile page (/profile) for setup and changes; WebAuthn via lbuchs/webauthn parsing with the app's own ceremony checks (`LoginMethodService`, `PasskeyService`, `ProfileService`, `passkeys` table, `users.login_password`).
 
 ---
 
@@ -106,12 +107,12 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * This is a Leaf MVC app — all important files are in the `app` directory.
 * Leaf MVC best practice wins over other conventions — the user's explicit rule; the security rules in `CLAUDE.md` are the exception.
 * No encryption at rest, no master key, no key files, no self-registration — the client's decision (2026-09-29); the earlier encrypted design is in git history up to `863d3e9`.
-* Users have no passwords: sign-in is username + authenticator code; admins set a one-time password used only to enrol the authenticator — the client's requirement (it replaced chosen passwords with 30-day expiry).
-* Code-only sign-in gets a 30-failures-per-day cap per username on top of the 15-minute limits — a 6-digit code is the only secret, so slow guessing must stay improbable; lockouts are cleared by `app:reset-admin`.
+* Sign-in methods are an admin setting (password, authenticator, passkey/security key; Off/Optional/Required; required = must set up, any one method signs in) — the user's decision (2026-09-29), replacing code-only sign-in, which is still the default. Admins set a one-time password used only for setup.
+* Sign-in gets a 30-failures-per-day cap per username on top of the 15-minute limits — a 6-digit code is the only secret, so slow guessing must stay improbable; lockouts are cleared by `app:reset-admin`.
 * At least one admin; admins can't act on their own account — the client said one admin is fine.
 * Custom sign-in instead of `leafs/auth` — `leafs/auth` is built around passwords and creates the session as soon as one matches.
 * Authenticator secrets are encrypted with a key derived from `APP_KEY` — the user chose this so a copied database alone can't generate codes.
-* An authenticator (TOTP, Google Authenticator defaults) is required for every sign-in — the user asked for "no authenticator = no access".
+* Authenticator required by default (the user's earlier "no authenticator = no access"); admins can change it. Passkeys require user verification (PIN/biometric), since one alone signs in.
 * Per-username lockouts (10 failures / 15 min) are accepted even though they let anyone lock an account out briefly.
 * Client IP comes from `REMOTE_ADDR`, not Leaf's `getIp()` — Leaf trusts spoofable forwarding headers and there is no proxy in front of Apache.
 * SSH uses phpseclib (user's preference) with one app-generated Ed25519 key; admins add its public key to servers — the private key never leaves the app.

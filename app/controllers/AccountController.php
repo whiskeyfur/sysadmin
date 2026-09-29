@@ -182,9 +182,12 @@ class AccountController extends Controller
         }
 
         try {
-            $password = $this->accounts->reveal($this->authContext()->user, $account, (string) $this->request->get('code', false), $this->clientIp());
+            $proof = $this->request->get('passkey_confirmed') && (new \App\Services\AuthSessionService())->takePasskeyConfirmation()
+                ? ['confirmed' => true]
+                : ['password' => (string) $this->request->get('password', false), 'code' => (string) $this->request->get('code', false)];
+            $password = $this->accounts->reveal($this->authContext()->user, $account, $proof, $this->clientIp());
         } catch (InvalidCredentialsException) {
-            $this->renderShow($account, error: "That code is wrong or already used; the password was not revealed. Wait for the app's next code.");
+            $this->renderShow($account, error: "That didn't match (a code can only be used once: wait for the app's next one); the password was not revealed.");
 
             return;
         } catch (TooManyAttemptsException $e) {
@@ -246,6 +249,8 @@ class AccountController extends Controller
             'service' => $this->accounts,
             'reveals' => $this->accounts->reveals($account),
             'revealed' => $revealed,
+            'usable' => (new \App\Services\LoginMethodService())->usable($this->authContext()->user),
+            'passkeysHere' => $this->site() !== null,
             'notice' => $notice,
             'error' => $error,
         ], $status);

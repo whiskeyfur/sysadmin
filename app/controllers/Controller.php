@@ -26,6 +26,18 @@ class Controller extends \Leaf\Controller
     /**
      * Minutes to show in a rate-limit message, rounded up.
      */
+    /**
+     * This page's relying party and origin for passkeys, or null where they can't work (plain http off localhost).
+     *
+     * @return array{rp_id: string, origin: string}|null
+     */
+    protected function site(): ?array
+    {
+        $https = ($_SERVER['HTTPS'] ?? '') !== '' && ($_SERVER['HTTPS'] ?? '') !== 'off';
+
+        return \App\Services\PasskeyService::site((string) ($_SERVER['HTTP_HOST'] ?? ''), $https);
+    }
+
     protected function retryMinutes(int $seconds): int
     {
         return max(1, (int) ceil($seconds / 60));

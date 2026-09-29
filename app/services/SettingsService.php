@@ -17,6 +17,13 @@ class SettingsService
 {
     public const SSL_WARNING_DAYS = 'ssl_warning_days';
 
+    // Sign-in methods: LoginMethodService::OFF, OPTIONAL or REQUIRED.
+    public const LOGIN_PASSWORD = 'login_password';
+
+    public const LOGIN_AUTHENTICATOR = 'login_authenticator';
+
+    public const LOGIN_PASSKEY = 'login_passkey';
+
     public const SESSION_TIMEOUT_MINUTES = 'session_timeout_minutes';
 
     public const SSL_IMPORT_NAMES = 'ssl_import_names';
@@ -61,6 +68,9 @@ class SettingsService
     public const DEFAULTS = [
         self::SSL_WARNING_DAYS => 7,
         self::SESSION_TIMEOUT_MINUTES => 30,
+        self::LOGIN_PASSWORD => 0,
+        self::LOGIN_AUTHENTICATOR => 2,
+        self::LOGIN_PASSKEY => 0,
         self::SSL_IMPORT_NAMES => 1,
         self::SSL_CHECK_HOURS => 24,
         self::ACCOUNT_WARNING_DAYS => 7,
@@ -87,7 +97,7 @@ class SettingsService
      * @var array<string, list<string>>
      */
     public const SECTIONS = [
-        'app' => [self::SESSION_TIMEOUT_MINUTES],
+        'app' => [self::SESSION_TIMEOUT_MINUTES, self::LOGIN_PASSWORD, self::LOGIN_AUTHENTICATOR, self::LOGIN_PASSKEY],
         'ssl' => [self::SSL_WARNING_DAYS, self::SSL_IMPORT_NAMES, self::SSL_CHECK_HOURS],
         'ssh' => [self::DISK_WARNING_PERCENT, self::DISK_CRITICAL_PERCENT, self::ACCOUNT_WARNING_DAYS],
         'mariadb' => [
@@ -115,6 +125,9 @@ class SettingsService
     private const INTEGER_RANGES = [
         self::SSL_WARNING_DAYS => ['min' => 1, 'max' => 365],
         self::SESSION_TIMEOUT_MINUTES => ['min' => 5, 'max' => AuthSessionService::MAX_TIMEOUT_MINUTES],
+        self::LOGIN_PASSWORD => ['min' => 0, 'max' => 2],
+        self::LOGIN_AUTHENTICATOR => ['min' => 0, 'max' => 2],
+        self::LOGIN_PASSKEY => ['min' => 0, 'max' => 2],
         self::SSL_IMPORT_NAMES => ['min' => 0, 'max' => 1],
         self::SSL_CHECK_HOURS => ['min' => 1, 'max' => 168],
         self::ACCOUNT_WARNING_DAYS => ['min' => 1, 'max' => 365],
@@ -227,6 +240,13 @@ class SettingsService
             }
         }
 
+        $logins = array_intersect_key($values, array_flip(LoginMethodService::SETTINGS));
+
+        if ($logins !== []) {
+            // Refuses levels that would leave no way in, or an admin unable to sign in.
+            (new LoginMethodService($this))->checkLevels(array_map(fn ($key) => $values[$key] ?? $this->integer($key), LoginMethodService::SETTINGS));
+        }
+
         foreach ($values as $key => $value) {
             Setting::query()->updateOrCreate(['key' => $key], ['value' => (string) $value]);
         }
@@ -237,6 +257,9 @@ class SettingsService
         return match ($key) {
             self::SSL_WARNING_DAYS => 'SSL warning period',
             self::SESSION_TIMEOUT_MINUTES => 'Sign-out after inactivity',
+            self::LOGIN_PASSWORD => 'Password',
+            self::LOGIN_AUTHENTICATOR => 'Authenticator app',
+            self::LOGIN_PASSKEY => 'Passkey or security key',
             self::SSL_IMPORT_NAMES => 'Adding hostnames from certificates',
             self::SSL_CHECK_HOURS => 'Certificate check interval',
             self::ACCOUNT_WARNING_DAYS => 'Account rotation warning period',

@@ -4,6 +4,7 @@ namespace App\Middleware;
 
 use App\DTOs\AuthContext;
 use App\Services\AuthSessionService;
+use App\Services\LoginMethodService;
 use App\Services\SettingsService;
 use Leaf\Middleware;
 
@@ -25,6 +26,15 @@ class Authenticate extends Middleware
             }
 
             response()->redirect('/login');
+
+            return;
+        }
+
+        // Still in setup, or missing a method an admin made required: Profile (and signing out) only.
+        $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+
+        if (!str_starts_with($path, '/profile') && ($context->user->must_change_password || (new LoginMethodService())->missingRequired($context->user) !== [])) {
+            response()->redirect('/profile');
 
             return;
         }

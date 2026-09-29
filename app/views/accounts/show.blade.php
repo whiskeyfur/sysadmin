@@ -68,15 +68,10 @@
             <input type="text" id="revealed" value="{{ $revealed }}" readonly onfocus="this.select()">
             <p class="hint">This reveal was logged. Leave the page when you're done.</p>
         @elseif ($account->hasPassword())
-            <form method="post" action="/admin/accounts/{{ $account->id }}/reveal" class="inline-form">
-                @csrf
-                <div>
-                    <label for="code">Your authenticator code, to reveal it</label>
-                    <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
-                </div>
-                <button type="submit" class="secondary">Reveal</button>
-            </form>
+            <p class="muted">Confirm it's you to reveal it (an authenticator code works once: wait for the next one after signing in).</p>
+            @include('partials.confirm', ['formId' => 'reveal', 'action' => '/admin/accounts/' . $account->id . '/reveal', 'what' => 'Reveal'])
             <p class="hint">Every reveal is logged with who and when.</p>
+            <script src="/assets/js/passkeys.js"></script>
         @else
             <p class="muted">No password recorded.</p>
         @endif

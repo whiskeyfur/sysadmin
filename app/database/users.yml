@@ -1,9 +1,10 @@
 # role: "admin" or "user".
 # totp_secret: authenticator secret, encrypted with a key derived from APP_KEY (SecretCipher).
 # totp_last_step: last accepted TOTP time step, so a code can't be reused.
-# password: Argon2id hash of the admin-set one-time password; null once used. Users have no passwords:
-#   they sign in with their username and an authenticator code.
+# password: Argon2id hash of the admin-set one-time password; null once used (setup done).
+# login_password: Argon2id hash of the password the user chose (the "password" sign-in method); null if none.
 # must_change_password: set for new accounts and admin resets (one-time password pending setup).
+# Passkeys and security keys are in the passkeys table. Which methods are on, and required, are settings.
 # session_version: bumped to sign the user out everywhere.
 columns:
   username:
@@ -18,6 +19,12 @@ columns:
     nullable: true
   totp_last_step:
     type: integer
+    nullable: true
+  login_password:
+    type: string
+    nullable: true
+  password_changed_at:
+    type: timestamp
     nullable: true
   must_change_password:
     type: boolean

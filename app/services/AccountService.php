@@ -151,24 +151,30 @@ class AccountService
     }
 
     /**
-     * Show an admin the password after they confirm with an authenticator code; logged.
+     * Show an admin the password after they prove it's them (AuthService::confirm(): their password or
+     * an authenticator code, or ['confirmed' => true] after a passkey check made just before); logged.
      *
-     * @throws InvalidCredentialsException if the admin's password is wrong
+     * @param array<string, mixed> $proof
+     *
+     * @throws InvalidCredentialsException if the proof is wrong
      * @throws TooManyAttemptsException
      * @throws DomainException if no password is stored
      */
-    public function reveal(User $admin, Account $account, string $code, string $ip): string
+    public function reveal(User $admin, Account $account, array $proof, string $ip): string
     {
         $this->requireAdmin($admin);
-        $this->auth ??= new AuthService(cipher: $this->cipher);
-        $result = $this->auth->confirm($admin, $code, $ip);
 
-        if ($result->status === LoginStatus::TooManyAttempts) {
-            throw new TooManyAttemptsException($result->retryAfter);
-        }
+        if (($proof['confirmed'] ?? false) !== true) {
+            $this->auth ??= new AuthService(cipher: $this->cipher);
+            $result = $this->auth->confirm($admin, $proof, $ip);
 
-        if ($result->status !== LoginStatus::Success) {
-            throw new InvalidCredentialsException('Your authenticator code is wrong.');
+            if ($result->status === LoginStatus::TooManyAttempts) {
+                throw new TooManyAttemptsException($result->retryAfter);
+            }
+
+            if ($result->status !== LoginStatus::Success) {
+                throw new InvalidCredentialsException("That didn't match.");
+            }
         }
 
         $password = $this->password($account);

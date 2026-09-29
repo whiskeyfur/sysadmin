@@ -14,13 +14,21 @@ use Leaf\Http\Session;
  * A session ends after the admin-set idle timeout (session_timeout_minutes):
  * each request records when it was last active.
  *
- * Also holds a pending first-login setup (after a correct one-time
- * password): the user, their session version and the authenticator secret
- * being enrolled, for SETUP_SECONDS.
+ * Also holds: when the user last proved it's them (sign-in or
+ * re-confirming; changing how they sign in needs it to be recent), one-use
+ * passkey challenges, and an authenticator secret being set up.
  */
 class AuthSessionService
 {
-    public const SETUP_SECONDS = 600;
+    /**
+     * How long a sign-in or re-confirmation counts as recent (for changing sign-in methods).
+     */
+    public const CONFIRMED_SECONDS = 600;
+
+    /**
+     * How long a passkey challenge is good for.
+     */
+    public const CHALLENGE_SECONDS = 300;
 
     /**
      * The longest idle timeout an admin can set (SettingsService range).
@@ -34,7 +42,11 @@ class AuthSessionService
 
     private const SESSION_KEY = 'auth';
 
-    private const SETUP_KEY = 'setup';
+    private const CHALLENGE_KEY = 'webauthn';
+
+    private const TOTP_KEY = 'totp_pending';
+
+    private const CONFIRMED_KEY = 'passkey_confirmed';
 
     /**
      * Harden the PHP session cookie. Called from public/index.php because
@@ -84,8 +96,94 @@ class AuthSessionService
             'user_id' => $user->id,
             'version' => (int) $user->session_version,
             'active_at' => time(),
+            'confirmed_at' => time(),
         ]);
         CSRF::regenerate();
+    }
+
+    /**
+     * The user proved it's them again (re-confirming).
+     */
+    public function markConfirmed(): void
+    {
+        $auth = Session::get(self::SESSION_KEY, null, false);
+
+        if (is_array($auth)) {
+            $auth['confirmed_at'] = time();
+            Session::set(self::SESSION_KEY, $auth);
+        }
+    }
+
+    /**
+     * Whether the user signed in or re-confirmed within CONFIRMED_SECONDS.
+     */
+    public function recentlyConfirmed(): bool
+    {
+        $auth = Session::get(self::SESSION_KEY, null, false);
+
+        return is_array($auth) && time() - (int) ($auth['confirmed_at'] ?? 0) <= self::CONFIRMED_SECONDS;
+    }
+
+    /**
+     * A new passkey challenge for $purpose (e.g. "login", "register"), replacing any earlier one.
+     */
+    public function newChallenge(string $purpose): string
+    {
+        $challenge = PasskeyService::challenge();
+        $challenges = (array) Session::get(self::CHALLENGE_KEY, [], false);
+        $challenges[$purpose] = ['value' => base64_encode($challenge), 'expires' => time() + self::CHALLENGE_SECONDS];
+        Session::set(self::CHALLENGE_KEY, $challenges);
+
+        return $challenge;
+    }
+
+    /**
+     * The challenge for $purpose, if not expired; it can only be taken once.
+     */
+    public function takeChallenge(string $purpose): ?string
+    {
+        $challenges = (array) Session::get(self::CHALLENGE_KEY, [], false);
+        $entry = $challenges[$purpose] ?? null;
+        unset($challenges[$purpose]);
+        Session::set(self::CHALLENGE_KEY, $challenges);
+
+        return is_array($entry) && ($entry['expires'] ?? 0) >= time() ? (base64_decode((string) $entry['value'], true) ?: null) : null;
+    }
+
+    /**
+     * An authenticator secret being set up (shown as a QR code until the user enters a code).
+     */
+    public function pendingTotpSecret(?string $new = null): ?string
+    {
+        if ($new !== null) {
+            Session::set(self::TOTP_KEY, $new);
+        }
+
+        $secret = Session::get(self::TOTP_KEY, null, false);
+
+        return is_string($secret) ? $secret : null;
+    }
+
+    public function forgetTotpSecret(): void
+    {
+        Session::unset(self::TOTP_KEY);
+    }
+
+    /**
+     * A passkey re-confirmation (made with JavaScript) for the next form
+     * submitted, e.g. revealing a password; good for one use within a minute.
+     */
+    public function rememberPasskeyConfirmation(): void
+    {
+        Session::set(self::CONFIRMED_KEY, time());
+    }
+
+    public function takePasskeyConfirmation(): bool
+    {
+        $at = Session::get(self::CONFIRMED_KEY, null, false);
+        Session::unset(self::CONFIRMED_KEY);
+
+        return is_int($at) && time() - $at <= 60;
     }
 
     /**
@@ -136,43 +234,10 @@ class AuthSessionService
     public function end(): void
     {
         Session::unset(self::SESSION_KEY);
-        Session::unset(self::SETUP_KEY);
+        Session::unset(self::CHALLENGE_KEY);
+        Session::unset(self::TOTP_KEY);
+        Session::unset(self::CONFIRMED_KEY);
         Session::regenerate(true);
     }
 
-    public function beginSetup(User $user, string $totpSecret): void
-    {
-        Session::regenerate(true);
-        Session::set(self::SETUP_KEY, [
-            'user_id' => $user->id,
-            'version' => (int) $user->session_version,
-            'secret' => $totpSecret,
-            'expires' => time() + self::SETUP_SECONDS,
-        ]);
-    }
-
-    /**
-     * The pending setup, or null if there is none or it expired.
-     *
-     * @return array{user: User, version: int, secret: string}|null
-     */
-    public function pendingSetup(): ?array
-    {
-        $setup = Session::get(self::SETUP_KEY, null, false);
-
-        if (!is_array($setup) || ($setup['expires'] ?? 0) < time()) {
-            Session::unset(self::SETUP_KEY);
-
-            return null;
-        }
-
-        $user = User::query()->find($setup['user_id'] ?? null);
-
-        return $user instanceof User ? ['user' => $user, 'version' => (int) $setup['version'], 'secret' => (string) $setup['secret']] : null;
-    }
-
-    public function endSetup(): void
-    {
-        Session::unset(self::SETUP_KEY);
-    }
 }

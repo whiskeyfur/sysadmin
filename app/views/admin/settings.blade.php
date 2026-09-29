@@ -24,7 +24,21 @@
                     <legend>Sign-in</legend>
                     <label for="session_timeout_minutes">Sign users out after (minutes without activity)</label>
                     <input type="text" id="session_timeout_minutes" name="session_timeout_minutes" value="{{ $value('session_timeout_minutes') }}" inputmode="numeric" required>
-                    <p class="hint">Anyone idle this long signs in again with their authenticator (5–{{ \App\Services\AuthSessionService::MAX_TIMEOUT_MINUTES }}, default {{ $default('session_timeout_minutes') }}). Applies to sessions already open, from their next request.</p>
+                    <p class="hint">Anyone idle this long signs in again (5–{{ \App\Services\AuthSessionService::MAX_TIMEOUT_MINUTES }}, default {{ $default('session_timeout_minutes') }}). Applies to sessions already open, from their next request.</p>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Ways to sign in</legend>
+                    <p class="hint">Users sign in with their username and <strong>any one</strong> method they've set up that's on here. <strong>Required</strong>: everyone must set it up (whoever hasn't is sent to their profile after their next sign-in). <strong>Optional</strong>: users may set it up. A method alone signs someone in, so with passwords on, a password alone is enough; passkeys and authenticator codes resist phishing and guessing better.</p>
+                    @foreach (\App\Services\LoginMethodService::SETTINGS as $method => $key)
+                        <label for="{{ $key }}">{{ \App\Services\LoginMethodService::LABELS[$method] }}</label>
+                        <select id="{{ $key }}" name="{{ $key }}">
+                            @foreach (\App\Services\LoginMethodService::LEVELS as $level => $name)
+                                <option value="{{ $level }}" {{ $value($key) === $level ? 'selected' : '' }}>{{ $name }}</option>
+                            @endforeach
+                        </select>
+                    @endforeach
+                    <p class="hint">Default: authenticator required, the others off. A change that would leave an admin unable to sign in is refused. Passkeys work over https, or on localhost.</p>
                 </fieldset>
             @elseif ($section === 'ssl')
                 <fieldset>

@@ -32,6 +32,7 @@ class AdminUserController extends Controller
             'auth' => $auth,
             'users' => $this->admins->listUsers($auth->user),
             'minLength' => PasswordService::MIN_LENGTH,
+            'methods' => new \App\Services\LoginMethodService(),
             'notice' => $this->request->flash('notice'),
             'error' => $this->request->flash('error'),
         ]);

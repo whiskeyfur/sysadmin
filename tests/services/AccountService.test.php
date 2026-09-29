@@ -113,30 +113,30 @@ test('revealing needs an authenticator code, used once, is logged, and wrong att
     $account = $this->accounts->create($this->admin, ['username' => 'backup', 'type' => 'shared', 'password' => 'shared-pw!']);
     $code = ($this->code)();
 
-    expect(fn () => $this->accounts->reveal($this->admin, $account, '000000', '10.0.0.1'))->toThrow(InvalidCredentialsException::class)
+    expect(fn () => $this->accounts->reveal($this->admin, $account, ['code' => '000000'], '10.0.0.1'))->toThrow(InvalidCredentialsException::class)
         ->and(PasswordReveal::count())->toBe(0)
-        ->and($this->accounts->reveal($this->admin, $account, $code, '10.0.0.1'))->toBe('shared-pw!')
-        ->and(fn () => $this->accounts->reveal($this->admin, $account, $code, '10.0.0.1'))->toThrow(InvalidCredentialsException::class)
+        ->and($this->accounts->reveal($this->admin, $account, ['code' => $code], '10.0.0.1'))->toBe('shared-pw!')
+        ->and(fn () => $this->accounts->reveal($this->admin, $account, ['code' => $code], '10.0.0.1'))->toThrow(InvalidCredentialsException::class)
         ->and(PasswordReveal::count())->toBe(1)
         ->and($this->accounts->reveals($account)[0]->user->username)->toBe('admin');
 
     for ($i = 0; $i < LoginThrottleService::MAX_FAILURES_PER_USERNAME; $i++) {
         try {
-            $this->accounts->reveal($this->admin, $account, '000000', '10.0.0.1');
+            $this->accounts->reveal($this->admin, $account, ['code' => '000000'], '10.0.0.1');
         } catch (InvalidCredentialsException | TooManyAttemptsException) {
         }
     }
 
     $this->clock->advance(30);
 
-    expect(fn () => $this->accounts->reveal($this->admin, $account, ($this->code)(), '10.0.0.1'))->toThrow(TooManyAttemptsException::class);
+    expect(fn () => $this->accounts->reveal($this->admin, $account, ['code' => ($this->code)()], '10.0.0.1'))->toThrow(TooManyAttemptsException::class);
 });
 
 test('non-admins cannot manage or reveal accounts', function () {
     $account = $this->accounts->create($this->admin, ['username' => 'backup', 'type' => 'shared', 'password' => 'p']);
     $user = new User(['role' => User::ROLE_USER]);
 
-    expect(fn () => $this->accounts->reveal($user, $account, 'x', '10.0.0.1'))->toThrow(AuthorizationException::class)
+    expect(fn () => $this->accounts->reveal($user, $account, ['code' => 'x'], '10.0.0.1'))->toThrow(AuthorizationException::class)
         ->and(fn () => $this->accounts->create($user, ['username' => 'x', 'type' => 'shared']))->toThrow(AuthorizationException::class)
         ->and(fn () => $this->accounts->delete($user, $account))->toThrow(AuthorizationException::class);
 });

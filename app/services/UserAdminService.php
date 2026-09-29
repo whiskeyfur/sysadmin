@@ -82,8 +82,8 @@ class UserAdminService
         }
 
         $this->passwords->setOneTimePassword($user, $oneTimePassword);
-        $user->totp_secret = null;
-        $user->totp_last_step = null;
+        $user->save(); // an id, for its passkeys
+        $this->forgetSignInMethods($user);
         $user->session_version = (int) $user->session_version + 1;
         $user->save();
         $throttle->recordLoginSuccess($username);
@@ -92,9 +92,10 @@ class UserAdminService
     }
 
     /**
-     * Remove a user's authenticator, give them the one-time password the
-     * admin chose and sign them out everywhere, so they enrol a new
-     * authenticator (e.g. after losing their phone).
+     * Remove all of a user's ways to sign in (password, authenticator,
+     * passkeys), give them the one-time password the admin chose and sign
+     * them out everywhere, so they set up again (e.g. after losing their
+     * phone).
      *
      * @throws DomainException if the password is too weak.
      */
@@ -104,10 +105,18 @@ class UserAdminService
         $this->requireAcceptable($oneTimePassword);
 
         $this->passwords->setOneTimePassword($target, $oneTimePassword);
-        $target->totp_secret = null;
-        $target->totp_last_step = null;
+        $this->forgetSignInMethods($target);
         $target->session_version = $target->session_version + 1;
         $target->save();
+    }
+
+    private function forgetSignInMethods(User $user): void
+    {
+        $user->login_password = null;
+        $user->password_changed_at = null;
+        $user->totp_secret = null;
+        $user->totp_last_step = null;
+        \App\Models\Passkey::query()->where('user_id', $user->id)->delete();
     }
 
     /**
@@ -152,6 +161,7 @@ class UserAdminService
             $this->requireAdminsLeftAfterRemoving();
         }
 
+        \App\Models\Passkey::query()->where('user_id', $target->id)->delete();
         $target->delete();
     }
 

@@ -7,18 +7,18 @@ use App\Enums\LoginStatus;
 use App\Middleware\LimitConcurrentLogins;
 use App\Services\AuthService;
 use App\Services\AuthSessionService;
-use App\Services\TotpService;
+use App\Services\LoginMethodService;
+use App\Services\PasskeyService;
 
 /**
- * Sign in (username + authenticator code), first-login setup and sign out.
- *
- * On a first sign-in the one-time password opens setup; the pending setup
- * (user and the new authenticator's secret) is kept in the session, so the
- * one-time password isn't sent again.
+ * Sign in (username and any one method the admin turned on: password,
+ * authenticator code or passkey), first sign-in with a one-time password
+ * (which leads to the Profile page to set up the required methods), and
+ * sign out.
  */
 class AuthController extends Controller
 {
-    private const INVALID_CREDENTIALS = 'Invalid username or code.';
+    private const INVALID_CREDENTIALS = 'Invalid username, password or code.';
 
     private const INVALID_ONE_TIME_PASSWORD = 'Invalid username or one-time password.';
 
@@ -26,15 +26,12 @@ class AuthController extends Controller
 
     private readonly AuthSessionService $sessions;
 
-    private readonly TotpService $totp;
-
     public function __construct()
     {
         parent::__construct();
 
         $this->auth = new AuthService();
         $this->sessions = new AuthSessionService();
-        $this->totp = new TotpService();
     }
 
     public function showLogin()
@@ -56,9 +53,10 @@ class AuthController extends Controller
 
         $username = (string) $this->request->get('username', false);
         $oneTimePassword = (string) $this->request->get('one_time_password', false);
+        $password = (string) $this->request->get('password', false);
         $code = (string) $this->request->get('code', false);
 
-        if ($this->request->validate(['username' => 'username|between:[3,32]']) === false) {
+        if ($this->request->validate(['username' => 'username|between:[3,32]']) === false || ($oneTimePassword === '' && $password === '' && $code === '')) {
             LimitConcurrentLogins::release();
             $this->renderLogin(error: self::INVALID_CREDENTIALS);
 
@@ -70,8 +68,9 @@ class AuthController extends Controller
             LimitConcurrentLogins::release();
 
             if ($result->status === LoginStatus::NeedsSetup && $result->user !== null) {
-                $this->sessions->beginSetup($result->user, $this->totp->generateSecret());
-                $this->response->redirect('/setup');
+                // Signed in, but only to set up the ways to sign in (the Authenticate middleware keeps it to Profile).
+                $this->sessions->start($result->user);
+                $this->response->redirect('/profile');
 
                 return;
             }
@@ -81,7 +80,7 @@ class AuthController extends Controller
             return;
         }
 
-        $result = $this->auth->attempt($username, $code, $this->clientIp());
+        $result = $this->auth->attempt($username, $password, $code, $this->clientIp());
         LimitConcurrentLogins::release();
 
         if ($result->status === LoginStatus::Success && $result->user !== null) {
@@ -94,54 +93,63 @@ class AuthController extends Controller
         $this->respondWithLogin($result, self::INVALID_CREDENTIALS);
     }
 
-    public function showSetup()
+    /**
+     * POST /login/passkey/options (JSON): options for navigator.credentials.get().
+     */
+    public function passkeyOptions()
     {
-        $setup = $this->sessions->pendingSetup();
+        $site = $this->site();
 
-        if ($setup === null) {
-            $this->response->withFlash('notice', 'Setup expired. Sign in with your one-time password again.')->redirect('/login');
+        if ($site === null || !(new LoginMethodService())->isEnabled(LoginMethodService::PASSKEY)) {
+            $this->response->json(['error' => 'Passkeys aren\'t available here.'], 400);
 
             return;
         }
 
-        $this->renderSetup($setup['user']->username, $setup['secret']);
+        $challenge = $this->sessions->newChallenge('login');
+        $this->response->json((new PasskeyService())->assertionOptions($site['rp_id'], $challenge, trim((string) $this->request->get('username', false))));
     }
 
-    public function setup()
+    /**
+     * POST /login/passkey (JSON {credential}): sign in with the passkey.
+     */
+    public function passkeyLogin()
     {
-        $setup = $this->sessions->pendingSetup();
+        $site = $this->site();
+        $challenge = $this->sessions->takeChallenge('login');
+        $credential = $this->request->get('credential', false);
 
-        if ($setup === null) {
-            $this->response->withFlash('notice', 'Setup expired. Sign in with your one-time password again.')->redirect('/login');
+        if ($site === null || $challenge === null || !is_array($credential)) {
+            $this->response->json(['error' => 'The sign-in expired. Try again.'], 400);
 
             return;
         }
 
-        $result = $this->auth->completeSetup($setup['user'], $setup['version'], $setup['secret'], (string) $this->request->get('code', false), $this->clientIp());
+        $result = $this->auth->attemptPasskey($site, $challenge, $credential, $this->clientIp());
 
-        switch ($result->status) {
-            case LoginStatus::Success:
-                $this->sessions->endSetup();
-                $this->sessions->start($result->user);
-                $this->response->redirect('/');
+        if ($result->status === LoginStatus::Success && $result->user !== null) {
+            $this->sessions->start($result->user);
+            $this->response->json(['redirect' => '/']);
 
-                return;
-
-            case LoginStatus::InvalidCode:
-                $this->renderSetup($setup['user']->username, $setup['secret'], "That code doesn't match. Enter the code the app shows now.");
-
-                return;
-
-            case LoginStatus::TooManyAttempts:
-                $this->response->withHeader('Retry-After', (string) $result->retryAfter);
-                $this->renderSetup($setup['user']->username, $setup['secret'], 'Too many attempts. Try again in ' . $this->retryMinutes($result->retryAfter) . ' minute(s).', 429);
-
-                return;
-
-            default:
-                $this->sessions->endSetup();
-                $this->response->withFlash('notice', 'This account was reset or set up in the meantime. Sign in again.')->redirect('/login');
+            return;
         }
+
+        if ($result->status === LoginStatus::TooManyAttempts) {
+            $this->response->withHeader('Retry-After', (string) $result->retryAfter);
+            $this->response->json(['error' => 'Too many attempts. Try again in ' . $this->retryMinutes($result->retryAfter) . ' minute(s).'], 429);
+
+            return;
+        }
+
+        $this->response->json(['error' => "That passkey didn't work here."], 401);
+    }
+
+    /**
+     * The old setup page: setup is on Profile now.
+     */
+    public function showSetup()
+    {
+        $this->response->redirect('/profile');
     }
 
     public function logout()
@@ -164,17 +172,11 @@ class AuthController extends Controller
 
     private function renderLogin(?string $error = null, ?string $notice = null, int $status = 200): void
     {
-        $this->response->view('auth.login', ['error' => $error, 'notice' => $notice], $status);
-    }
-
-    private function renderSetup(string $username, string $secret, ?string $error = null, int $status = 200): void
-    {
-        $this->response->withHeader('Cache-Control', 'no-store');
-        $this->response->view('auth.setup', [
-            'username' => $username,
-            'secret' => $secret,
-            'qr' => $this->totp->qrCode($this->totp->provisioningUri($secret, $username)),
+        $this->response->view('auth.login', [
             'error' => $error,
+            'notice' => $notice,
+            'methods' => (new LoginMethodService())->enabled(),
+            'passkeysHere' => $this->site() !== null,
         ], $status);
     }
 }

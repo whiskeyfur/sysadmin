@@ -163,7 +163,7 @@
                     <a href="/admin/users" @if (str_starts_with($path, '/admin/users')) aria-current="page" @endif>Users</a>
                     <a href="/admin/settings/app" @if ($path === '/admin/settings/app') aria-current="page" @endif>Settings</a>
                 @endif
-                <span class="muted">{{ $auth->user->username }}</span>
+                <a href="/profile" title="How you sign in" @if (str_starts_with($path, '/profile')) aria-current="page" @endif>{{ $auth->user->username }}</a>
                 <form method="post" action="/logout">
                     @csrf
                     <button type="submit" class="secondary">Sign out</button>

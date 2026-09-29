@@ -50,7 +50,7 @@ class SettingsController extends Controller
             return;
         }
 
-        $this->response->withFlash('notice', 'Settings saved. They apply from the next check.')->redirect("/admin/settings/$section");
+        $this->response->withFlash('notice', $section === 'app' ? 'Settings saved.' : 'Settings saved. They apply from the next check.')->redirect("/admin/settings/$section");
     }
 
     private function known(mixed $section): bool

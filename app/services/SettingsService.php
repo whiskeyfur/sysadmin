@@ -8,13 +8,16 @@ use App\Models\User;
 use DomainException;
 
 /**
- * App-wide settings, changed by admins on the settings page of each
- * monitoring area (/admin/settings/{ssl,ssh,mariadb}). Each setting has a
+ * App-wide settings, changed by admins on the settings page of the app
+ * (/admin/settings/app) and of each monitoring area
+ * (/admin/settings/{ssl,ssh,mariadb}). Each setting has a
  * default here and its own validation; unset settings use the default.
  */
 class SettingsService
 {
     public const SSL_WARNING_DAYS = 'ssl_warning_days';
+
+    public const SESSION_TIMEOUT_MINUTES = 'session_timeout_minutes';
 
     public const SSL_IMPORT_NAMES = 'ssl_import_names';
 
@@ -43,6 +46,7 @@ class SettingsService
      */
     public const DEFAULTS = [
         self::SSL_WARNING_DAYS => 7,
+        self::SESSION_TIMEOUT_MINUTES => 30,
         self::SSL_IMPORT_NAMES => 1,
         self::ACCOUNT_WARNING_DAYS => 7,
         self::DISK_WARNING_PERCENT => 85,
@@ -62,6 +66,7 @@ class SettingsService
      * @var array<string, list<string>>
      */
     public const SECTIONS = [
+        'app' => [self::SESSION_TIMEOUT_MINUTES],
         'ssl' => [self::SSL_WARNING_DAYS, self::SSL_IMPORT_NAMES],
         'ssh' => [self::DISK_WARNING_PERCENT, self::DISK_CRITICAL_PERCENT, self::ACCOUNT_WARNING_DAYS],
         'mariadb' => [
@@ -80,6 +85,7 @@ class SettingsService
      */
     private const INTEGER_RANGES = [
         self::SSL_WARNING_DAYS => ['min' => 1, 'max' => 365],
+        self::SESSION_TIMEOUT_MINUTES => ['min' => 5, 'max' => AuthSessionService::MAX_TIMEOUT_MINUTES],
         self::SSL_IMPORT_NAMES => ['min' => 0, 'max' => 1],
         self::ACCOUNT_WARNING_DAYS => ['min' => 1, 'max' => 365],
         self::DISK_WARNING_PERCENT => ['min' => 1, 'max' => 100],
@@ -192,6 +198,7 @@ class SettingsService
     {
         return match ($key) {
             self::SSL_WARNING_DAYS => 'SSL warning period',
+            self::SESSION_TIMEOUT_MINUTES => 'Sign-out after inactivity',
             self::SSL_IMPORT_NAMES => 'Adding hostnames from certificates',
             self::ACCOUNT_WARNING_DAYS => 'Account rotation warning period',
             self::DISK_WARNING_PERCENT => 'disk warning level',

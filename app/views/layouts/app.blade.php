@@ -160,6 +160,7 @@
             <nav class="secondary" aria-label="Configuration and account">
                 @if ($auth->isAdmin())
                     <a href="/admin/users" @if (str_starts_with($path, '/admin/users')) aria-current="page" @endif>Users</a>
+                    <a href="/admin/settings/app" @if ($path === '/admin/settings/app') aria-current="page" @endif>Settings</a>
                 @endif
                 <span class="muted">{{ $auth->user->username }}</span>
                 <form method="post" action="/logout">

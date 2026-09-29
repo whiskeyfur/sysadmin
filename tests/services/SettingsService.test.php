@@ -90,3 +90,15 @@ test('every setting belongs to one settings page', function () {
     expect($listed)->toEqualCanonicalizing(array_keys(SettingsService::DEFAULTS))
         ->and(count($listed))->toBe(count(array_unique($listed)));
 });
+
+test('sessions end after the idle timeout, 30 minutes by default', function () {
+    $minutes = $this->settings->integer(SettingsService::SESSION_TIMEOUT_MINUTES);
+    $now = 1_800_000_000;
+
+    expect($minutes)->toBe(30)
+        ->and(App\Services\AuthSessionService::idleTooLong($now - 30 * 60, $now, $minutes))->toBeFalse()
+        ->and(App\Services\AuthSessionService::idleTooLong($now - 30 * 60 - 1, $now, $minutes))->toBeTrue()
+        // A session from before activity was recorded counts as idle.
+        ->and(App\Services\AuthSessionService::idleTooLong(0, $now, $minutes))->toBeTrue()
+        ->and(fn () => $this->settings->update($this->admin, ['session_timeout_minutes' => '2']))->toThrow(DomainException::class, '5 to 1440');
+});

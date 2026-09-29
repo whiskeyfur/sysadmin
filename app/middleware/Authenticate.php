@@ -4,6 +4,7 @@ namespace App\Middleware;
 
 use App\DTOs\AuthContext;
 use App\Services\AuthSessionService;
+use App\Services\SettingsService;
 use Leaf\Middleware;
 
 /**
@@ -14,9 +15,15 @@ class Authenticate extends Middleware
 {
     public function call()
     {
-        $context = (new AuthSessionService())->current();
+        $sessions = new AuthSessionService();
+        $context = $sessions->current();
 
         if ($context === null) {
+            if ($sessions->timedOut) {
+                $minutes = (new SettingsService())->integer(SettingsService::SESSION_TIMEOUT_MINUTES);
+                response()->withFlash('notice', "You were signed out after $minutes minute" . ($minutes === 1 ? '' : 's') . ' without activity.');
+            }
+
             response()->redirect('/login');
 
             return;

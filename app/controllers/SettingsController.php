@@ -7,19 +7,20 @@ use App\Services\SettingsService;
 use DomainException;
 
 /**
- * Settings of each monitoring area (admins): /admin/settings/{ssl,ssh,mariadb},
- * reached from that area's menu.
+ * App settings (/admin/settings/app, from the navbar's right side) and each
+ * monitoring area's settings (/admin/settings/{ssl,ssh,mariadb}, from its menu).
+ * Admins only.
  */
 class SettingsController extends Controller
 {
-    private const TITLES = ['ssl' => 'SSL settings', 'ssh' => 'SSH settings', 'mariadb' => 'MariaDB settings'];
+    private const TITLES = ['app' => 'App settings', 'ssl' => 'SSL settings', 'ssh' => 'SSH settings', 'mariadb' => 'MariaDB settings'];
 
     /**
      * The old single settings page.
      */
     public function index()
     {
-        $this->response->redirect('/admin/settings/ssh');
+        $this->response->redirect('/admin/settings/app');
     }
 
     public function show($section)

@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — App settings page (navbar right) with the sign-in idle timeout (default 30 min); sessions moved to storage/framework/sessions with the app's own GC, since Ubuntu's sessionclean ended them after 24 idle minutes regardless (`AuthSessionService::configureSessionStorage()/idleTooLong()`).
 * 2026-09-29 — Import MariaDB users ('name'@'%' only) as database accounts without passwords, unusable for logins until one is recorded; every account records its origin (manual, server settings, import) (`AccountService::importMysqlUsers()`, `Account::canLogIn()`, `accounts.origin*`).
 * 2026-09-29 — MariaDB data without SSH: disk space (DISKS plugin), file I/O (performance_schema) and database sizes as optional checks, charted on the MariaDB report; scheduled SSL checks add new SAN hostnames from valid certificates (setting) (`DisksCheck`, `FileIoCheck`, `DatabaseSizeCheck`, `SslMonitorService::addNames()`).
 * 2026-09-29 — MariaDB logs imported on a schedule (every 60 min by default, MariaDB setting), reading only new bytes per file (inode + offset) and still importing when only MariaDB is down; last outcome shown on the report (`ScheduledCheckService::importLogIfDue()`, `MariadbLogService::importNow()/readNew()`).
 * 2026-09-29 — SSL reports: days until expiry per certificate (or per place served) with a warning-period line and a checks table; log import streams and batches entries (a 5 MB log exhausted 128 MB before) (`SslReportService`, `MariadbLogParser::errorEntries()`, `MariadbLogService::store()`).
-* 2026-09-29 — MariaDB log import over SSH: reads the server's real option files (my_print_defaults list, includes followed) to find the error/slow logs or the systemd journal, parses and stores entries (`mariadb_log_entries`), shown on the MariaDB report with a count chart (`MariadbLogService`, `MariadbConfigParser`, `MariadbLogParser`).
 
 ---
 

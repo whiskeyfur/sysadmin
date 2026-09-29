@@ -19,7 +19,14 @@
 
         <form method="post" action="/admin/settings/{{ $section }}">
             @csrf
-            @if ($section === 'ssl')
+            @if ($section === 'app')
+                <fieldset>
+                    <legend>Sign-in</legend>
+                    <label for="session_timeout_minutes">Sign users out after (minutes without activity)</label>
+                    <input type="text" id="session_timeout_minutes" name="session_timeout_minutes" value="{{ $value('session_timeout_minutes') }}" inputmode="numeric" required>
+                    <p class="hint">Anyone idle this long signs in again with their authenticator (5–{{ \App\Services\AuthSessionService::MAX_TIMEOUT_MINUTES }}, default {{ $default('session_timeout_minutes') }}). Applies to sessions already open, from their next request.</p>
+                </fieldset>
+            @elseif ($section === 'ssl')
                 <fieldset>
                     <legend>Certificates</legend>
                     <label for="ssl_warning_days">Warning period (days)</label>

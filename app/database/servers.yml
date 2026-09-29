@@ -1,6 +1,10 @@
 # Servers the app monitors (ServerService).
 # ssh_host_key: the server's trusted SSH host key ("type base64"); null until
 #   an admin trusts it. Cleared when hostname or ssh_port changes.
+# ssh_auth: "key" (the app's key) or "password" (fallback for servers that refuse key login).
+# ssh_password: only for ssh_auth "password"; encrypted with SecretCipher, write-only.
+# ssh_password_allowed: opt-in; when false (default) the app never attempts a password login
+#   on this server (e.g. fail2ban bans on the first attempt).
 # mysql_password: encrypted with SecretCipher; write-only in the UI.
 # mysql_tls: "off", "encrypt" (no certificate check) or "verify" (CA + hostname).
 # mysql_tls_ca: optional CA certificate(s) in PEM for "verify"; null = system CAs.
@@ -16,6 +20,15 @@ columns:
   ssh_host_key:
     type: text
     nullable: true
+  ssh_auth:
+    type: string
+    default: 'key'
+  ssh_password:
+    type: text
+    nullable: true
+  ssh_password_allowed:
+    type: boolean
+    default: false
   mysql_enabled:
     type: boolean
     default: false

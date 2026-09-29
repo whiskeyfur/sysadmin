@@ -31,7 +31,12 @@
                 </div>
                 <label for="ssh_username">Username</label>
                 <input type="text" id="ssh_username" name="ssh_username" value="{{ $server->ssh_username }}" autocapitalize="none" required>
-                <p class="hint">The app logs in with its own key, shown on the Servers page. Changing the hostname or port means the host key must be trusted again.</p>
+                <label class="check"><input type="checkbox" name="ssh_password_allowed" value="1" {{ $server->ssh_password_allowed ? 'checked' : '' }}> Allow password login</label>
+                <p class="hint">Off by default: the app then never tries a password on this server, which matters for servers that ban password attempts (e.g. fail2ban). When on, a password can install the app's key during setup, and is kept (encrypted) only if the server refuses key login.</p>
+                @if ($server->exists)
+                    <p class="hint">Currently logs in with {{ $server->ssh_auth === 'password' ? 'a stored password' : "the app's key" }}. <a href="/admin/servers/{{ $server->id }}/ssh-setup">Set up SSH again</a>.</p>
+                @endif
+                <p class="hint">Changing the hostname, port or username means SSH must be set up again.</p>
             </fieldset>
 
             <fieldset>
@@ -68,7 +73,7 @@
                         <textarea id="mysql_tls_ca" name="mysql_tls_ca" rows="5" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----">{{ $server->mysql_tls_ca }}</textarea>
                         <p class="hint">Leave blank if the database's certificate comes from a public CA. For an internal or self-signed setup, paste the CA certificate (PEM), e.g. the file MariaDB's <code>ssl_ca</code> points to. The certificate must be issued for the host above.</p>
                         @foreach ($caCertificates as $certificate)
-                            <p class="hint">Current CA: <strong>{{ $certificate['subject'] }}</strong>, expires {{ $certificate['expires']->format('Y-m-d') }}{{ $certificate['expires']->isPast() ? ' (expired)' : '' }}.</p>
+                            <p class="hint">Current CA: <strong>{{ $certificate['subject'] }}</strong>, expires {{ \App\Utils\LocalTime::format($certificate['expires'], 'Y-m-d') }}{{ $certificate['expires']->isPast() ? ' (expired)' : '' }}.</p>
                         @endforeach
                     </div>
                 </div>

@@ -12,15 +12,9 @@
 
         @if ($result->untrustedHostKey)
             <div class="alert warn" role="status">
-                <p>First connection: {{ $server->hostname }} presented this host key. Check it on the server before trusting it, or you could be trusting an impostor.</p>
-                <p><code>{{ $result->untrustedHostKey->type }} {{ $result->untrustedHostKey->fingerprint() }}</code></p>
-                <p>On the server, run <code>ssh-keygen -lf /etc/ssh/ssh_host_{{ str_contains($result->untrustedHostKey->type, 'rsa') ? 'rsa' : (str_contains($result->untrustedHostKey->type, 'ecdsa') ? 'ecdsa' : 'ed25519') }}_key.pub</code> and compare the SHA256 value.</p>
+                <p>SSH isn't set up yet: the server's host key ({{ $result->untrustedHostKey->fingerprint() }}) has to be checked and trusted first.</p>
             </div>
-            <form method="post" action="/admin/servers/{{ $server->id }}/trust">
-                @csrf
-                <input type="hidden" name="fingerprint" value="{{ $result->untrustedHostKey->fingerprint() }}">
-                <button type="submit">It matches: trust this key and test again</button>
-            </form>
+            <a class="button" href="/admin/servers/{{ $server->id }}/ssh-setup">Set up SSH</a>
         @endif
 
         @if ($result->mysqlMessage !== null)

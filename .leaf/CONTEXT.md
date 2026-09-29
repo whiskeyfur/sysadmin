@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — SSH setup flow: trust host key, try the app key, optionally install it with a one-time password, fall back to a stored password only for servers refusing keys; password login is opt-in per server (`SshSetupService`, `servers/setup.blade.php`).
 * 2026-09-29 — MySQL TLS per server: verify (default, pasted CA or system CAs), encrypt-only, or off (`MysqlService`, `CaCertificateService`, `servers.yml`).
 * 2026-09-29 — Server configurations: app SSH keypair, host key trust, MySQL over direct TCP, connection test (`ServerService`, `SshService`, `SshKeyService`, `MysqlService`, `ServerController`, `app/views/servers/*`).
 * 2026-09-29 — Removed encryption at rest, master key, key files and registration per the client; admins create accounts, first sign-in forces password + authenticator setup, passwords expire after 30 days (`AuthService`, `PasswordService`, `SecretCipher`, `UserAdminService`, `PasswordController`).
 * 2026-09-29 — Admin user management with key rotation (superseded by the change above; kept in git history).
-* 2026-09-29 — Login rate limiting: per-IP/per-username limits and a cap of 4 concurrent password hashes (`LoginThrottleService`, `LimitConcurrentLogins`).
 
 ---
 
@@ -110,6 +110,8 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * Per-username lockouts (10 failures / 15 min) are accepted even though they let anyone lock an account out briefly.
 * Client IP comes from `REMOTE_ADDR`, not Leaf's `getIp()` — Leaf trusts spoofable forwarding headers and there is no proxy in front of Apache.
 * SSH uses phpseclib (user's preference) with one app-generated Ed25519 key; admins add its public key to servers — the private key never leaves the app.
+* Password login is opt-in per server and off by default — this machine's fail2ban bans on the first password attempt; the user said "no passwords, period" for it.
+* SSH passwords are kept (encrypted) only for servers that refuse key login after the key is installed — the user chose this fallback.
 * New servers default to verified MySQL TLS; existing ones were migrated to `off` so nothing broke — encrypt-only is offered with a warning for servers without a usable CA.
 * MySQL is direct TCP only — phpseclib can't forward ports and the user chose not to add OpenSSH tunnels for now.
 * SSH private key and MySQL passwords are encrypted with the app key, like authenticator secrets — the user's choice.

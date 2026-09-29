@@ -4,13 +4,13 @@ namespace App\Controllers;
 
 use App\DTOs\AuthContext;
 use App\DTOs\ServerTestResult;
-use App\Exceptions\ServerConnectionException;
+use App\DTOs\SshSetupResult;
 use App\Models\Server;
 use App\Services\CaCertificateService;
 use App\Services\ServerService;
 use App\Services\ServerTestService;
 use App\Services\SshKeyService;
-use App\Services\SshService;
+use App\Services\SshSetupService;
 use DomainException;
 
 /**
@@ -19,7 +19,7 @@ use DomainException;
  */
 class ServerController extends Controller
 {
-    private const FIELDS = ['name', 'hostname', 'ssh_port', 'ssh_username', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_tls', 'mysql_tls_ca'];
+    private const FIELDS = ['name', 'hostname', 'ssh_port', 'ssh_username', 'ssh_password_allowed', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_username', 'mysql_tls', 'mysql_tls_ca'];
 
     private readonly ServerService $servers;
 
@@ -58,7 +58,7 @@ class ServerController extends Controller
             return;
         }
 
-        $this->response->withFlash('notice', "Added {$server->name}. Add the app's public key to {$server->ssh_username}'s authorized_keys on the server, then test the connection.")->redirect('/servers');
+        $this->response->redirect("/admin/servers/{$server->id}/ssh-setup");
     }
 
     public function edit($id)
@@ -108,11 +108,16 @@ class ServerController extends Controller
         }
     }
 
-    /**
-     * Trust the host key the admin checked. The key is fetched again here and
-     * must still match the fingerprint they saw.
-     */
-    public function trust($id)
+    public function sshSetup($id)
+    {
+        $server = $this->findOrRedirect($id);
+
+        if ($server !== null) {
+            $this->renderSetup($server);
+        }
+    }
+
+    public function runSshSetup($id)
     {
         $server = $this->findOrRedirect($id);
 
@@ -120,24 +125,11 @@ class ServerController extends Controller
             return;
         }
 
-        $fingerprint = (string) $this->request->get('fingerprint', false);
+        $fingerprint = $this->request->get('fingerprint', false);
+        $password = $server->ssh_password_allowed ? (string) $this->request->get('password', false) : null;
 
-        try {
-            $presented = (new SshService())->presentedHostKey($server);
-        } catch (ServerConnectionException $e) {
-            $this->response->withFlash('error', $e->getMessage())->redirect('/servers');
-
-            return;
-        }
-
-        if (!hash_equals($presented->fingerprint(), $fingerprint)) {
-            $this->response->withFlash('error', "{$server->name} now presents a different host key from the one you checked. Nothing was trusted; test again.")->redirect('/servers');
-
-            return;
-        }
-
-        $this->servers->trustHostKey($this->authContext()->user, $server, $presented);
-        $this->renderTest($server, (new ServerTestService())->test($this->authContext()->user, $server));
+        $result = (new SshSetupService())->setUp($this->authContext()->user, $server, is_string($fingerprint) ? $fingerprint : null, $password);
+        $this->renderSetup($server->fresh() ?? $server, $result);
     }
 
     private function renderForm(Server $server, ?string $error = null): void
@@ -148,6 +140,21 @@ class ServerController extends Controller
             'caCertificates' => $server->mysql_tls_ca ? (new CaCertificateService())->describe($server->mysql_tls_ca) : [],
             'error' => $error,
         ], $error === null ? 200 : 422);
+    }
+
+    private function renderSetup(Server $server, ?SshSetupResult $result = null): void
+    {
+        // Only fetch the host key when it still has to be trusted.
+        [$hostKey, $hostKeyError] = $server->ssh_host_key === null ? (new SshSetupService())->presentedHostKey($server) : [null, null];
+
+        $this->response->view('servers.setup', [
+            'auth' => $this->authContext(),
+            'server' => $server,
+            'hostKey' => $hostKey,
+            'hostKeyError' => $hostKeyError,
+            'publicKey' => (new SshKeyService())->publicKey(),
+            'result' => $result,
+        ]);
     }
 
     private function renderTest(Server $server, ServerTestResult $result): void

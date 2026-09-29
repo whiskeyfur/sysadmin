@@ -22,8 +22,10 @@ class SshService
 
     public const COMMAND_TIMEOUT = 20;
 
-    public function __construct(private readonly SshKeyService $keys = new SshKeyService())
-    {
+    public function __construct(
+        private readonly SshKeyService $keys = new SshKeyService(),
+        private readonly ServerService $servers = new ServerService(),
+    ) {
     }
 
     /**
@@ -43,13 +45,83 @@ class SshService
     }
 
     /**
-     * Connect, verify the host key and log in.
+     * Connect, verify the host key and log in the server's configured way:
+     * the app's key, or the stored password for servers that refuse keys.
      *
      * @throws HostKeyUnknownException
      * @throws HostKeyMismatchException
      * @throws ServerConnectionException
      */
     public function connect(Server $server): SSH2
+    {
+        if ($server->ssh_auth === Server::SSH_AUTH_PASSWORD && $server->ssh_password_allowed) {
+            return $this->connectWithPassword($server, (string) $this->servers->sshPassword($server));
+        }
+
+        return $this->connectWithKey($server);
+    }
+
+    /**
+     * @throws HostKeyUnknownException
+     * @throws HostKeyMismatchException
+     * @throws ServerConnectionException
+     */
+    public function connectWithKey(Server $server): SSH2
+    {
+        return $this->connectVerified(
+            $server,
+            fn (SSH2 $ssh) => $ssh->login($server->ssh_username, $this->keys->privateKey()),
+            "SSH key login as {$server->ssh_username} was refused. The app's public key may not be in that user's ~/.ssh/authorized_keys, or the server doesn't allow key login.",
+        );
+    }
+
+    /**
+     * Log in with a password. Refused outright unless the server allows
+     * password login, and only ever sent after the host key is verified.
+     *
+     * @throws HostKeyUnknownException
+     * @throws HostKeyMismatchException
+     * @throws ServerConnectionException
+     */
+    public function connectWithPassword(Server $server, string $password): SSH2
+    {
+        if (!$server->ssh_password_allowed) {
+            throw new ServerConnectionException("Password login is not allowed for {$server->name}; no password was tried.");
+        }
+
+        return $this->connectVerified(
+            $server,
+            fn (SSH2 $ssh) => $ssh->login($server->ssh_username, $password),
+            "SSH password login as {$server->ssh_username} was refused: wrong password, or the server doesn't allow password login.",
+        );
+    }
+
+    /**
+     * Run a command on an open connection and return its output.
+     *
+     * @throws ServerConnectionException also when the command exits non-zero.
+     */
+    public function exec(SSH2 $ssh, string $command): string
+    {
+        $output = $ssh->exec($command);
+
+        if ($ssh->isTimeout()) {
+            throw new ServerConnectionException('The command timed out after ' . self::COMMAND_TIMEOUT . ' seconds.');
+        }
+
+        $status = $ssh->getExitStatus();
+
+        if ($status !== false && $status !== 0) {
+            throw new ServerConnectionException("The command exited with status $status: " . trim((string) $output));
+        }
+
+        return (string) $output;
+    }
+
+    /**
+     * @param callable(SSH2): bool $login
+     */
+    private function connectVerified(Server $server, callable $login, string $refusedMessage): SSH2
     {
         $trusted = $server->ssh_host_key !== null ? HostKey::fromString($server->ssh_host_key) : null;
         $ssh = $this->open($server, $trusted);
@@ -68,17 +140,17 @@ class SshService
         }
 
         try {
-            $loggedIn = $ssh->login($server->ssh_username, $this->keys->privateKey());
+            $loggedIn = $login($ssh);
         } catch (Throwable $e) {
+            $ssh->disconnect();
+
             throw new ServerConnectionException('SSH login failed: ' . $e->getMessage(), 0, $e);
         }
 
         if (!$loggedIn) {
             $ssh->disconnect();
 
-            throw new ServerConnectionException(
-                "SSH login as {$server->ssh_username} was refused. Check that the app's public key is in that user's ~/.ssh/authorized_keys.",
-            );
+            throw new ServerConnectionException($refusedMessage);
         }
 
         $ssh->setTimeout(self::COMMAND_TIMEOUT);
@@ -96,19 +168,7 @@ class SshService
         $ssh = $this->connect($server);
 
         try {
-            $output = $ssh->exec($command);
-
-            if ($ssh->isTimeout()) {
-                throw new ServerConnectionException('The command timed out after ' . self::COMMAND_TIMEOUT . ' seconds.');
-            }
-
-            $status = $ssh->getExitStatus();
-
-            if ($status !== false && $status !== 0) {
-                throw new ServerConnectionException("The command exited with status $status: " . trim((string) $output));
-            }
-
-            return (string) $output;
+            return $this->exec($ssh, $command);
         } finally {
             $ssh->disconnect();
         }

@@ -74,6 +74,35 @@ class ServerService
         $server->save();
     }
 
+    /**
+     * Log in with the app's key from now on; forget any stored SSH password.
+     */
+    public function useKeyAuth(Server $server): void
+    {
+        $server->ssh_auth = Server::SSH_AUTH_KEY;
+        $server->ssh_password = null;
+        $server->save();
+    }
+
+    /**
+     * Fallback for servers that refuse key login: store the SSH password (encrypted).
+     */
+    public function usePasswordAuth(Server $server, string $password): void
+    {
+        if (!$server->ssh_password_allowed) {
+            throw new DomainException("Password login is not allowed for {$server->name}.");
+        }
+
+        $server->ssh_auth = Server::SSH_AUTH_PASSWORD;
+        $server->ssh_password = $this->cipher->encrypt($password, $this->sshPasswordContext($server));
+        $server->save();
+    }
+
+    public function sshPassword(Server $server): ?string
+    {
+        return $server->ssh_password === null ? null : $this->cipher->decrypt($server->ssh_password, $this->sshPasswordContext($server));
+    }
+
     public function mysqlPassword(Server $server): ?string
     {
         return $server->mysql_password === null ? null : $this->cipher->decrypt($server->mysql_password, $this->passwordContext($server));
@@ -120,10 +149,22 @@ class ServerService
             $server->ssh_host_key = null;
         }
 
+        // A stored SSH password belongs to one user on one server; start setup over.
+        if (!$creating && ($server->hostname !== $hostname || $server->ssh_port !== $sshPort || $server->ssh_username !== $sshUsername)) {
+            $server->ssh_auth = Server::SSH_AUTH_KEY;
+            $server->ssh_password = null;
+        }
+
         $server->name = $name;
         $server->hostname = $hostname;
         $server->ssh_port = $sshPort;
         $server->ssh_username = $sshUsername;
+        $server->ssh_password_allowed = filter_var($input['ssh_password_allowed'] ?? false, FILTER_VALIDATE_BOOL);
+
+        if (!$server->ssh_password_allowed) {
+            $server->ssh_auth = Server::SSH_AUTH_KEY;
+            $server->ssh_password = null;
+        }
         $server->mysql_enabled = $mysqlEnabled;
 
         if ($mysqlEnabled) {
@@ -201,6 +242,11 @@ class ServerService
         if (!$admin->isAdmin()) {
             throw new AuthorizationException('Only admins can manage servers.');
         }
+    }
+
+    private function sshPasswordContext(Server $server): string
+    {
+        return 'ssh-password:' . $server->id;
     }
 
     private function passwordContext(Server $server): string

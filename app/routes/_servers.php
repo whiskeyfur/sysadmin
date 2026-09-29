@@ -12,5 +12,6 @@ app()->group('/admin/servers', ['middleware' => RequireAdmin::class, function ()
     app()->post('/{id}', 'ServerController@update');
     app()->post('/{id}/delete', 'ServerController@delete');
     app()->post('/{id}/test', 'ServerController@test');
-    app()->post('/{id}/trust', 'ServerController@trust');
+    app()->get('/{id}/ssh-setup', 'ServerController@sshSetup');
+    app()->post('/{id}/ssh-setup', 'ServerController@runSshSetup');
 }]);

@@ -30,7 +30,8 @@
                     @foreach ($servers as $server)
                         <tr>
                             <td>{{ $server->name }}</td>
-                            <td><code>{{ $server->ssh_username }}@{{ $server->hostname }}:{{ $server->ssh_port }}</code></td>
+                            {{-- Not "}}@{{": Blade treats @{{ as an escaped, literal {{. --}}
+                            <td><code>{{ $server->ssh_username . '@' . $server->hostname . ':' . $server->ssh_port }}</code></td>
                             <td>
                                 @if ($server->mysql_enabled)
                                     <code>{{ $server->mysqlHost() }}:{{ $server->mysql_port }}</code>
@@ -50,7 +51,7 @@
                                     <span class="badge untested">Not tested</span>
                                 @else
                                     <span class="badge {{ $server->last_test_ok ? 'ok' : 'failed' }}" title="{{ $server->last_test_message }}">{{ $server->last_test_ok ? 'OK' : 'Failed' }}</span>
-                                    <span class="muted">{{ $server->last_tested_at->format('Y-m-d H:i') }}</span>
+                                    <span class="muted">{{ \App\Utils\LocalTime::format($server->last_tested_at) }}</span>
                                 @endif
                             </td>
                             @if ($auth->isAdmin())

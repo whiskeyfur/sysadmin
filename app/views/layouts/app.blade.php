@@ -57,6 +57,10 @@
         fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 4px 16px 16px; margin: 20px 0 0; }
         legend { font-weight: 600; padding: 0 6px; }
         .check { display: flex; gap: 8px; align-items: center; font-weight: 600; margin-top: 12px; }
+        .steps { padding-left: 20px; }
+        .steps li { margin: 6px 0; }
+        .steps li.ok::marker { content: '✓  '; color: var(--notice); }
+        .steps li.failed::marker { content: '✗  '; color: var(--error); }
         .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 0 12px; }
         .actions { margin-top: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; }

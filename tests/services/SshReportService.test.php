@@ -1,0 +1,59 @@
+<?php
+
+use App\Enums\HealthStatus;
+use App\Models\HealthCheck as StoredCheck;
+use App\Models\User;
+use App\Services\ServerService;
+use App\Services\SshReportService;
+use App\Utils\LineChart;
+use Carbon\Carbon;
+
+beforeEach(function () {
+    $this->servers = new ServerService($this->cipher);
+    $this->admin = new User(['username' => 'admin', 'role' => User::ROLE_ADMIN]);
+    $this->server = $this->servers->create($this->admin, ['name' => 'web', 'hostname' => 'web.example.com', 'ssh_port' => 22, 'ssh_username' => 'deploy']);
+    $this->reports = new SshReportService($this->clock);
+
+    // One stored SSH run, $hoursAgo before the test clock.
+    $this->run = function (int $hoursAgo, array $mounts, array $load, float $memory, ?float $swap) {
+        $at = Carbon::instance($this->clock->now())->subHours($hoursAgo);
+        $store = fn (string $key, ?float $value, array $details) => StoredCheck::query()->create([
+            'server_id' => $this->server->id, 'check_key' => $key, 'status' => HealthStatus::Ok, 'summary' => 'x',
+            'value' => $value, 'details' => $details, 'checked_at' => $at,
+        ]);
+        $store('disk', max(array_column($mounts, 'used_percent')), ['mounts' => $mounts]);
+        $store('load', round($load[1] / $load[3], 2), ['load1' => $load[0], 'load5' => $load[1], 'load15' => $load[2], 'cores' => $load[3]]);
+        $store('memory', $memory, ['swap_percent' => $swap]);
+    };
+});
+
+test('a report turns stored runs into series per filesystem, load and memory, and table rows', function () {
+    ($this->run)(30, ['/' => ['used_percent' => 40.0], '/data' => ['used_percent' => 70.0]], [0.5, 0.4, 0.3, 2], 50.0, 1.0);
+    ($this->run)(5, ['/' => ['used_percent' => 45.0], '/data' => ['used_percent' => 72.5]], [1.5, 1.2, 0.9, 2], 60.0, null);
+    ($this->run)(24 * 40, ['/' => ['used_percent' => 10.0]], [9, 9, 9, 1], 99.0, 99.0); // outside every range
+
+    $report = $this->reports->report($this->server, '7d');
+
+    expect(array_keys($report['disk']))->toBe(['/', '/data'])
+        ->and(array_column($report['disk']['/data'], 1))->toBe([70.0, 72.5])
+        ->and(array_column($report['load']['5 min'], 1))->toBe([0.4, 1.2])
+        ->and(array_column($report['memory']['Memory'], 1))->toBe([50.0, 60.0])
+        ->and(array_column($report['memory']['Swap'], 1))->toBe([1.0])
+        ->and(count($report['rows']))->toBe(2)
+        ->and($report['rows'][1])->toMatchArray(['disk' => 72.5, 'disk_mount' => '/data', 'load1' => 1.5, 'cores' => 2, 'per_core' => 0.6, 'memory' => 60.0, 'swap' => null]);
+
+    expect(count($this->reports->report($this->server, '24h')['rows']))->toBe(1)
+        ->and(count($this->reports->report($this->server, 'bogus')['rows']))->toBe(2);
+});
+
+test('charts are inline SVG with a line and hoverable points per series, and escape names', function () {
+    $svg = LineChart::render('Disk <used>', ['/data & more' => [[100, 20.0], [200, 40.0]], 'solo' => [[150, 10.0]]], 100, 200, '%', 100);
+
+    expect($svg)->toContain('<svg class="chart"')
+        ->and(substr_count($svg, '<polyline'))->toBe(1)
+        ->and(substr_count($svg, '<circle'))->toBe(3)
+        ->and($svg)->toContain('Disk &lt;used&gt;')
+        ->and($svg)->toContain('/data &amp; more: 40%')
+        ->and($svg)->not->toContain('<used>')
+        ->and(LineChart::render('Empty', [], 0, 1))->toContain('No data');
+});

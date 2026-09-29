@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — SSH reports: disk per filesystem, load and memory/swap over 24 h / 7 d / 30 d as server-rendered SVG line charts plus a data table, from the stored check runs (`SshReportService`, `App\Utils\LineChart`, `reports/ssh.blade.php`).
 * 2026-09-29 — Add item in each module's menu: SSL › Add (`/admin/ssl/new`, the certificate form moved off the SSL list), SSH › Add and MariaDB › Add (`/admin/ssh/new`, `/admin/mariadb/new`: that module's server form) (`SslController::create()`, `ServerConfigController::createSsh()/createMariadb()`).
 * 2026-09-29 — Servers managed per module: SSH/MariaDB pages add (new or existing server), edit and remove only their module; MariaDB logins pick database accounts; deleting a server drops its certificate links; menu highlights only the current item (`ServerService::saveModule()`/`removeModule()`, `ServerConfigController`, `servers/form.blade.php`).
 * 2026-09-29 — Accounts split into SSH and database accounts (own menus; mixed legacy accounts split in two); Reports placeholders first in each menu; all tables sortable and filterable; SSL list wider with an Expires column; SSH/MariaDB/overview pages wide and top-aligned (`AccountService::assignServices()`, `ReportController`, `layouts/app.blade.php`, `SslCertificate::expiresAt()`).
 * 2026-09-29 — SSL list: hostnames fold out in a row under each certificate; `config/app.php` published so `VIEWS_CACHE_PATH` gives dev servers their own Blade cache (a shared one broke the live site with touch() errors) (`ssl/index.blade.php`, `config/app.php`).
-* 2026-09-29 — Left navbar items are dropdowns: SSL [Test, Settings], SSH [Test, Accounts, Settings], MariaDB [Test, Settings]; settings split per area (`/admin/settings/{section}`), with new MariaDB threshold settings (`SettingsService::SECTIONS`, `SettingsController`, `HealthCheckService::defaultChecks()`, `layouts/app.blade.php`).
 
 ---
 

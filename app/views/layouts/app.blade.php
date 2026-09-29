@@ -33,6 +33,14 @@
         button.fold[aria-expanded="true"]::before { content: '▾ '; }
         tr.fold-row td { background: var(--code-bg); padding-top: 6px; padding-bottom: 6px; }
         ul.hostnames { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+        figure.chart { margin: 0; }
+        figure.chart figcaption { font-weight: 600; margin-bottom: 8px; }
+        svg.chart { display: block; width: 100%; height: auto; }
+        svg.chart .grid { stroke: currentColor; opacity: .12; }
+        svg.chart .axis { fill: currentColor; opacity: .6; font-size: 12px; }
+        figure.chart .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-size: 13px; }
+        figure.chart .legend i { display: inline-block; width: 12px; height: 3px; margin-right: 6px; vertical-align: middle; border-radius: 2px; }
+        .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
         details.menu { position: relative; }
         details.menu summary { cursor: pointer; list-style: none; color: var(--accent); }
         details.menu summary::-webkit-details-marker { display: none; }

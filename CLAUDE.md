@@ -58,7 +58,7 @@ The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice
 
 ## Accounts and sign-in
 
-The client decided against encryption at rest: app data is stored in plain SQLite. Git history up to commit `2aa2f1f` has the earlier encrypted design (master key, key files, registration) if it's ever needed again.
+The client decided against encryption at rest: app data is stored in plain SQLite. Git history up to commit `863d3e9` has the earlier encrypted design (master key, key files, registration) if it's ever needed again.
 
 ### Rules
 

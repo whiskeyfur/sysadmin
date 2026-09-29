@@ -100,7 +100,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 * This is a Leaf MVC app — all important files are in the `app` directory.
 * Leaf MVC best practice wins over other conventions — the user's explicit rule; the security rules in `CLAUDE.md` are the exception.
-* No encryption at rest, no master key, no key files, no self-registration — the client's decision (2026-09-29); the earlier encrypted design is in git history up to `2aa2f1f`.
+* No encryption at rest, no master key, no key files, no self-registration — the client's decision (2026-09-29); the earlier encrypted design is in git history up to `863d3e9`.
 * Admins create accounts with a one-time temporary password; first sign-in forces a new password and authenticator enrolment — the client's requirement.
 * Passwords expire every 30 days — the client's requirement.
 * At least one admin; admins can't act on their own account — the client said one admin is fine.

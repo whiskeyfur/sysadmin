@@ -3,7 +3,7 @@
 namespace App\Controllers;
 
 use App\DTOs\AuthContext;
-use App\Services\UserAdminService;
+use App\Services\PasswordService;
 
 class DashboardController extends Controller
 {
@@ -11,12 +11,12 @@ class DashboardController extends Controller
     {
         /** @var AuthContext $auth */
         $auth = $this->request->next('auth');
-        $admins = new UserAdminService();
+        $changedAt = $auth->user->password_changed_at;
 
         $this->response->view('dashboard', [
             'auth' => $auth,
-            'needsSecondAdmin' => $admins->needsSecondAdmin((string) $auth->masterKey),
-            'minimumAdmins' => UserAdminService::MINIMUM_ADMINS,
+            'notice' => $this->request->flash('notice'),
+            'passwordExpiresAt' => $changedAt?->copy()->addDays(PasswordService::MAX_AGE_DAYS),
         ]);
     }
 }

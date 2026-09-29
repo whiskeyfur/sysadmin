@@ -7,11 +7,12 @@ use App\Enums\LoginStatus;
 use App\Middleware\LimitConcurrentLogins;
 use App\Services\AuthService;
 use App\Services\AuthSessionService;
+use App\Services\PasswordService;
 use App\Services\TotpService;
 
 /**
- * Sign in, first-login setup, stale key replacement and sign out. Every
- * step re-asks for the password rather than keeping it between requests.
+ * Sign in, first-login setup and sign out. Setup re-asks for the current
+ * password rather than keeping it between requests.
  */
 class AuthController extends Controller
 {
@@ -79,7 +80,7 @@ class AuthController extends Controller
         $data = $this->request->validate([
             'username' => 'username|between:[3,32]',
             'password' => 'min:1',
-            'new_password' => 'min:12',
+            'new_password' => 'min:' . PasswordService::MIN_LENGTH,
             'new_password_confirmation' => 'matchesvalueof:new_password',
             'code' => 'number|between:[6,6]',
         ]);
@@ -90,36 +91,8 @@ class AuthController extends Controller
             return;
         }
 
-        if ($data['new_password'] === $data['password']) {
-            $this->renderSetup($username, $secret, 'Choose a password different from the current one.');
-
-            return;
-        }
-
         $result = $this->auth->completeSetup($data['username'], $data['password'], $data['new_password'], $secret, $data['code'], $this->clientIp());
         $this->respond($result, $data['username'], $secret);
-    }
-
-    public function replaceKey()
-    {
-        $username = (string) $this->request->get('username', false);
-
-        $data = $this->request->validate([
-            'username' => 'username|between:[3,32]',
-            'password' => 'min:1',
-            'code' => 'number|between:[6,6]',
-        ]);
-        // Not a validator rule: Leaf's rules are single-line patterns and the key file is multi-line JSON.
-        $keyFile = trim((string) $this->request->get('key_file', false));
-
-        if ($data === false || $keyFile === '') {
-            $this->renderReplaceKey($username, 'Enter your password, a code from your authenticator and the key file.');
-
-            return;
-        }
-
-        $result = $this->auth->replaceKey($data['username'], $data['password'], $data['code'], $keyFile, $this->clientIp());
-        $this->respond($result, $data['username']);
     }
 
     public function logout()
@@ -134,8 +107,7 @@ class AuthController extends Controller
 
         switch ($result->status) {
             case LoginStatus::Success:
-                $this->sessions->start($result->user, (string) $result->masterKey);
-                $result->wipe();
+                $this->sessions->start($result->user);
                 $this->response->redirect('/');
 
                 return;
@@ -150,18 +122,8 @@ class AuthController extends Controller
 
                 return;
 
-            case LoginStatus::StaleKey:
-                $this->renderReplaceKey($username, 'The master key has changed. Upload the current key file to continue.');
-
-                return;
-
-            case LoginStatus::InvalidKeyFile:
-                $this->renderReplaceKey($username, 'That key file is not valid or is out of date.');
-
-                return;
-
-            case LoginStatus::Pending:
-                $this->renderLogin(notice: 'Your account is waiting for an admin to approve it.');
+            case LoginStatus::PasswordRejected:
+                $this->renderSetup($username, (string) $setupSecret, (string) $result->message);
 
                 return;
 
@@ -186,19 +148,13 @@ class AuthController extends Controller
 
     private function renderSetup(string $username, string $secret, ?string $error = null): void
     {
-        $uri = $this->totp->provisioningUri($secret, $username);
-
         $this->response->view('auth.setup', [
             'username' => $username,
             'secret' => $secret,
-            'qr' => $this->totp->qrCode($uri),
+            'qr' => $this->totp->qrCode($this->totp->provisioningUri($secret, $username)),
             'error' => $error,
+            'minLength' => PasswordService::MIN_LENGTH,
         ]);
-    }
-
-    private function renderReplaceKey(string $username, ?string $error = null): void
-    {
-        $this->response->view('auth.replace-key', ['username' => $username, 'error' => $error]);
     }
 
     private function firstError(): string

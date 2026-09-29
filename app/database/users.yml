@@ -1,19 +1,26 @@
-# Only lookup, KDF and replay-protection fields are plaintext (CLAUDE.md rule 4).
-# user_data: master key, TOTP secret and flags, encrypted with the user's password-derived key.
-# role: "pending", "user" or "admin", encrypted with the data key so admins can read it.
+# role: "admin" or "user".
+# totp_secret: authenticator secret, encrypted with a key derived from APP_KEY (SecretCipher).
 # totp_last_step: last accepted TOTP time step, so a code can't be reused.
-# session_version: bumped to sign the user out everywhere (e.g. admin password reset).
+# must_change_password: set for new accounts and admin resets; forces first-login setup.
+# password_changed_at: passwords expire PasswordService::MAX_AGE_DAYS after this.
+# session_version: bumped to sign the user out everywhere.
 columns:
   username:
     type: string
     unique: true
-  kdf_salt: string
-  kdf_opslimit: integer
-  kdf_memlimit: integer
-  user_data: text
-  role: text
+  password: string
+  role: string
+  totp_secret:
+    type: text
+    nullable: true
   totp_last_step:
     type: integer
+    nullable: true
+  must_change_password:
+    type: boolean
+    default: true
+  password_changed_at:
+    type: timestamp
     nullable: true
   session_version:
     type: integer

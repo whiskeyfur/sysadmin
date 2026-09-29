@@ -7,8 +7,8 @@ use App\Utils\SystemClock;
 use Psr\Clock\ClockInterface;
 
 /**
- * Rate limits for everything that runs a password derivation: sign-in,
- * setup, key replacement and registration.
+ * Rate limits for everything that checks a password: sign-in, first-login
+ * setup and password changes.
  *
  * Failures are counted per client IP and per username (across all IPs), in
  * a sliding window. Checks happen before any Argon2id work, and a limited
@@ -21,10 +21,6 @@ class LoginThrottleService
     public const MAX_FAILURES_PER_IP = 20;
 
     public const MAX_FAILURES_PER_USERNAME = 10;
-
-    public const REGISTRATION_WINDOW_SECONDS = 3600;
-
-    public const MAX_REGISTRATIONS_PER_IP = 5;
 
     public function __construct(private readonly ClockInterface $clock = new SystemClock())
     {
@@ -56,16 +52,6 @@ class LoginThrottleService
         LoginAttempt::query()->where('bucket', $this->bucket('user', $username))->delete();
     }
 
-    public function registrationRetryAfter(string $ip): int
-    {
-        return $this->retryAfter($this->bucket('register', $ip), self::MAX_REGISTRATIONS_PER_IP, self::REGISTRATION_WINDOW_SECONDS);
-    }
-
-    public function recordRegistration(string $ip): void
-    {
-        $this->record($this->bucket('register', $ip));
-    }
-
     private function retryAfter(string $bucket, int $max, int $window): int
     {
         $now = $this->now();
@@ -91,7 +77,7 @@ class LoginThrottleService
 
         LoginAttempt::query()->create(['bucket' => $bucket, 'attempted_at' => $now]);
         LoginAttempt::query()
-            ->where('attempted_at', '<=', $now - max(self::WINDOW_SECONDS, self::REGISTRATION_WINDOW_SECONDS))
+            ->where('attempted_at', '<=', $now - self::WINDOW_SECONDS)
             ->delete();
     }
 

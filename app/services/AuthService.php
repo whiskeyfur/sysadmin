@@ -3,23 +3,17 @@
 namespace App\Services;
 
 use App\DTOs\LoginResult;
-use App\DTOs\UnlockedUser;
 use App\Enums\LoginStatus;
-use App\Exceptions\AuthorizationException;
-use App\Exceptions\InvalidCredentialsException;
-use App\Exceptions\InvalidKeyFileException;
-use App\Exceptions\InvalidMasterKeyException;
-use App\Exceptions\VaultStateException;
 use App\Models\User;
 
 /**
- * The sign-in flows. A login needs the username, the password and a code
- * from the user's authenticator; an account with no authenticator can only
- * reach setup, never the app.
+ * Sign-in, first-login setup and password changes.
  *
- * Order of checks: rate limit, then password, then authenticator code, then
- * master key against the vault (stale?), then role (pending?). The rate
- * limit comes first so a limited request does no Argon2id work.
+ * A sign-in needs the username, the password and a code from the user's
+ * authenticator. New accounts and admin resets have no authenticator and
+ * a temporary password, so they can only reach setup (new password +
+ * authenticator), never the app. Every check is rate limited before any
+ * password hashing happens.
  */
 class AuthService
 {
@@ -27,75 +21,114 @@ class AuthService
 
     public const DEFAULT_ADMIN_PASSWORD = 'changeme';
 
-    private readonly VaultService $vault;
-
-    private readonly UserKeyService $keys;
-
     public function __construct(
-        private readonly CryptoService $crypto = new CryptoService(),
-        ?VaultService $vault = null,
-        ?UserKeyService $keys = null,
+        private readonly PasswordService $passwords = new PasswordService(),
         private readonly TotpService $totp = new TotpService(),
-        private readonly KeyFileService $keyFiles = new KeyFileService(),
+        private readonly SecretCipher $cipher = new SecretCipher(),
         private readonly LoginThrottleService $throttle = new LoginThrottleService(),
     ) {
-        $this->vault = $vault ?? new VaultService($crypto);
-        $this->keys = $keys ?? new UserKeyService($crypto, $this->vault);
     }
 
     /**
-     * On a fresh install, create the default admin. They must set a new
-     * password and enrol an authenticator at first login.
+     * On a fresh install (no users at all), create the default admin. They
+     * must set a new password and enrol an authenticator at first sign-in.
      */
     public function ensureDefaultAdmin(): void
     {
-        if ($this->vault->isInitialized()) {
+        if (User::query()->exists()) {
             return;
         }
 
-        try {
-            $masterKey = $this->keys->createFirstAdmin(self::DEFAULT_ADMIN_USERNAME, self::DEFAULT_ADMIN_PASSWORD, true);
-            $this->crypto->wipe($masterKey);
-        } catch (VaultStateException) {
-            // Another request initialized the vault first.
-        }
+        $admin = new User(['username' => self::DEFAULT_ADMIN_USERNAME, 'role' => User::ROLE_ADMIN]);
+        $this->passwords->setTemporaryPassword($admin, self::DEFAULT_ADMIN_PASSWORD);
+        $admin->save();
     }
 
     public function attempt(string $username, string $password, string $code, string $ip): LoginResult
     {
-        return $this->throttled($ip, $username, fn () => $this->attemptLogin($username, $password, $code));
+        return $this->throttled($ip, $username, function () use ($username, $password, $code) {
+            $user = $this->checkPassword($username, $password);
+
+            if ($user === null) {
+                return new LoginResult(LoginStatus::InvalidCredentials);
+            }
+
+            if ($this->needsSetup($user)) {
+                return new LoginResult(LoginStatus::NeedsSetup, $user);
+            }
+
+            if (!$this->consumeCode($user, $code)) {
+                return new LoginResult(LoginStatus::InvalidCredentials);
+            }
+
+            return new LoginResult(LoginStatus::Success, $user);
+        });
     }
 
     /**
-     * Set a new password and enrol an authenticator, then sign in.
+     * First sign-in or after an admin reset: choose a password and enrol an
+     * authenticator, then sign in.
      */
     public function completeSetup(string $username, string $currentPassword, string $newPassword, string $totpSecret, string $code, string $ip): LoginResult
     {
-        return $this->throttled($ip, $username, fn () => $this->setUpAccount($username, $currentPassword, $newPassword, $totpSecret, $code));
+        return $this->throttled($ip, $username, function () use ($username, $currentPassword, $newPassword, $totpSecret, $code) {
+            // Check the new authenticator first: a wrong code then says nothing about the password.
+            $step = $this->totp->verify($totpSecret, $code);
+
+            if ($step === null) {
+                return new LoginResult(LoginStatus::InvalidCode);
+            }
+
+            $user = $this->checkPassword($username, $currentPassword);
+
+            // Only accounts that need setup: otherwise a password alone could replace the authenticator.
+            if ($user === null || !$this->needsSetup($user)) {
+                return new LoginResult(LoginStatus::InvalidCredentials);
+            }
+
+            $policyError = $this->passwords->policyError($newPassword, $currentPassword);
+
+            if ($policyError !== null) {
+                return new LoginResult(LoginStatus::PasswordRejected, $user, message: $policyError);
+            }
+
+            $this->passwords->setChosenPassword($user, $newPassword);
+            $user->totp_secret = $this->cipher->encrypt($totpSecret, $this->totpContext($user));
+            $user->totp_last_step = $step;
+            $user->save();
+
+            return new LoginResult(LoginStatus::Success, $user);
+        });
     }
 
     /**
-     * Upload the current key file after a rotation, then sign in.
+     * A signed-in user changing their password, voluntarily or because it
+     * expired. Ends their other sessions; the caller restarts this one.
      */
-    public function replaceKey(string $username, string $password, string $code, string $keyFile, string $ip): LoginResult
+    public function changePassword(User $user, string $currentPassword, string $newPassword, string $ip): LoginResult
     {
-        return $this->throttled($ip, $username, fn () => $this->replaceStaleKey($username, $password, $code, $keyFile));
+        return $this->throttled($ip, $user->username, function () use ($user, $currentPassword, $newPassword) {
+            if (!$this->passwords->verify($user, $currentPassword)) {
+                return new LoginResult(LoginStatus::InvalidCredentials);
+            }
+
+            $policyError = $this->passwords->policyError($newPassword, $currentPassword);
+
+            if ($policyError !== null) {
+                return new LoginResult(LoginStatus::PasswordRejected, $user, message: $policyError);
+            }
+
+            $this->passwords->setChosenPassword($user, $newPassword);
+            $user->session_version = $user->session_version + 1;
+            $user->save();
+
+            return new LoginResult(LoginStatus::Success, $user);
+        });
     }
 
-    /**
-     * Create a pending account. Needs the key file and a working authenticator.
-     */
-    public function register(string $username, string $password, string $keyFile, string $totpSecret, string $code, string $ip): LoginResult
+    public function needsSetup(User $user): bool
     {
-        $retryAfter = $this->throttle->registrationRetryAfter($ip);
-
-        if ($retryAfter > 0) {
-            return new LoginResult(LoginStatus::TooManyAttempts, retryAfter: $retryAfter);
-        }
-
-        $this->throttle->recordRegistration($ip);
-
-        return $this->createPendingAccount($username, $password, $keyFile, $totpSecret, $code);
+        return $user->must_change_password || !$user->hasAuthenticator();
     }
 
     /**
@@ -114,7 +147,7 @@ class AuthService
 
         $result = $action();
 
-        if (in_array($result->status, [LoginStatus::InvalidCredentials, LoginStatus::InvalidCode, LoginStatus::InvalidKeyFile], true)) {
+        if (in_array($result->status, [LoginStatus::InvalidCredentials, LoginStatus::InvalidCode], true)) {
             $this->throttle->recordLoginFailure($ip, $username);
         } elseif ($result->status === LoginStatus::Success) {
             $this->throttle->recordLoginSuccess($username);
@@ -123,157 +156,30 @@ class AuthService
         return $result;
     }
 
-    private function attemptLogin(string $username, string $password, string $code): LoginResult
+    /**
+     * The user if the password matches, else null. Unknown usernames take as
+     * long as wrong passwords.
+     */
+    private function checkPassword(string $username, string $password): ?User
     {
-        $user = $this->findUser($username);
+        $user = User::query()->where('username', $username)->first();
 
         if ($user === null) {
-            $this->spendPasswordHashTime($password);
+            $this->passwords->verifyAgainstNothing($password);
 
-            return new LoginResult(LoginStatus::InvalidCredentials);
+            return null;
         }
 
-        try {
-            $unlocked = $this->keys->decryptUserData($user, $password);
-        } catch (InvalidCredentialsException) {
-            return new LoginResult(LoginStatus::InvalidCredentials);
-        }
-
-        if (!$unlocked->hasAuthenticator() || $unlocked->mustChangePassword) {
-            $unlocked->wipe();
-
-            return new LoginResult(LoginStatus::NeedsSetup, $user);
-        }
-
-        if (!$this->consumeCode($user, (string) $unlocked->totpSecret, $code)) {
-            $unlocked->wipe();
-
-            return new LoginResult(LoginStatus::InvalidCredentials);
-        }
-
-        return $this->finishLogin($user, $unlocked);
-    }
-
-    private function setUpAccount(string $username, string $currentPassword, string $newPassword, string $totpSecret, string $code): LoginResult
-    {
-        // Check the new authenticator first: a wrong code then says nothing about the password.
-        $step = $this->totp->verify($totpSecret, $code);
-
-        if ($step === null) {
-            return new LoginResult(LoginStatus::InvalidCode);
-        }
-
-        $user = $this->findUser($username);
-
-        if ($user === null) {
-            $this->spendPasswordHashTime($currentPassword);
-
-            return new LoginResult(LoginStatus::InvalidCredentials);
-        }
-
-        try {
-            $this->keys->completeSetup($user, $currentPassword, $newPassword, $totpSecret, $step);
-
-            return $this->finishLogin($user, $this->keys->decryptUserData($user, $newPassword));
-        } catch (InvalidCredentialsException | AuthorizationException) {
-            return new LoginResult(LoginStatus::InvalidCredentials);
-        }
-    }
-
-    private function replaceStaleKey(string $username, string $password, string $code, string $keyFile): LoginResult
-    {
-        $user = $this->findUser($username);
-
-        if ($user === null) {
-            $this->spendPasswordHashTime($password);
-
-            return new LoginResult(LoginStatus::InvalidCredentials);
-        }
-
-        try {
-            $unlocked = $this->keys->decryptUserData($user, $password);
-        } catch (InvalidCredentialsException) {
-            return new LoginResult(LoginStatus::InvalidCredentials);
-        }
-
-        if (!$unlocked->hasAuthenticator() || $unlocked->mustChangePassword) {
-            $unlocked->wipe();
-
-            return new LoginResult(LoginStatus::NeedsSetup, $user);
-        }
-
-        $codeAccepted = $this->consumeCode($user, (string) $unlocked->totpSecret, $code);
-        $unlocked->wipe();
-
-        if (!$codeAccepted) {
-            return new LoginResult(LoginStatus::InvalidCredentials);
-        }
-
-        try {
-            $masterKey = $this->keyFiles->parse($keyFile);
-            $this->keys->replaceMasterKey($user, $password, $masterKey);
-            $this->crypto->wipe($masterKey);
-        } catch (InvalidKeyFileException | InvalidMasterKeyException) {
-            return new LoginResult(LoginStatus::InvalidKeyFile, $user);
-        }
-
-        return $this->finishLogin($user, $this->keys->decryptUserData($user, $password));
-    }
-
-    private function createPendingAccount(string $username, string $password, string $keyFile, string $totpSecret, string $code): LoginResult
-    {
-        $step = $this->totp->verify($totpSecret, $code);
-
-        if ($step === null) {
-            return new LoginResult(LoginStatus::InvalidCode);
-        }
-
-        if ($this->findUser($username) !== null) {
-            return new LoginResult(LoginStatus::UsernameTaken);
-        }
-
-        try {
-            $masterKey = $this->keyFiles->parse($keyFile);
-            $user = $this->keys->register($username, $password, $masterKey, $totpSecret, $step);
-            $this->crypto->wipe($masterKey);
-        } catch (InvalidKeyFileException | InvalidMasterKeyException) {
-            return new LoginResult(LoginStatus::InvalidKeyFile);
-        }
-
-        return new LoginResult(LoginStatus::Pending, $user);
-    }
-
-    private function finishLogin(User $user, UnlockedUser $unlocked): LoginResult
-    {
-        $masterKey = (string) $unlocked->masterKey;
-        $unlocked->wipe();
-
-        try {
-            $dataKey = $this->vault->unwrapDataKey($masterKey);
-        } catch (InvalidMasterKeyException) {
-            $this->crypto->wipe($masterKey);
-
-            return new LoginResult(LoginStatus::StaleKey, $user);
-        }
-
-        $role = $this->keys->role($user, $dataKey);
-        $this->crypto->wipe($dataKey);
-
-        if ($role === UserKeyService::ROLE_PENDING) {
-            $this->crypto->wipe($masterKey);
-
-            return new LoginResult(LoginStatus::Pending, $user);
-        }
-
-        return new LoginResult(LoginStatus::Success, $user, $masterKey);
+        return $this->passwords->verify($user, $password) ? $user : null;
     }
 
     /**
      * Verify a code and record its time step so it can't be used again.
      */
-    private function consumeCode(User $user, string $totpSecret, string $code): bool
+    private function consumeCode(User $user, string $code): bool
     {
-        $step = $this->totp->verify($totpSecret, $code, $user->totp_last_step);
+        $secret = $this->cipher->decrypt((string) $user->totp_secret, $this->totpContext($user));
+        $step = $this->totp->verify($secret, $code, $user->totp_last_step);
 
         if ($step === null) {
             return false;
@@ -285,18 +191,8 @@ class AuthService
         return true;
     }
 
-    private function findUser(string $username): ?User
+    private function totpContext(User $user): string
     {
-        return User::query()->where('username', $username)->first();
-    }
-
-    /**
-     * Run one password derivation for an unknown username, so its response
-     * takes as long as a wrong password for a real one.
-     */
-    private function spendPasswordHashTime(string $password): void
-    {
-        $key = $this->crypto->deriveKey($password, $this->crypto->generateSalt(), $this->crypto->opsLimit(), $this->crypto->memLimit());
-        $this->crypto->wipe($key);
+        return 'totp-secret:' . $user->id;
     }
 }

@@ -2,287 +2,147 @@
 
 namespace App\Services;
 
-use App\Exceptions\InvalidCredentialsException;
-use App\Exceptions\TooManyAttemptsException;
+use App\Exceptions\AuthorizationException;
 use App\Models\User;
 use DomainException;
 
 /**
- * Admin user management (CLAUDE.md): approving or rejecting registrations,
- * promoting and demoting admins under the two-admin rule, password resets,
- * deleting users (which rotates the master key) and manual rotation.
+ * Admin user management. Accounts are created by admins only, with a random
+ * temporary password the admin hands out; the user sets their own password
+ * and authenticator at first sign-in.
  *
- * Every method takes the acting admin and their master key and checks the
- * admin role itself. Admins can't act on their own account here.
+ * Every method re-checks that the acting user is an admin and refuses
+ * actions on their own account. There must always be at least one admin.
  */
 class UserAdminService
 {
-    public const MINIMUM_ADMINS = 2;
+    public const MINIMUM_ADMINS = 1;
 
-    private const TEMPORARY_PASSWORD_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
-
-    private readonly VaultService $vault;
-
-    private readonly UserKeyService $keys;
-
-    public function __construct(
-        private readonly CryptoService $crypto = new CryptoService(),
-        ?VaultService $vault = null,
-        ?UserKeyService $keys = null,
-        private readonly LoginThrottleService $throttle = new LoginThrottleService(),
-    ) {
-        $this->vault = $vault ?? new VaultService($crypto);
-        $this->keys = $keys ?? new UserKeyService($crypto, $this->vault);
-    }
-
-    /**
-     * @return list<array{user: User, role: string}>
-     */
-    public function listUsers(User $admin, string $adminMasterKey): array
+    public function __construct(private readonly PasswordService $passwords = new PasswordService())
     {
-        $dataKey = $this->keys->requireAdmin($admin, $adminMasterKey);
-
-        try {
-            return User::query()->get()
-                ->sortBy('username')
-                ->map(fn (User $user) => ['user' => $user, 'role' => $this->keys->role($user, $dataKey)])
-                ->values()
-                ->all();
-        } finally {
-            $this->crypto->wipe($dataKey);
-        }
     }
 
     /**
-     * Approve a pending registration as a regular user or an admin.
+     * @return list<User>
+     */
+    public function listUsers(User $admin): array
+    {
+        $this->requireAdmin($admin);
+
+        return User::query()->get()->sortBy('username')->values()->all();
+    }
+
+    /**
+     * Create an account with a temporary password, returned for the admin
+     * to hand out.
      *
-     * @throws DomainException if the target is not pending.
+     * @return array{user: User, temporaryPassword: string}
+     *
+     * @throws DomainException if the username is taken or the role is unknown.
      */
-    public function approve(User $admin, string $adminMasterKey, User $target, string $role = UserKeyService::ROLE_USER): void
+    public function createUser(User $admin, string $username, string $role): array
     {
-        if (!in_array($role, [UserKeyService::ROLE_USER, UserKeyService::ROLE_ADMIN], true)) {
-            throw new DomainException('Users can only be approved as a user or an admin.');
+        $this->requireAdmin($admin);
+
+        if (!in_array($role, [User::ROLE_USER, User::ROLE_ADMIN], true)) {
+            throw new DomainException('Unknown role.');
         }
 
-        $this->withAdmin($admin, $adminMasterKey, $target, function (string $dataKey) use ($target, $role) {
-            $this->requireRole($target, $dataKey, UserKeyService::ROLE_PENDING, 'Only pending registrations can be approved or rejected.');
-            $this->keys->setRole($target, $role, $dataKey);
-            $target->save();
-        });
+        if (User::query()->where('username', $username)->exists()) {
+            throw new DomainException("The username $username is taken.");
+        }
+
+        $temporaryPassword = $this->passwords->temporaryPassword();
+        $user = new User(['username' => $username, 'role' => $role]);
+        $this->passwords->setTemporaryPassword($user, $temporaryPassword);
+        $user->save();
+
+        return ['user' => $user, 'temporaryPassword' => $temporaryPassword];
     }
 
     /**
-     * Delete a pending registration. No rotation: they never signed in, but
-     * they did see the key file, so rotate manually if that matters.
-     *
-     * @throws DomainException if the target is not pending.
+     * Give a user a new temporary password, remove their authenticator and
+     * sign them out everywhere. Returns the temporary password.
      */
-    public function reject(User $admin, string $adminMasterKey, User $target): void
+    public function resetPassword(User $admin, User $target): string
     {
-        $this->withAdmin($admin, $adminMasterKey, $target, function (string $dataKey) use ($target) {
-            $this->requireRole($target, $dataKey, UserKeyService::ROLE_PENDING, 'Only pending registrations can be approved or rejected.');
-            $target->delete();
-        });
-    }
+        $this->requireAdminActingOnOther($admin, $target);
 
-    /**
-     * @throws DomainException if the target is not a regular user.
-     */
-    public function promote(User $admin, string $adminMasterKey, User $target): void
-    {
-        $this->withAdmin($admin, $adminMasterKey, $target, function (string $dataKey) use ($target) {
-            $this->requireRole($target, $dataKey, UserKeyService::ROLE_USER, 'Only approved users can be made admins.');
-            $this->keys->setRole($target, UserKeyService::ROLE_ADMIN, $dataKey);
-            $target->save();
-        });
-    }
-
-    /**
-     * @throws DomainException if the target is not an admin, or it would leave fewer than two admins.
-     */
-    public function demote(User $admin, string $adminMasterKey, User $target): void
-    {
-        $this->withAdmin($admin, $adminMasterKey, $target, function (string $dataKey) use ($target) {
-            $this->requireRole($target, $dataKey, UserKeyService::ROLE_ADMIN, 'That user is not an admin.');
-            $this->requireAdminsLeftAfterRemoving($dataKey);
-            $this->keys->setRole($target, UserKeyService::ROLE_USER, $dataKey);
-            $target->save();
-        });
-    }
-
-    /**
-     * Give an approved user a random temporary password, remove their
-     * authenticator and end their sessions. Returns the temporary password
-     * for the admin to pass on outside the website.
-     *
-     * @throws DomainException if the target is pending.
-     */
-    public function resetPassword(User $admin, string $adminMasterKey, User $target): string
-    {
-        $this->withAdmin($admin, $adminMasterKey, $target, function (string $dataKey) use ($target) {
-            if ($this->keys->role($target, $dataKey) === UserKeyService::ROLE_PENDING) {
-                throw new DomainException('Approve or reject a pending registration instead of resetting it.');
-            }
-        });
-
-        $temporaryPassword = $this->temporaryPassword();
-        $this->keys->resetPassword($admin, $adminMasterKey, $target, $temporaryPassword);
+        $temporaryPassword = $this->passwords->temporaryPassword();
+        $this->passwords->setTemporaryPassword($target, $temporaryPassword);
+        $target->totp_secret = null;
+        $target->totp_last_step = null;
+        $target->session_version = $target->session_version + 1;
+        $target->save();
 
         return $temporaryPassword;
     }
 
     /**
-     * Delete an approved user and rotate the master key, since they have
-     * seen it (CLAUDE.md rule 6). Needs the acting admin's password to
-     * re-wrap their own copy. Returns the new master key; the caller must
-     * re-seal the admin's session with it and offer the new key file.
-     *
-     * @throws InvalidCredentialsException if the admin's password is wrong.
-     * @throws TooManyAttemptsException
-     * @throws DomainException if the target is pending, or it would leave fewer than two admins.
+     * @throws DomainException if the target is already an admin.
      */
-    public function deleteUser(User $admin, string $adminMasterKey, User $target, string $adminPassword, string $ip): string
+    public function promote(User $admin, User $target): void
     {
-        $this->withAdmin($admin, $adminMasterKey, $target, function (string $dataKey) use ($target) {
-            $role = $this->keys->role($target, $dataKey);
+        $this->requireAdminActingOnOther($admin, $target);
 
-            if ($role === UserKeyService::ROLE_PENDING) {
-                throw new DomainException('Reject pending registrations instead of deleting them.');
-            }
+        if ($target->isAdmin()) {
+            throw new DomainException("{$target->username} is already an admin.");
+        }
 
-            if ($role === UserKeyService::ROLE_ADMIN) {
-                $this->requireAdminsLeftAfterRemoving($dataKey);
-            }
-        });
-
-        return $this->withPasswordCheck($admin, $ip, fn () => $this->transaction(function () use ($admin, $adminPassword, $target) {
-            $target->delete();
-
-            return $this->keys->rotateMasterKey($admin, $adminPassword);
-        }));
+        $target->role = User::ROLE_ADMIN;
+        $target->save();
     }
 
     /**
-     * Replace the master key without deleting anyone. Returns the new key.
-     *
-     * @throws InvalidCredentialsException
-     * @throws TooManyAttemptsException
+     * @throws DomainException if the target isn't an admin, or it would leave no admin.
      */
-    public function rotateMasterKey(User $admin, string $adminPassword, string $ip): string
+    public function demote(User $admin, User $target): void
     {
-        return $this->withPasswordCheck($admin, $ip, fn () => $this->keys->rotateMasterKey($admin, $adminPassword));
+        $this->requireAdminActingOnOther($admin, $target);
+
+        if (!$target->isAdmin()) {
+            throw new DomainException("{$target->username} is not an admin.");
+        }
+
+        $this->requireAdminsLeftAfterRemoving();
+        $target->role = User::ROLE_USER;
+        $target->save();
     }
 
     /**
-     * Number of admins, readable by any signed-in user for the setup warning.
+     * @throws DomainException if it would leave no admin.
      */
-    public function adminCount(string $masterKey): int
+    public function delete(User $admin, User $target): void
     {
-        $dataKey = $this->vault->unwrapDataKey($masterKey);
+        $this->requireAdminActingOnOther($admin, $target);
 
-        try {
-            return $this->countAdmins($dataKey);
-        } finally {
-            $this->crypto->wipe($dataKey);
+        if ($target->isAdmin()) {
+            $this->requireAdminsLeftAfterRemoving();
+        }
+
+        $target->delete();
+    }
+
+    private function requireAdmin(User $admin): void
+    {
+        if (!$admin->isAdmin()) {
+            throw new AuthorizationException('Only admins can manage users.');
         }
     }
 
-    public function needsSecondAdmin(string $masterKey): bool
+    private function requireAdminActingOnOther(User $admin, User $target): void
     {
-        return $this->adminCount($masterKey) < self::MINIMUM_ADMINS;
-    }
+        $this->requireAdmin($admin);
 
-    /**
-     * Check the acting admin, refuse self-targeting, and run $action with the
-     * data key, wiping it afterwards.
-     *
-     * @param callable(string): void $action
-     */
-    private function withAdmin(User $admin, string $adminMasterKey, User $target, callable $action): void
-    {
-        $dataKey = $this->keys->requireAdmin($admin, $adminMasterKey);
-
-        try {
-            if ($admin->id === $target->id) {
-                throw new DomainException("You can't change your own account here.");
-            }
-
-            $action($dataKey);
-        } finally {
-            $this->crypto->wipe($dataKey);
+        if ($admin->id === $target->id) {
+            throw new DomainException("You can't change your own account here.");
         }
     }
 
-    /**
-     * Rate-limit a password re-entry by the acting admin like a sign-in.
-     *
-     * @template T
-     * @param callable(): T $action
-     * @return T
-     */
-    private function withPasswordCheck(User $admin, string $ip, callable $action): mixed
+    private function requireAdminsLeftAfterRemoving(): void
     {
-        $retryAfter = $this->throttle->loginRetryAfter($ip, $admin->username);
-
-        if ($retryAfter > 0) {
-            throw new TooManyAttemptsException($retryAfter);
+        if (User::query()->where('role', User::ROLE_ADMIN)->count() - 1 < self::MINIMUM_ADMINS) {
+            throw new DomainException('There must always be at least one admin.');
         }
-
-        try {
-            return $action();
-        } catch (InvalidCredentialsException $e) {
-            $this->throttle->recordLoginFailure($ip, $admin->username);
-
-            throw $e;
-        }
-    }
-
-    private function requireRole(User $target, string $dataKey, string $role, string $message): void
-    {
-        if ($this->keys->role($target, $dataKey) !== $role) {
-            throw new DomainException($message);
-        }
-    }
-
-    private function requireAdminsLeftAfterRemoving(string $dataKey): void
-    {
-        if ($this->countAdmins($dataKey) - 1 < self::MINIMUM_ADMINS) {
-            throw new DomainException('There must always be at least ' . self::MINIMUM_ADMINS . ' admins. Make someone else an admin first.');
-        }
-    }
-
-    private function countAdmins(string $dataKey): int
-    {
-        return User::query()->get()
-            ->filter(fn (User $user) => $this->keys->isAdmin($user, $dataKey))
-            ->count();
-    }
-
-    private function temporaryPassword(): string
-    {
-        $alphabet = self::TEMPORARY_PASSWORD_ALPHABET;
-        $groups = [];
-
-        for ($group = 0; $group < 4; $group++) {
-            $chars = '';
-
-            for ($i = 0; $i < 4; $i++) {
-                $chars .= $alphabet[random_int(0, strlen($alphabet) - 1)];
-            }
-
-            $groups[] = $chars;
-        }
-
-        return implode('-', $groups);
-    }
-
-    /**
-     * @template T
-     * @param callable(): T $callback
-     * @return T
-     */
-    private function transaction(callable $callback): mixed
-    {
-        return (new User())->getConnection()->transaction($callback);
     }
 }

@@ -3,7 +3,7 @@
 namespace App\Enums;
 
 /**
- * Outcome of a login, setup, key replacement or registration attempt.
+ * Outcome of a sign-in, first-login setup or password change.
  */
 enum LoginStatus: string
 {
@@ -13,14 +13,10 @@ enum LoginStatus: string
     case InvalidCredentials = 'invalid_credentials';
     // The code for a new authenticator didn't match its secret.
     case InvalidCode = 'invalid_code';
-    // First login or after an admin reset: set a password and enrol an authenticator.
+    // New account or admin reset: set a password and enrol an authenticator.
     case NeedsSetup = 'needs_setup';
-    // The master key was rotated; the user must upload the current key file.
-    case StaleKey = 'stale_key';
-    case InvalidKeyFile = 'invalid_key_file';
-    case UsernameTaken = 'username_taken';
-    // Registered but not yet approved by an admin.
-    case Pending = 'pending';
+    // The new password breaks the policy; LoginResult::$message says why.
+    case PasswordRejected = 'password_rejected';
     // Rate limited; LoginResult::$retryAfter says for how long.
     case TooManyAttempts = 'too_many_attempts';
 }

@@ -3,18 +3,15 @@
 namespace App\Controllers;
 
 use App\DTOs\AuthContext;
-use App\Exceptions\InvalidCredentialsException;
-use App\Exceptions\TooManyAttemptsException;
 use App\Middleware\LimitConcurrentLogins;
 use App\Models\User;
-use App\Services\AuthSessionService;
+use App\Services\PasswordService;
 use App\Services\UserAdminService;
-use App\Services\UserKeyService;
 use DomainException;
 
 /**
- * Admin user management: approvals, admin role changes, password resets,
- * deleting users and replacing the master key.
+ * Admin user management: create accounts, change roles, reset passwords
+ * and delete users.
  */
 class AdminUserController extends Controller
 {
@@ -33,48 +30,41 @@ class AdminUserController extends Controller
 
         $this->response->view('admin.users', [
             'auth' => $auth,
-            'users' => $this->admins->listUsers($auth->user, (string) $auth->masterKey),
+            'users' => $this->admins->listUsers($auth->user),
+            'passwords' => new PasswordService(),
             'notice' => $this->request->flash('notice'),
             'error' => $this->request->flash('error'),
         ]);
     }
 
-    public function approve($id)
+    public function create()
     {
-        $role = $this->request->get('role') === UserKeyService::ROLE_ADMIN ? UserKeyService::ROLE_ADMIN : UserKeyService::ROLE_USER;
+        $auth = $this->authContext();
+        $username = (string) $this->request->get('username', false);
+        $role = $this->request->get('role') === User::ROLE_ADMIN ? User::ROLE_ADMIN : User::ROLE_USER;
 
-        $this->act($id, function (AuthContext $auth, User $target) use ($role) {
-            $this->admins->approve($auth->user, (string) $auth->masterKey, $target, $role);
+        if ($this->request->validate(['username' => 'username|between:[3,32]']) === false) {
+            $this->response->withFlash('error', 'Usernames are 3–32 letters, numbers or underscores.')->redirect('/admin/users');
 
-            return "Approved {$target->username} as " . ($role === UserKeyService::ROLE_ADMIN ? 'an admin' : 'a user') . '.';
-        });
-    }
+            return;
+        }
 
-    public function reject($id)
-    {
-        $this->act($id, function (AuthContext $auth, User $target) {
-            $this->admins->reject($auth->user, (string) $auth->masterKey, $target);
+        try {
+            $created = $this->admins->createUser($auth->user, $username, $role);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect('/admin/users');
 
-            return "Rejected {$target->username}.";
-        });
-    }
+            return;
+        } finally {
+            LimitConcurrentLogins::release();
+        }
 
-    public function promote($id)
-    {
-        $this->act($id, function (AuthContext $auth, User $target) {
-            $this->admins->promote($auth->user, (string) $auth->masterKey, $target);
-
-            return "{$target->username} is now an admin.";
-        });
-    }
-
-    public function demote($id)
-    {
-        $this->act($id, function (AuthContext $auth, User $target) {
-            $this->admins->demote($auth->user, (string) $auth->masterKey, $target);
-
-            return "{$target->username} is no longer an admin.";
-        });
+        $this->showTemporaryPassword(
+            $auth,
+            "Created {$created['user']->username}",
+            "Give {$created['user']->username} their username and this temporary password outside this website. At first sign-in they must choose their own password and set up an authenticator app.",
+            $created['temporaryPassword'],
+        );
     }
 
     public function resetPassword($id)
@@ -87,7 +77,7 @@ class AdminUserController extends Controller
         }
 
         try {
-            $temporaryPassword = $this->admins->resetPassword($auth->user, (string) $auth->masterKey, $target);
+            $temporaryPassword = $this->admins->resetPassword($auth->user, $target);
         } catch (DomainException $e) {
             $this->response->withFlash('error', $e->getMessage())->redirect('/admin/users');
 
@@ -96,110 +86,50 @@ class AdminUserController extends Controller
             LimitConcurrentLogins::release();
         }
 
-        $this->response->withHeader('Cache-Control', 'no-store');
-        $this->response->view('admin.done', [
-            'auth' => $auth,
-            'title' => "Password reset for {$target->username}",
-            'message' => "Give {$target->username} this temporary password outside this website. It's shown only once. They've been signed out, and at their next sign-in they must choose a new password and set up their authenticator again.",
-            'temporaryPassword' => $temporaryPassword,
-            'offerKeyFile' => false,
-        ]);
+        $this->showTemporaryPassword(
+            $auth,
+            "Password reset for {$target->username}",
+            "Give {$target->username} this temporary password outside this website. They've been signed out, and at their next sign-in they must choose a new password and set up their authenticator again.",
+            $temporaryPassword,
+        );
     }
 
-    public function confirmDelete($id)
+    public function promote($id)
     {
-        $target = $this->findOrRedirect($id);
+        $this->act($id, function (AuthContext $auth, User $target) {
+            $this->admins->promote($auth->user, $target);
 
-        if ($target !== null) {
-            $this->renderConfirm('delete', $target);
-        }
+            return "{$target->username} is now an admin.";
+        });
+    }
+
+    public function demote($id)
+    {
+        $this->act($id, function (AuthContext $auth, User $target) {
+            $this->admins->demote($auth->user, $target);
+
+            return "{$target->username} is no longer an admin.";
+        });
     }
 
     public function delete($id)
     {
-        $auth = $this->authContext();
-        $target = $this->findOrRedirect($id);
+        $this->act($id, function (AuthContext $auth, User $target) {
+            $this->admins->delete($auth->user, $target);
 
-        if ($target === null) {
-            return;
-        }
-
-        $username = $target->username;
-
-        $this->withPassword('delete', $target, fn (string $password) => $this->admins->deleteUser($auth->user, (string) $auth->masterKey, $target, $password, $this->clientIp()), function () use ($auth, $username) {
-            $this->response->view('admin.done', [
-                'auth' => $auth,
-                'title' => "Deleted $username",
-                'message' => "$username has been deleted and the master key has been replaced, because they had seen the old one. Download the new key file and send it to every other user outside this website; each of them must upload it at their next sign-in.",
-                'temporaryPassword' => null,
-                'offerKeyFile' => true,
-            ]);
+            return "Deleted {$target->username}.";
         });
     }
 
-    public function confirmRotate()
+    private function showTemporaryPassword(AuthContext $auth, string $title, string $message, string $temporaryPassword): void
     {
-        $this->renderConfirm('rotate');
-    }
-
-    public function rotate()
-    {
-        $auth = $this->authContext();
-
-        $this->withPassword('rotate', null, fn (string $password) => $this->admins->rotateMasterKey($auth->user, $password, $this->clientIp()), function () use ($auth) {
-            $this->response->view('admin.done', [
-                'auth' => $auth,
-                'title' => 'Master key replaced',
-                'message' => 'Download the new key file and send it to every other user outside this website; each of them must upload it at their next sign-in. The old key file no longer works.',
-                'temporaryPassword' => null,
-                'offerKeyFile' => true,
-            ]);
-        });
-    }
-
-    /**
-     * Run an action that needs the admin's password and returns a new master
-     * key, re-seal the admin's session with that key, then call $done.
-     *
-     * @param string $action "delete" or "rotate", for re-rendering the confirmation page.
-     * @param callable(string): string $rotate Takes the password, returns the new master key.
-     * @param callable(): void $done
-     */
-    private function withPassword(string $action, ?User $target, callable $rotate, callable $done): void
-    {
-        $password = (string) $this->request->get('password', false);
-
-        try {
-            $newMasterKey = $rotate($password);
-        } catch (InvalidCredentialsException) {
-            $this->renderConfirm($action, $target, 'Wrong password.');
-
-            return;
-        } catch (TooManyAttemptsException $e) {
-            $this->response->withHeader('Retry-After', (string) $e->retryAfter);
-            $this->renderConfirm($action, $target, 'Too many attempts. Try again in ' . $this->retryMinutes($e->retryAfter) . ' minute(s).', 429);
-
-            return;
-        } catch (DomainException $e) {
-            $this->response->withFlash('error', $e->getMessage())->redirect('/admin/users');
-
-            return;
-        } finally {
-            LimitConcurrentLogins::release();
-        }
-
-        (new AuthSessionService())->start($this->authContext()->user, $newMasterKey);
-        $done();
-    }
-
-    private function renderConfirm(string $action, ?User $target = null, ?string $error = null, int $status = 200): void
-    {
-        $this->response->view('admin.confirm', [
-            'auth' => $this->authContext(),
-            'action' => $action,
-            'target' => $target,
-            'error' => $error,
-        ], $status);
+        $this->response->withHeader('Cache-Control', 'no-store');
+        $this->response->view('admin.done', [
+            'auth' => $auth,
+            'title' => $title,
+            'message' => $message,
+            'temporaryPassword' => $temporaryPassword,
+        ]);
     }
 
     /**

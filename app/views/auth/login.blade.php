@@ -25,11 +25,10 @@
 
             <label for="code">Authenticator code</label>
             <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6">
-            <p class="hint">Leave blank on your first sign-in, before you've set up an authenticator.</p>
+            <p class="hint">Leave blank on your first sign-in with the temporary password from your admin.</p>
 
             <div class="actions">
                 <button type="submit">Sign in</button>
-                <a href="/register">Register with a key file</a>
             </div>
         </form>
     </div>

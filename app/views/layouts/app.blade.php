@@ -33,7 +33,7 @@
         p { margin: 0 0 12px; }
         .muted { color: var(--muted); }
         label { display: block; font-weight: 600; margin: 16px 0 6px; }
-        input[type=text], input[type=password], input[type=file] { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+        input[type=text], input[type=password], select { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
         input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         .hint { font-size: 13px; color: var(--muted); margin-top: 4px; }
         button, .button { display: inline-block; padding: 9px 16px; border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
@@ -46,6 +46,9 @@
         .row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
         .row-actions button, .row-actions .button { padding: 5px 10px; font-size: 13px; }
         .table-wrap { overflow-x: auto; }
+        .inline-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .inline-form label { margin-top: 0; }
+        .badge.user { background: var(--code-bg); }
         .actions { margin-top: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; }
         .alert.error { background: var(--error-bg); color: var(--error); }
@@ -59,7 +62,6 @@
         th { font-size: 13px; color: var(--muted); font-weight: 600; }
         td form { display: inline; }
         .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--code-bg); }
-        .badge.pending { background: var(--warn-bg); color: var(--warn); }
         .badge.admin { background: var(--notice-bg); color: var(--notice); }
     </style>
 </head>
@@ -71,6 +73,7 @@
                 @if ($auth->isAdmin())
                     <a href="/admin/users">Users</a>
                 @endif
+                <a href="/password">Password</a>
                 <span class="muted">{{ $auth->user->username }}</span>
                 <form method="post" action="/logout">
                     @csrf

@@ -14,27 +14,29 @@ Apache serves it on port 5015 (`/etc/apache2/sites-enabled/002-sys.conf`, `Serve
 touch /tmp/e2e.sqlite && DB_DATABASE=/tmp/e2e.sqlite php leaf db:migrate
 DB_DATABASE=/tmp/e2e.sqlite php -S localhost:5599 -t public public/index.php
 ```
- Apache runs as `www-data`: `storage/` must stay group `www-data`, group-writable, with setgid on its directories, or the database and Blade cache writes fail with a 500.
+
+Apache runs as `www-data`: `storage/` must stay group `www-data`, group-writable, with setgid on its directories, or the database and Blade cache writes fail with a 500.
 
 ## Framework: Leaf MVC
 
-The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice conflicts with any other convention in this file, Leaf wins**, except for the encryption rules below, which are hard security requirements.
+The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice conflicts with any other convention in this file, Leaf wins**, except for the security rules below.
 
 - Code lives in `app/` under `App\`, in Leaf's type-based folders (`app/controllers`, `app/models`, `app/routes`, `app/views`, `app/services`, `app/middleware`, ...). The PSR-4 mappings are already in `composer.json`.
-- Controllers stay thin. Business logic (crypto, key handling, monitoring checks, MariaDB probes) goes in service classes in `app/services` (`App\Services\`).
+- Controllers stay thin. Business logic (auth, user management, monitoring checks, MariaDB probes) goes in service classes in `app/services` (`App\Services\`).
 - Models extend `App\Models\Model` (Eloquent via `Leaf\Model`). Database schemas are YAML files in `app/database/` and are the source of truth; apply them with `php leaf db:migrate`. The SQLite file is `storage/app/db/database.sqlite` (Leaf's default, git-ignored).
-- Exceptions live in `app/exceptions` (`App\Exceptions\`, a mapping added to `composer.json`); key-service failures extend `KeyException`.
+- Exceptions live in `app/exceptions` (`App\Exceptions\`, a mapping added to `composer.json`); security failures extend `SecurityException`.
 - Route partials are `app/routes/_*.php` and are loaded automatically. Views use Blade (`app/views/*.blade.php`, layout `layouts/app`); styling is plain CSS in the layout.
 - CSRF protection is on for every POST (`leafs/csrf`); every form needs `@csrf`. `config/auth.php` exists only because Leaf MVC reads `auth.session` to decide whether to enable CSRF and errors if it's missing.
-- Route middleware (`app/middleware`) passes data to controllers with `response()->next([...])`; controllers read it with `$this->request->next('auth')`. `Authenticate` and `RequireAdmin` provide an `AuthContext` (user, master key, role).
+- Route middleware (`app/middleware`) passes data to controllers with `response()->next([...])`; controllers read it with `$this->request->next('auth')`. `Authenticate` (and its subclasses `AuthenticateAllowingExpiredPassword` and `RequireAdmin`) provide an `AuthContext` (user, password-expired flag).
 - Leaf pitfalls hit so far:
   - `request()->get($key)` HTML-escapes by default; pass `false` for passwords and other raw input. `request()->validate()` returns raw values.
-  - Leaf validation rules are single-line regexes (`min:1` fails on multi-line input such as the key file JSON). Check such fields manually.
-  - `Response` treats a `Content-Disposition: attachment` header as a file path to stream from disk. For in-memory downloads, send that header with `Leaf\Http\Headers::set()` (see `KeyFileController`).
+  - Leaf validation rules are single-line regexes (`min:1` fails on multi-line input). Check such fields manually.
+  - `Response` treats a `Content-Disposition: attachment` header as a file path to stream from disk. For in-memory downloads, send that header with `Leaf\Http\Headers::set()`.
   - `request()->getIp()` trusts client-supplied `Client-IP`/`X-Forwarded-For` headers. Use `Controller::clientIp()` (`REMOTE_ADDR`) for anything security-related.
-  - Route-level `middleware` **replaces** a group's middleware instead of adding to it, and a middleware list only accepts callables or named middleware (class-name strings in a list are silently dropped). Routes needing admin plus the concurrency cap are therefore declared outside the admin group with a list of closures (see `app/routes/_admin.php`).
+  - Route-level `middleware` **replaces** a group's middleware instead of adding to it, and a middleware list only accepts callables or named middleware (class-name strings in a list are silently dropped). Routes needing two middlewares use a list of closures (see `app/routes/_admin.php`).
   - Leaf turns PHP warnings into exceptions (500s), so check `is_writable()` and similar before calls that may warn.
-- Write everything as object-oriented as possible, within Leaf's conventions. Don't add global functions, global variables or procedural logic beyond what Leaf's own entry points (`public/index.php`, `leaf`) require.
+  - `Leaf\Controller` has public `render()` and `auth()` methods; don't name controller helpers that.
+- Write everything as object-oriented as possible, within Leaf's conventions. Don't add global functions, global variables or procedural logic beyond what Leaf's own entry points (`public/index.php`, `leaf`) and route files require.
 - Target the server's current PHP (8.3.6 at the time of writing; check with `php -v`). The `sodium`, `pdo_sqlite` and `pdo_mysql` extensions are required.
 
 ### Commands
@@ -45,76 +47,48 @@ The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice
 - `php leaf db:migrate` applies schema files; `db:seed`, `db:rollback` and `db:reset` also exist.
 - `leaf context` prints a compact map of the app.
 - Tests, lint and analysis use Leaf's Alchemy (config in `alchemy.yml`; Pest, PHP CS Fixer PSR-12, PHPStan level 5 on `app/`):
-  - `composer run test` runs the suite (in parallel). Alchemy writes the PHPUnit config on the fly, so don't call `vendor/bin/pest` directly. To narrow a run, pass a filter regex with no spaces: `vendor/bin/alchemy test --flags=--filter=VaultService` (one file) or `--flags=--filter=rotation` (tests whose names match).
+  - `composer run test` runs the suite (in parallel). Alchemy writes the PHPUnit config on the fly, so don't call `vendor/bin/pest` directly. To narrow a run, pass a filter regex with no spaces: `vendor/bin/alchemy test --flags=--filter=AuthService` (one file) or `--flags=--filter=expire` (tests whose names match).
   - `composer run lint` checks style, `composer run fmt` fixes it, `composer run analyse` runs PHPStan.
-  - Test files are `tests/**/*.test.php`. `tests/Pest.php` gives every test in `tests/services` a fresh in-memory SQLite database migrated from the real schema files, plus `$this->crypto`, a `CryptoService` at the cheapest Argon2id cost, and `$this->clock`, a PSR-20 clock tests can move with `advance($seconds)` (pass it to `TotpService`). It loads `Leaf\Model` before building the test connection because loading that class connects to the app database and would replace it.
+  - Test files are `tests/**/*.test.php`. `tests/Pest.php` gives every test in `tests/services` a fresh in-memory SQLite database migrated from the real schema files, plus `$this->clock` (a PSR-20 clock tests can move with `advance($seconds)`), `$this->cipher` (a `SecretCipher` with a throwaway app key) and `$this->passwords` (a `PasswordService` on the test clock). It loads `Leaf\Model` before building the test connection because loading that class connects to the app database and would replace it.
 
-## Data-at-rest encryption model (core design constraint)
+## Accounts and sign-in
 
-Application data is stored in a **SQLite database that is encrypted at rest**. `pdo_sqlite` can't encrypt the database file, so encryption happens at the application level: sensitive columns hold libsodium ciphertext encrypted with the data key, and only lookup fields are stored in plaintext. No password means no user data, and no user data means the database can't be decrypted. The server alone must never be able to read the data.
+The client decided against encryption at rest: app data is stored in plain SQLite. Git history up to commit `2aa2f1f` has the earlier encrypted design (master key, key files, registration) if it's ever needed again.
+
+### Rules
+
+1. **No authenticator, no access.** Signing in needs the username, the password and a current code from an authenticator app (TOTP, Google Authenticator defaults). A new or reset account can only reach the setup page (new password + authenticator), never the app. Setup must refuse accounts that already have an authenticator and aren't being forced to change their password; otherwise a password alone could replace the authenticator. A session is only created after the code is checked, which is why the app doesn't use `leafs/auth` (it puts the user in the session as soon as the password matches).
+2. **Admins create all accounts.** There is no self-registration. An admin creates the account and gets a random temporary password (shown once) to hand out outside the website. At first sign-in the user must choose their own password and enrol an authenticator.
+3. **Passwords expire every 30 days** (`PasswordService::MAX_AGE_DAYS`), counted from `password_changed_at`. A signed-in user with an expired password can only reach `/password` (the `Authenticate` middleware redirects everything else). New passwords need at least 12 characters and must differ from the current one.
+4. **At least one admin.** Demoting or deleting the last admin is refused, and admins can't act on their own account in the admin tools.
+5. **Passwords** are Argon2id hashes via Leaf's password helper (`Leaf\Helpers\Password::ARGON2`). **Authenticator secrets** are the one encrypted column: `SecretCipher` encrypts them with a key derived from `APP_KEY`, bound to `totp-secret:<user id>`, so a copy of the database alone can't generate codes. Changing `APP_KEY` makes every enrolled authenticator unreadable; users would need an admin password reset.
+6. **Session revocation.** The session holds only the user id and `session_version`. Bumping `users.session_version` signs that user out everywhere; password changes and admin resets do this. A password change then restarts the current session.
 
 ### Sign-in flow (`AuthService`)
 
-1. The client submits their username, password and authenticator code.
-2. The user row is found by its plaintext username. The password, with that row's salt and KDF parameters, derives the user's wrapping key. Unknown usernames still run one key derivation so they take as long as a wrong password.
-3. The wrapping key decrypts the user's encrypted **user-data field**, which contains the **master key** and the **TOTP secret**.
-4. No authenticator yet, or a forced password change → the setup page (new password + enrol authenticator), never the app.
-5. The code is checked against the TOTP secret, and its time step is recorded in `totp_last_step` so it can't be reused.
-6. The master key must unlock the vault; if not, it was rotated and the user must upload the current key file.
-7. A `pending` role means an admin hasn't approved the account yet.
-8. On success, `AuthSessionService::start()` seals the master key into the session and cookie (rule 7).
+1. Rate limit check (before any password hashing).
+2. Look up the username and verify the password. Unknown usernames still run a hash check so they take as long as a wrong password.
+3. `must_change_password` or no authenticator → the setup page.
+4. Check the code against the decrypted TOTP secret; record its time step in `totp_last_step` so it can't be reused.
+5. `AuthSessionService::start()` creates the session. If the password has expired, the middleware then sends the user to `/password`.
+
+Wrong username, wrong password and wrong code all return the same `InvalidCredentials` status and message.
+
+**Default admin.** On a fresh install (no users), the first request to `/login` creates `admin` with the temporary password `changeme` (`AuthService::DEFAULT_ADMIN_*`), which only reaches the setup page. Until setup is done, anyone who reaches the site can claim that account, so finish setup right after installing.
 
 ### Rate limiting
 
-Every route that derives a password key (POST `/login`, `/setup`, `/key/replace`, `/register`) is protected twice:
+Every route that hashes or checks a password (POST `/login`, `/setup`, `/password`, `/admin/users`, `/admin/users/{id}/reset-password`) is protected twice:
 
-- **Attempt limits** (`LoginThrottleService`, sliding windows): 20 failures per IP and 10 failures per username (any IP, case-insensitive) per 15 minutes, and 5 registrations per IP per hour. A limited request gets HTTP 429 with `Retry-After`, without doing any password work, and looks the same whether or not the username exists. A successful sign-in clears that username's failures but not the IP's. Anyone can lock a username out for 15 minutes by failing 10 times; that's the accepted trade-off.
-- **Concurrency cap** (`LimitConcurrentLogins` middleware, `FileSemaphore` lock files in `storage/framework/locks`; lock files owned by another user are opened read-only, which `flock()` allows): at most 4 password derivations at once across all Apache workers, because each uses 256 MiB and Apache allows far more workers than there is RAM for. Extra requests get HTTP 503 with `Retry-After: 5`. Controllers call `LimitConcurrentLogins::release()` as soon as the auth service returns.
+- **Attempt limits** (`LoginThrottleService`, sliding 15-minute window): 20 failures per IP and 10 per username (any IP, case-insensitive). A limited request gets HTTP 429 with `Retry-After`, without doing any password work, and looks the same whether or not the username exists. A successful sign-in clears that username's failures but not the IP's. Anyone can lock a username out for 15 minutes by failing 10 times; that's the accepted trade-off. Attempts are stored as SHA-256 buckets in `login_attempts`, never the typed username or IP.
+- **Concurrency cap** (`LimitConcurrentLogins` middleware, `FileSemaphore` lock files in `storage/framework/locks`; lock files owned by another user are opened read-only, which `flock()` allows): at most 4 password hashes at once across all Apache workers (Argon2id uses 64 MiB each). Extra requests get HTTP 503 with `Retry-After: 5`. Controllers call `LimitConcurrentLogins::release()` as soon as the service returns.
 
-Wrong username, wrong password and wrong code all return the same `InvalidCredentials` status and message. Each step that needs the password again (setup, key replacement) asks for it again rather than keeping it between requests.
+### Services (`app/services`)
 
-```php
-$user = User::where('username', $username)->firstOrFail();
-$masterKey = (new UserKeyService())->getMasterKeyFromUserDataField($user, $password);
-```
-
-### Key services (`app/services`)
-
-- `CryptoService`: libsodium primitives. Argon2id key derivation and XChaCha20-Poly1305 encryption stored as `base64(nonce . ciphertext)`. Every ciphertext is bound to a context string (for example `user-data:<username>`), so a value copied to another row or column fails to decrypt. `wipe()` zeroes secrets.
-- `VaultService`: the single `vaults` row holding the data key wrapped by the master key. Initialize, unwrap/verify with a master key, and rotate the master key.
-- `UserKeyService`: everything per user. First-admin bootstrap, registration with a key file's master key, `unlock()`/`getMasterKeyFromUserDataField()`, password change, admin reset, master key rotation and replacing a stale master key.
-- `KeyFileService`: the key file format (JSON with `format`, `version`, base64 `key`). Strings only, never files.
-- `SessionKeyService`: seals the master key for a login session (rule 7).
-- `TotpService`: authenticator codes (SHA-1, 6 digits, 30 s, the Google Authenticator defaults), ±1 period for clock drift, replay protection, and a server-rendered QR code so the secret never goes to a third-party QR service.
-- `AuthService`: the sign-in, setup, key replacement and registration flows, returning a `LoginResult` with a `LoginStatus`. Also creates the default admin on a fresh install.
-- `AuthSessionService`: the signed-in session (rule 7 wiring) and the session cookie flags, set from `public/index.php` because Leaf's CSRF module starts the session during boot.
-- `UserAdminService`: the admin tools: approve/reject registrations, promote/demote (two-admin rule), password reset (random temporary password), delete user (rotates the master key in the same transaction), manual master key rotation, and admin counting. Every method re-checks the acting admin and refuses actions on their own account. Password re-entry for delete/rotate is rate limited like a sign-in.
-- `LoginThrottleService`: rate limits, stored in `login_attempts` as SHA-256 buckets (never the typed username or the IP). `AuthService` checks it before any Argon2id work and counts `InvalidCredentials`, `InvalidCode` and `InvalidKeyFile` results as failures.
-
-Following Leaf practice, `App\Models\User` is a plain Eloquent model that holds the stored (encrypted) columns, and the unwrapping logic lives in a service. Don't use `php leaf scaffold:auth` or `leafs/auth` as-is: login in this app *is* the successful unwrap of the user-data field, not a check against a stored password hash.
-
-### Required rules
-
-Every piece of code that touches keys, users or sessions must follow all of these rules:
-
-1. **The master key is random bytes, shared as a key file outside the website.** The app generates it with `random_bytes(32)` and offers it as a downloadable **key file**. Users pass that file to co-workers by other means (not through the site), and each co-worker uploads it to set the master key on their own account. The master key is never a human-chosen password and is never typed.
-2. **Password → wrapping key uses Argon2id.** Use `sodium_crypto_pwhash` (`SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13`) with a random salt per user. Never use fast hashes (SHA-*, MD5) or `password_hash` output as a key.
-3. **All encryption is authenticated.** Use libsodium AEAD (`sodium_crypto_secretbox` or `sodium_crypto_aead_xchacha20poly1305_ietf_*`) with a fresh random nonce each time. A wrong password or tampered ciphertext must fail with an explicit error, never return garbage.
-4. **Only lookup, KDF and replay metadata are plaintext.** The user row stores the username, salt, KDF parameters (opslimit/memlimit), `totp_last_step` and `session_version` in plaintext; nonces are prefixed to each ciphertext. Everything else about the user, including the TOTP secret, goes inside the encrypted user-data field, with one exception: the role (`pending`/`user`/`admin`) is in the `role` column encrypted with the **data key**, because other admins must be able to read it (for approvals, the two-admin rule and admin checks) without the user's password.
-5. **Each user sets their master key by uploading the key file.** The server never wraps a master key for someone else, because it can't do that without their password. At registration, or whenever a user replaces their key, they upload the key file along with their password, and it is wrapped under their own password-derived key. Before saving, the uploaded key must be checked by unwrapping the stored data key with it; if that authenticated decryption fails, reject the upload. Bootstrap is the one exception: the first user has nothing to check against, so the app generates the master key and the data key and has them download the key file.
-6. **Removing a user triggers key rotation.** A removed user has already seen the master key, so deleting their row is not enough. Use a two-tier hierarchy: the master key wraps a separate **data key**, and the data key encrypts the SQLite data. Only admins can rotate. To rotate, a logged-in admin generates a new master key, the data key is re-wrapped under it, and they download the new key file and share it outside the website. Every other user's stored master key is now stale: at login their copy fails to unwrap the data key, and they must upload the new key file before they can use the site. If the removed user may have extracted the data key itself, rotate the data key and re-encrypt the data too.
-7. **The key never reaches disk between requests.** `$_SESSION` is stored on disk, so it must never hold a plaintext key. At login, generate a random per-session key and use it to encrypt the master key. Store that ciphertext in the server session and send the session key to the client only in a `Secure`, `HttpOnly`, `SameSite=Strict` cookie. Each request combines the two in memory. Logging out destroys the session and expires the cookie.
-8. **Plaintext secrets are wiped after use.** Neither the `User` model nor any service may keep the password as a property. Derive the wrapping key, then wipe (`CryptoService::wipe()` or `UnlockedUser::wipe()`) the password, the wrapping key and any other plaintext key material as soon as it is no longer needed. This is best effort: PHP shares and copies strings, so a buffer is only zeroed when nothing else references it. Controllers can't meaningfully wipe request input (Leaf keeps its own copy of the parsed body), so they must simply never copy passwords or keys anywhere longer-lived: session, cookies other than the rule 7 cookie, logs, properties or views.
-9. **No authenticator, no access.** Signing in needs the username, the password and a current code from an authenticator app (TOTP). An account without an enrolled authenticator can only reach the setup page. The setup path must refuse accounts that already have an authenticator and aren't being forced to change their password; otherwise a password alone could replace the authenticator.
-
-### Other consequences
-
-- Changing a password re-wraps only that user's copy of the master key under the new password-derived key. The data is not touched.
-- **Default admin.** On a fresh install (no vault), the first request to `/login` creates the admin `admin` with password `changeme` (`AuthService::DEFAULT_ADMIN_*`). That password only reaches the setup page, which requires a new password and an authenticator. Until then, anyone who reaches the site with the default password can claim the account, so finish setup right after installing.
-- **Registrations need admin approval.** Registering takes the key file, a password and a working authenticator, and creates a `pending` account that can't sign in. An admin approves it as a user or an admin, or rejects it (deletes the row). A rejected user still saw the key file, so rotate the master key if that matters.
-- **Only admins can reset a password.** Users can't reset their own forgotten password, even with the key file. A logged-in admin sets a temporary password for the user, and the current master key (from the admin's unlocked session, checked against the data key) is wrapped under it. The admin can't read the old user-data field, so the user's authenticator is removed too: at next login they must set a new password and enrol an authenticator again. Non-admins must never be able to reach this path, and a user must never be able to make themselves an admin.
-- **There must always be at least two admins.** The first user becomes an admin automatically, and only existing admins can make other users admins. Any action that would bring the admin count below two (demoting, deleting or disabling an admin) must be refused. Until a second admin exists, the system is in setup and shows a persistent warning to create one.
-- **Admin tools** (`/admin/users`, `AdminUserController`): approve/reject, make admin/remove admin, reset password, delete (confirmation page with the admin's password), and replace the master key (`/admin/key/rotate`). After delete or rotation the admin's session is re-sealed with the new master key and they're offered the new key file; everyone else is signed out on their next request and must upload it. A password reset bumps the user's `session_version`, which ends all their sessions (`AuthSessionService::current()` compares it).
-- If every user loses their password and every copy of the key file is gone, the data is permanently unrecoverable, by design.
-- The key file unlocks all data for anyone who also has a login, so it is a secret. The server must never keep a copy of it: uploaded key files are processed in memory and never written to disk, and the download is generated in memory and never cached. PHP's normal file upload (`$_FILES`) writes the file to `upload_tmp_dir` on disk, so don't use it for key files. Instead, read the file in the browser and submit its contents as a POST field.
-- Never persist any plaintext key (master, data, wrapping or session key) to disk, logs, caches, environment variables, config or long-lived key-holding processes without explicit approval.
+- `AuthService`: sign-in, first-login setup and password changes, returning a `LoginResult` with a `LoginStatus`; creates the default admin.
+- `AuthSessionService`: the signed-in session and the session cookie flags (`Secure`, `HttpOnly`, `SameSite=Strict`, strict mode), set from `public/index.php` because Leaf's CSRF module starts the session during boot.
+- `PasswordService`: hashing, policy, expiry, temporary passwords.
+- `TotpService`: authenticator codes (SHA-1, 6 digits, 30 s), ±1 period for clock drift, replay protection, and a server-rendered QR code so the secret never goes to a third-party QR service.
+- `SecretCipher`: `APP_KEY`-based XChaCha20-Poly1305 for authenticator secrets.
+- `UserAdminService`: create accounts, reset passwords (new temporary password, authenticator removed, sessions ended), promote/demote, delete. Every method re-checks that the acting user is an admin.
+- `LoginThrottleService`: the attempt limits above.

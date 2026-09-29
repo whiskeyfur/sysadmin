@@ -1,3 +1,0 @@
-# Single row holding the data key, wrapped (encrypted) by the master key.
-columns:
-  wrapped_data_key: text

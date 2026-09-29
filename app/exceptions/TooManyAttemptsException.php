@@ -5,7 +5,7 @@ namespace App\Exceptions;
 /**
  * A password check was refused by the rate limiter.
  */
-class TooManyAttemptsException extends KeyException
+class TooManyAttemptsException extends SecurityException
 {
     public function __construct(public readonly int $retryAfter)
     {

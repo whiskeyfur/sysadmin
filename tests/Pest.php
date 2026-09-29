@@ -17,15 +17,16 @@
 |
 */
 
-use App\Services\CryptoService;
+use App\Services\PasswordService;
+use App\Services\SecretCipher;
 use Illuminate\Database\Capsule\Manager;
 use Leaf\Schema;
 use Psr\Clock\ClockInterface;
 
 /*
 | Service tests run against a fresh in-memory SQLite database built
-| from the real schema files, and use the cheapest Argon2id cost so the
-| suite stays fast. Production cost is set by CryptoService's defaults.
+| from the real schema files. They get a movable clock, a SecretCipher with
+| a throwaway app key, and a PasswordService on the test clock.
 */
 uses()->beforeEach(function () {
     // Loading Leaf\Model runs Database::connect() for the app database, which
@@ -39,10 +40,7 @@ uses()->beforeEach(function () {
 
     Schema::setDbConnection($capsule);
     Schema::migrate('app/database/users.yml');
-    Schema::migrate('app/database/vaults.yml');
     Schema::migrate('app/database/login_attempts.yml');
-
-    $this->crypto = new CryptoService(1, 8192 * 8);
 
     // A clock tests can move: $this->clock->advance(30) jumps one TOTP period.
     $this->clock = new class () implements ClockInterface {
@@ -58,5 +56,8 @@ uses()->beforeEach(function () {
             $this->time += $seconds;
         }
     };
+
+    $this->cipher = new SecretCipher('base64:' . base64_encode(random_bytes(32)));
+    $this->passwords = new PasswordService($this->clock);
 })->in('services');
 

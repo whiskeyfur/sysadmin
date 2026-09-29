@@ -30,13 +30,13 @@ When your work is complete:
 
 ## Project Summary
 
-`sys` (served at `sys.localhost`): a system and network admin tool that tracks statistics and performance of multiple servers and websites, continuously monitoring PHP stacks and MariaDB servers (including crashed tables). All app data is encrypted at rest and can only be unlocked with a user's password; the full encryption rules are in `CLAUDE.md`.
+`sys` (served at `sys.localhost`): a system and network admin tool that tracks statistics and performance of multiple servers and websites, continuously monitoring PHP stacks and MariaDB servers (including crashed tables). Accounts are created by admins; sign-in needs a password and an authenticator app. Security rules are in `CLAUDE.md`.
 
 ---
 
 ## Current Goal
 
-_agent: the login/registration goal is done; ask the user for the next goal and replace this line._
+_agent: the account and sign-in rework is done; ask the user for the next goal and replace this line._
 
 ---
 
@@ -88,31 +88,28 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
-* 2026-09-29 — Admin user management: promote/demote, password reset, delete with key rotation, manual rotation, session revocation (`UserAdminService`, `AdminUserController`, `app/views/admin/*`).
-* 2026-09-29 — Login rate limiting: per-IP/per-username/registration limits and a cap of 4 concurrent password derivations (`LoginThrottleService`, `LimitConcurrentLogins`, `login_attempts.yml`).
-* 2026-09-29 — Login, setup, registration with admin approval, required TOTP authenticator, default admin, key file download (`app/controllers/*`, `app/services/Auth*`, `TotpService`, `UserAdminService`, `app/views/*`).
-* 2026-09-29 — Built the users/vaults schemas and key services with tests (`app/database/*.yml`, `app/services/*`, `tests/services/*`); added Alchemy for test/lint/analyse.
-* 2026-09-29 — Installed the Leaf MVC v5 skeleton and added the project's PHP extension requirements (`composer.json`, `.gitignore`, `CLAUDE.md`).
+* 2026-09-29 — Removed encryption at rest, master key, key files and registration per the client; admins create accounts, first sign-in forces password + authenticator setup, passwords expire after 30 days (`AuthService`, `PasswordService`, `SecretCipher`, `UserAdminService`, `PasswordController`).
+* 2026-09-29 — Admin user management with key rotation (superseded by the change above; kept in git history).
+* 2026-09-29 — Login rate limiting: per-IP/per-username limits and a cap of 4 concurrent password hashes (`LoginThrottleService`, `LimitConcurrentLogins`).
+* 2026-09-29 — Login and setup with required TOTP authenticator and default admin (`AuthController`, `TotpService`).
+* 2026-09-29 — Installed the Leaf MVC v5 skeleton and Alchemy (`composer.json`, `alchemy.yml`, `CLAUDE.md`).
 
 ---
 
 ## Known Decisions
 
 * This is a Leaf MVC app — all important files are in the `app` directory.
-* Leaf MVC best practice wins over other conventions — the user's explicit rule; the encryption rules in `CLAUDE.md` are the exception.
-* App data lives in SQLite with application-level libsodium encryption — `pdo_sqlite` cannot encrypt the file, and data must be unreadable without a user's password.
-* Login is unwrapping the user's encrypted user-data field, not a password-hash check — so `scaffold:auth`/`leafs/auth` aren't used as-is.
-* The user's role is encrypted with the data key, not inside the password-wrapped user-data field — other admins must read it without that user's password.
-* An authenticator (TOTP, Google Authenticator defaults) is required for every login; its secret lives inside the password-encrypted user-data field — the user asked for "no authenticator = no access", and this keeps the secret unreadable without the password.
-* New registrations are `pending` until an admin approves them — the user's requirement; stored in the encrypted role so it can't be flipped without the data key.
-* Default admin `admin`/`changeme` on a fresh install, forced to set a new password and authenticator — the user asked for default credentials at start.
-* Per-username lockouts (10 failures / 15 min) are accepted even though they let anyone lock an account out briefly — TOTP already blocks guessing, so the limits mainly stop Argon2id memory exhaustion.
+* Leaf MVC best practice wins over other conventions — the user's explicit rule; the security rules in `CLAUDE.md` are the exception.
+* No encryption at rest, no master key, no key files, no self-registration — the client's decision (2026-09-29); the earlier encrypted design is in git history up to `2aa2f1f`.
+* Admins create accounts with a one-time temporary password; first sign-in forces a new password and authenticator enrolment — the client's requirement.
+* Passwords expire every 30 days — the client's requirement.
+* At least one admin; admins can't act on their own account — the client said one admin is fine.
+* Custom sign-in instead of `leafs/auth` — `leafs/auth` creates the session as soon as the password matches, before the authenticator code is checked.
+* Authenticator secrets are encrypted with a key derived from `APP_KEY` — the user chose this so a copied database alone can't generate codes.
+* An authenticator (TOTP, Google Authenticator defaults) is required for every sign-in — the user asked for "no authenticator = no access".
+* Per-username lockouts (10 failures / 15 min) are accepted even though they let anyone lock an account out briefly.
 * Client IP comes from `REMOTE_ADDR`, not Leaf's `getIp()` — Leaf trusts spoofable forwarding headers and there is no proxy in front of Apache.
-* Deleting a user always rotates the master key; rejecting a pending registration doesn't — rule 6 in `CLAUDE.md`; pending users never signed in, and admins can rotate manually.
-* Admins can't act on their own account in the admin tools — avoids self-lockout and keeps the two-admin rule simple.
-* Only admins can rotate the master key — rotation locks every other user out until they upload the new key file.
-* Two-tier keys (master key wraps a data key) — rotating the master key after removing a user only re-wraps one row instead of re-encrypting all data.
-* MariaDB targets are reached through `pdo_mysql` — matches the PDO-based SQLite side.
+* App data lives in SQLite; MariaDB targets are reached through `pdo_mysql` — matches the PDO-based SQLite side.
 
 ---
 

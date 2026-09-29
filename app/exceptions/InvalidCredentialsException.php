@@ -3,8 +3,8 @@
 namespace App\Exceptions;
 
 /**
- * The password did not unlock the user-data field.
+ * The username, password or authenticator code was wrong.
  */
-class InvalidCredentialsException extends KeyException
+class InvalidCredentialsException extends SecurityException
 {
 }

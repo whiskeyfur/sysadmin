@@ -2,30 +2,17 @@
 
 namespace App\Middleware;
 
-use App\Services\AuthSessionService;
-use Leaf\Middleware;
+use App\DTOs\AuthContext;
 
 /**
  * Like Authenticate, but also requires the admin role.
  */
-class RequireAdmin extends Middleware
+class RequireAdmin extends Authenticate
 {
-    public function call()
+    protected function authorize(AuthContext $context): void
     {
-        $context = (new AuthSessionService())->current();
-
-        if ($context === null) {
-            response()->redirect('/login');
-
-            return;
-        }
-
         if (!$context->isAdmin()) {
             response()->redirect('/');
-
-            return;
         }
-
-        response()->next(['auth' => $context]);
     }
 }

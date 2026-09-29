@@ -59,7 +59,7 @@ test('usernames are not stored as typed', function () {
 
 test('old attempts are purged', function () {
     $this->throttle->recordLoginFailure('10.0.0.1', 'admin');
-    $this->clock->advance(LoginThrottleService::REGISTRATION_WINDOW_SECONDS + 1);
+    $this->clock->advance(LoginThrottleService::WINDOW_SECONDS + 1);
     $this->throttle->recordLoginFailure('10.0.0.1', 'admin');
 
     expect(LoginAttempt::count())->toBe(2);

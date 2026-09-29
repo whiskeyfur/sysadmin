@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "e8fdfa8a4b3c9bd7ad13fa7670f33e32",
+    "content-hash": "fac33998f3831857800b33e511f05841",
     "packages": [
         {
             "name": "brick/math",
@@ -2299,6 +2299,71 @@
                 }
             ],
             "time": "2026-09-14T08:53:30+00:00"
+        },
+        {
+            "name": "leafs/password",
+            "version": "v5.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/leafsphp/password.git",
+                "reference": "85667be7d5fe4f6ed309ed3ac5de8ad87974fe9a"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/leafsphp/password/zipball/85667be7d5fe4f6ed309ed3ac5de8ad87974fe9a",
+                "reference": "85667be7d5fe4f6ed309ed3ac5de8ad87974fe9a",
+                "shasum": ""
+            },
+            "require": {
+                "php": "^8.2"
+            },
+            "require-dev": {
+                "friendsofphp/php-cs-fixer": "*",
+                "leafs/alchemy": "^5.0",
+                "pestphp/pest": "*"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Leaf\\Helpers\\": "src"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Michael Darko",
+                    "email": "mickdd22@gmail.com",
+                    "homepage": "https://mychi.netlify.app",
+                    "role": "Developer"
+                }
+            ],
+            "description": "Leaf PHP password helper",
+            "homepage": "https://leafphp.dev",
+            "keywords": [
+                "hashing",
+                "leaf",
+                "password",
+                "php",
+                "security"
+            ],
+            "support": {
+                "issues": "https://github.com/leafsphp/password/issues",
+                "source": "https://github.com/leafsphp/password/tree/v5.0"
+            },
+            "funding": [
+                {
+                    "url": "https://github.com/leafsphp",
+                    "type": "github"
+                },
+                {
+                    "url": "https://opencollective.com/leaf",
+                    "type": "open_collective"
+                }
+            ],
+            "time": "2026-08-13T00:56:45+00:00"
         },
         {
             "name": "leafs/schema",

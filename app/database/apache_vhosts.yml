@@ -1,0 +1,38 @@
+# Apache virtual hosts found in each server's configuration (ApacheService scan), kept in step with it:
+# added when first seen, updated on each scan, removed when gone from the configuration.
+# name: ServerName (without scheme or port), or null when the block has none (Apache then uses the main server's).
+# address: the <VirtualHost> argument as written (e.g. "*:443"); port: its first address's port.
+# aliases, access_logs: one per line. document_root and logs are resolved paths (relative to ServerRoot, ${VARS} filled).
+# error_log null: the vhost writes to the main error log. config_file: where the block is, when known.
+timestamps: false
+columns:
+  server_id:
+    type: integer
+    index: true
+  name:
+    type: string
+    nullable: true
+  aliases:
+    type: text
+    nullable: true
+  address: string
+  port:
+    type: integer
+    nullable: true
+  ssl:
+    type: boolean
+    default: false
+  document_root:
+    type: string
+    nullable: true
+  error_log:
+    type: string
+    nullable: true
+  access_logs:
+    type: text
+    nullable: true
+  config_file:
+    type: string
+    nullable: true
+  first_seen_at: timestamp
+  last_seen_at: timestamp

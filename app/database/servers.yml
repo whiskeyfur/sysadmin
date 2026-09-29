@@ -113,6 +113,14 @@ columns:
   apache_config_file:
     type: string
     nullable: true
+  # apache_error_logs / apache_access_logs: log files set by hand, one full path per line, read as well as
+  #   those the configuration names (and on their own when Apache's configuration can't be found).
+  apache_error_logs:
+    type: text
+    nullable: true
+  apache_access_logs:
+    type: text
+    nullable: true
   # apache_container: the Docker/Podman container Apache was found in ("podman:web"), tried first next scan.
   apache_container:
     type: string

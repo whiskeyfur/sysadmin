@@ -134,6 +134,7 @@
                     'SSH' => ['/ssh/reports' => 'Reports', '/ssh' => 'Test', '/admin/ssh/new' => 'Add', '/admin/accounts/ssh' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
                     'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/admin/settings/mariadb' => 'Settings'],
                     'Apache' => ['/apache/reports' => 'Reports', '/apache' => 'Test', '/admin/apache/new' => 'Add', '/admin/settings/apache' => 'Settings'],
+                    'Vhosts' => ['/vhosts/reports' => 'Reports', '/vhosts' => 'List'],
                 ])
                 @foreach ($menus as $menu => $items)
                     {{-- The most specific item under the current page: /ssh/reports is Reports, not also Test (/ssh). --}}
@@ -143,7 +144,7 @@
                         <summary @if ($current) class="current" @endif>{{ $menu }}</summary>
                         <div class="menu-items">
                             @foreach ($items as $href => $label)
-                                @if (in_array($label, ['Reports', 'Test'], true) || $auth->isAdmin())
+                                @if (in_array($label, ['Reports', 'Test', 'List'], true) || $auth->isAdmin())
                                     @if ($label === 'Add')
                                         {{-- Viewing items above, admin tools below. --}}
                                         <hr class="menu-divider">

@@ -8,6 +8,7 @@ use App\Enums\ServerPlatform;
 use App\Exceptions\ServerConnectionException;
 use App\Models\ApacheLogEntry;
 use App\Models\ApacheTraffic;
+use App\Models\ApacheVhost;
 use App\Models\Server;
 use App\Utils\SystemClock;
 use Carbon\Carbon;
@@ -107,10 +108,14 @@ class ApacheService
             $config = $server->apache_config;
 
             if ($rescan || $config === null || $server->apache_scanned_at === null || $server->apache_scanned_at->copy()->addMinutes(self::SCAN_MINUTES)->lessThan($now)) {
-                $config = $this->scan($connection, $server->apache_config_file, $server->apache_container);
+                $config = $this->scan($connection, $server->apache_config_file, $server->apache_container, $server->apacheLogs('error'), $server->apacheLogs('access'));
                 $server->apache_config = $config;
                 $server->apache_container = $config['container'] ?? null;
                 $server->apache_scanned_at = $now;
+
+                if (isset($config['vhosts'])) {
+                    $this->syncVhosts($server, $config['vhosts'], $now);
+                }
             }
 
             $this->shell = ContainerShell::fromReference($this->ssh, $config['container'] ?? null) ?? $this->ssh;
@@ -155,11 +160,50 @@ class ApacheService
      * @param string|null $configFile Apache's main configuration file (servers.apache_config_file), read
      *                                 directly when the control program can't be used
      * @param string|null $container the container Apache was found in last time ("docker:web")
+     * @param list<string> $errorLogs error logs set by hand, read as well (servers.apache_error_logs)
+     * @param list<string> $accessLogs access logs set by hand
      * @return array<string, mixed>
      *
-     * @throws DomainException when Apache isn't found anywhere and no configuration file is set
+     * @throws DomainException when Apache isn't found anywhere, and no configuration file or logs are set
      */
-    public function scan(SSH2 $connection, ?string $configFile = null, ?string $container = null): array
+    public function scan(SSH2 $connection, ?string $configFile = null, ?string $container = null, array $errorLogs = [], array $accessLogs = []): array
+    {
+        try {
+            $config = $this->locate($connection, $configFile, $container);
+        } catch (DomainException $e) {
+            if ($errorLogs === [] && $accessLogs === []) {
+                throw $e;
+            }
+
+            // The logs set by hand, on the server itself.
+            $config = ['binary' => null, 'version' => null, 'container' => null, 'server_root' => null, 'files' => 0, 'error_logs' => [], 'access_logs' => [], 'status_url' => null,
+                'notes' => ['Only the logs set in this server\'s Apache settings are read. ' . $e->getMessage()]];
+        }
+
+        $label = 'set in settings';
+
+        foreach (['error_logs' => $errorLogs, 'access_logs' => $accessLogs] as $key => $paths) {
+            foreach ($paths as $path) {
+                $config[$key][$path] = array_values(array_unique([...($config[$key][$path] ?? []), $label]));
+            }
+        }
+
+        $shell = ContainerShell::fromReference($this->ssh, $config['container'] ?? null);
+        $added = array_values(array_diff(array_unique([...$errorLogs, ...$accessLogs]), array_keys($config['streams'] ?? [])));
+
+        if ($shell !== null && $added !== []) {
+            $config['streams'] = ($config['streams'] ?? []) + $this->streams($shell, $connection, $added);
+        }
+
+        return $config;
+    }
+
+    /**
+     * @return array<string, mixed>
+     *
+     * @throws DomainException
+     */
+    private function locate(SSH2 $connection, ?string $configFile, ?string $container): array
     {
         $notes = [];
         $remembered = ContainerShell::fromReference($this->ssh, $container);
@@ -473,6 +517,7 @@ class ApacheService
             }
         }
 
+        $vhosts = $this->vhosts($directives, $resolve);
         $statusUrl = $statusLoaded && $statusLocation !== null && $port !== null ? "http://127.0.0.1:$port" . rtrim($statusLocation, '/') . '?auto' : null;
         $notes[] = $statusUrl !== null
             ? "mod_status: $statusLocation, read from the server itself."
@@ -484,8 +529,137 @@ class ApacheService
             'error_logs' => $errorLogs,
             'access_logs' => $accessLogs,
             'status_url' => $statusUrl,
-            'notes' => $notes,
+            'vhosts' => $vhosts,
+            'notes' => array_values(array_unique($notes)),
         ];
+    }
+
+    /**
+     * The <VirtualHost> blocks: ServerName (no scheme or port) and aliases,
+     * address and port, SSL (SSLEngine on, or port 443), DocumentRoot, and
+     * their own logs (none: the main server's).
+     *
+     * @param list<array<string, mixed>> $directives
+     * @param callable(string): ?string $resolve a path as written to a full path
+     * @return list<array{name: ?string, aliases: list<string>, address: string, port: ?int, ssl: bool, document_root: ?string, error_log: ?string, access_logs: list<string>, config_file: ?string}>
+     */
+    public function vhosts(array $directives, callable $resolve): array
+    {
+        $vhosts = [];
+
+        foreach ($directives as $d) {
+            if (($d['vhost_index'] ?? null) === null) {
+                continue;
+            }
+
+            $key = ($d['file'] ?? '') . '#' . $d['vhost_index'];
+            $address = (string) $d['vhost'];
+            $vhost = $vhosts[$key] ?? [
+                'name' => null,
+                'aliases' => [],
+                'address' => $address,
+                'port' => preg_match('/(?:^|:)(\d+)$/', (string) strtok($address, " \t"), $m) === 1 ? (int) $m[1] : null,
+                'ssl' => false,
+                'document_root' => null,
+                'error_log' => null,
+                'access_logs' => [],
+                'config_file' => $d['file'] ?? null,
+            ];
+            $first = (string) ($d['args'][0] ?? '');
+
+            switch ($d['name']) {
+                case 'servername':
+                    $vhost['name'] = $this->hostName($first);
+
+                    break;
+
+                case 'serveralias':
+                    $vhost['aliases'] = array_values(array_unique([...$vhost['aliases'], ...array_filter(array_map(fn ($a) => $this->hostName((string) $a), $d['args']))]));
+
+                    break;
+
+                case 'sslengine':
+                    $vhost['ssl'] = strtolower($first) === 'on';
+
+                    break;
+
+                case 'documentroot':
+                    $vhost['document_root'] = $first === '' ? null : $resolve($first);
+
+                    break;
+
+                case 'errorlog':
+                    $vhost['error_log'] = $first === '' ? null : $resolve($first);
+
+                    break;
+
+                case 'customlog':
+                case 'transferlog':
+                    $path = $first === '' ? null : $resolve($first);
+
+                    if ($path !== null) {
+                        $vhost['access_logs'] = array_values(array_unique([...$vhost['access_logs'], $path]));
+                    }
+
+                    break;
+            }
+
+            $vhosts[$key] = $vhost;
+        }
+
+        return array_values(array_map(fn ($v) => ['ssl' => $v['ssl'] || $v['port'] === 443] + $v, $vhosts));
+    }
+
+    /**
+     * "https://www.example.com:443" as "www.example.com"; wildcards (in aliases) kept.
+     */
+    private function hostName(string $value): ?string
+    {
+        $host = strtolower((string) preg_replace(['#^[a-z][a-z0-9+.-]*://#i', '#:\d+$#', '#/.*$#'], '', trim($value)));
+
+        return $host === '' ? null : $host;
+    }
+
+    /**
+     * Keep the server's vhosts in step with what the scan found: new ones
+     * added, the rest updated, those gone from the configuration removed.
+     *
+     * @param list<array<string, mixed>> $found
+     */
+    private function syncVhosts(Server $server, array $found, Carbon $now): void
+    {
+        $existing = ApacheVhost::query()->where('server_id', $server->id)->get()->keyBy(fn (ApacheVhost $v) => ($v->name ?? '') . '|' . $v->address);
+        $seen = [];
+
+        foreach ($found as $vhost) {
+            $key = ($vhost['name'] ?? '') . '|' . $vhost['address'];
+
+            if (isset($seen[$key])) {
+                continue; // the same name and address twice: Apache uses the first
+            }
+
+            $seen[$key] = true;
+            /** @var ApacheVhost $row */
+            $row = $existing[$key] ?? new ApacheVhost(['server_id' => $server->id, 'first_seen_at' => $now]);
+            $row->fill([
+                'name' => $vhost['name'],
+                'aliases' => $vhost['aliases'] === [] ? null : implode("\n", $vhost['aliases']),
+                'address' => $vhost['address'],
+                'port' => $vhost['port'],
+                'ssl' => $vhost['ssl'],
+                'document_root' => $vhost['document_root'],
+                'error_log' => $vhost['error_log'],
+                'access_logs' => $vhost['access_logs'] === [] ? null : implode("\n", $vhost['access_logs']),
+                'config_file' => $vhost['config_file'],
+                'last_seen_at' => $now,
+            ])->save();
+        }
+
+        foreach ($existing as $key => $row) {
+            if (!isset($seen[$key])) {
+                $row->delete();
+            }
+        }
     }
 
     /**

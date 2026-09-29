@@ -53,9 +53,22 @@ class SslController extends Controller
     /**
      * The "Add a certificate" page (SSL › Add).
      */
+    /**
+     * ?name=&hostnames=&server_id=&port= fill the form in (e.g. from a vhost on the Vhosts list).
+     */
     public function create()
     {
-        $this->renderCreate();
+        $old = [];
+
+        foreach (['name', 'hostnames', 'server_id', 'port'] as $field) {
+            $value = trim((string) $this->request->get($field, false));
+
+            if ($value !== '') {
+                $old[$field] = $value;
+            }
+        }
+
+        $this->renderCreate(null, $old);
     }
 
     public function store()

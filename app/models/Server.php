@@ -31,6 +31,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property Carbon|null $apache_scanned_at
  * @property array<string, mixed>|null $apache_import_state per log file, how far the last read got (inode and offset; for container output, the last timestamp)
  * @property string|null $apache_container the Docker/Podman container Apache was found in ("podman:web"), tried first
+ * @property string|null $apache_error_logs error logs set by hand, one full path per line
+ * @property string|null $apache_access_logs access logs set by hand, one full path per line
  * @property string|null $apache_config_file Apache's main configuration file, read when its control program isn't in PATH
  * @property string|null $mysql_username
  * @property string|null $mysql_password legacy (before accounts), encrypted with SecretCipher
@@ -74,7 +76,7 @@ class Server extends Model
      */
     protected $fillable = [
         'name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_host_key', 'ssh_auth', 'ssh_platform', 'ssh_password', 'ssh_password_allowed',
-        'apache_enabled', 'apache_config', 'apache_scanned_at', 'apache_import_state', 'apache_config_file', 'apache_container', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca',
+        'apache_enabled', 'apache_config', 'apache_scanned_at', 'apache_import_state', 'apache_config_file', 'apache_container', 'apache_error_logs', 'apache_access_logs', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca',
         'last_tested_at', 'last_test_ok', 'last_test_message',
         'check_interval_minutes', 'last_checked_at', 'log_imported_at', 'log_import_state', 'log_import_message', 'last_health_status',
         'ssl_enabled', 'ssl_hosts', 'last_ssl_checked_at', 'last_ssl_status',
@@ -129,6 +131,19 @@ class Server extends Model
     public function platform(): ServerPlatform
     {
         return ServerPlatform::tryFrom((string) $this->ssh_platform) ?? ServerPlatform::Unknown;
+    }
+
+    /**
+     * Apache log files set by hand.
+     *
+     * @param 'error'|'access' $kind
+     * @return list<string>
+     */
+    public function apacheLogs(string $kind): array
+    {
+        $text = $kind === 'error' ? $this->apache_error_logs : $this->apache_access_logs;
+
+        return array_values(array_filter(array_map('trim', preg_split('/\R/', (string) $text) ?: []), fn ($p) => $p !== ''));
     }
 
     /**

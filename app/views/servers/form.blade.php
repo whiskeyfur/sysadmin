@@ -159,6 +159,11 @@
                 <label for="apache_config_file">Configuration file (optional)</label>
                 <input type="text" id="apache_config_file" name="apache_config_file" value="{{ $server->apache_config_file }}" autocapitalize="none" placeholder="/etc/httpd/conf/httpd.conf" spellcheck="false">
                 <p class="hint">Only needed when Apache can't be found: its control program is looked for on the server, then in the Docker/Podman containers the SSH user can see (rootless containers only for the user that runs them; the one found is remembered). Failing both, Apache's main configuration file (httpd.conf or apache2.conf) is read directly with the files it includes.</p>
+                <label for="apache_error_logs">Error logs (optional)</label>
+                <textarea id="apache_error_logs" name="apache_error_logs" rows="2" spellcheck="false" autocapitalize="none" placeholder="/var/log/httpd/error_log">{{ $server->apache_error_logs }}</textarea>
+                <label for="apache_access_logs">Access logs (optional)</label>
+                <textarea id="apache_access_logs" name="apache_access_logs" rows="2" spellcheck="false" autocapitalize="none" placeholder="/var/log/httpd/access_log">{{ $server->apache_access_logs }}</textarea>
+                <p class="hint">One full path per line, up to {{ \App\Services\ServerService::MAX_APACHE_LOGS }} each. Read as well as the logs Apache's configuration names, and on their own if the configuration can't be found. In a container, paths are inside it.</p>
                 @if ($server->exists && $server->apache_container)
                     <p class="hint">Apache runs in {{ str_replace(':', ' container ', $server->apache_container) }} (found automatically; tried first on each scan).</p>
                 @endif

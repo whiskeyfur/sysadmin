@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ApacheLogEntry;
 use App\Models\ApacheTraffic;
+use App\Models\ApacheVhost;
 use App\Models\HealthCheck as StoredCheck;
 use App\Models\Server;
 use Carbon\Carbon;
@@ -11,7 +12,8 @@ use Carbon\Carbon;
 /**
  * Apache reports: requests, server errors and traffic from the access logs
  * (apache_traffic, summed over all of the server's access logs), busy
- * workers from mod_status runs, and error log entries.
+ * workers from mod_status runs, and error log entries. For one virtual
+ * host, the same from the logs it writes to (vhostLogs()).
  */
 class ApacheReportService extends HistoryReport
 {
@@ -36,15 +38,18 @@ class ApacheReportService extends HistoryReport
      * intervals (5 minutes, or longer for long periods); rows are the
      * intervals' totals, newest first.
      */
-    public function report(Server $server, string $range = self::DEFAULT_RANGE): array
+    public function report(Server $server, string $range = self::DEFAULT_RANGE, ?ApacheVhost $vhost = null): array
     {
+        $logs = $vhost === null ? null : $this->vhostLogs($server, $vhost);
         [$from, $to] = $this->window($range);
         $span = $to->getTimestamp() - $from->getTimestamp();
         $bucket = $span / 300 > self::MAX_POINTS ? $this->bucketMinutes($span) : 5;
         $seconds = $bucket * 60;
         $intervals = [];
 
-        foreach (ApacheTraffic::query()->where('server_id', $server->id)->where('bucket_at', '>=', $from)->get() as $row) {
+        $traffic = ApacheTraffic::query()->where('server_id', $server->id)->where('bucket_at', '>=', $from);
+
+        foreach (($logs === null ? $traffic : $traffic->whereIn('log', $logs['access']))->get() as $row) {
             $time = intdiv($row->bucket_at->getTimestamp(), $seconds) * $seconds;
             $totals = $intervals[$time] ?? ['requests' => 0, 'bytes' => 0, 'status_2xx' => 0, 'status_3xx' => 0, 'status_4xx' => 0, 'status_5xx' => 0];
 
@@ -82,7 +87,7 @@ class ApacheReportService extends HistoryReport
             $rows[] = ['time' => Carbon::createFromTimestamp($time)] + $totals;
         }
 
-        $workers = StoredCheck::query()->where('server_id', $server->id)->where('check_key', 'apache_workers')->where('unit', '%')
+        $workers = $vhost !== null ? [] : StoredCheck::query()->where('server_id', $server->id)->where('check_key', 'apache_workers')->where('unit', '%')
             ->where('checked_at', '>=', $from)->get()->sortBy('checked_at')
             ->map(fn (StoredCheck $c) => [(int) $c->checked_at->getTimestamp(), (float) $c->value])->values()->all();
 
@@ -91,7 +96,7 @@ class ApacheReportService extends HistoryReport
         }
 
         /** @var list<ApacheLogEntry> $log */
-        $log = ApacheLogEntry::query()->where('server_id', $server->id)->where('logged_at', '>=', $from)
+        $log = $this->entries($server, $logs)->where('logged_at', '>=', $from)
             ->orderByDesc('logged_at')->orderByDesc('id')->limit(self::MAX_ENTRIES)->get()->all();
 
         return [
@@ -101,23 +106,64 @@ class ApacheReportService extends HistoryReport
             'requests' => array_filter($requests),
             'traffic' => array_filter($traffic),
             'workers' => $workers === [] ? [] : ['Busy workers' => $workers],
-            'log_counts' => $this->logCounts($server, $from, $to, max(60, $bucket)),
+            'log_counts' => $this->logCounts($server, $logs, $from, $to, max(60, $bucket)),
             'rows' => array_reverse($rows),
             'log' => $log,
         ];
     }
 
     /**
+     * The logs a virtual host writes to: its own, else the main server's
+     * (from the last scan); shared lists those other hosts write to as well,
+     * whose figures are in its report too.
+     *
+     * @return array{access: list<string>, error: list<string>, shared: list<string>}
+     */
+    public function vhostLogs(Server $server, ApacheVhost $vhost): array
+    {
+        $config = $server->apache_config ?? [];
+        $main = fn (string $key) => array_values(array_map('strval', array_keys(array_filter($config[$key] ?? [], fn ($where) => in_array('main server', (array) $where, true)))));
+        $access = $vhost->accessLogList() ?: $main('access_logs');
+        $error = $vhost->error_log !== null ? [$vhost->error_log] : $main('error_logs');
+        $shared = [];
+
+        foreach (['access_logs' => $access, 'error_logs' => $error] as $key => $paths) {
+            foreach ($paths as $path) {
+                $writers = (array) ($config[$key][$path] ?? []);
+
+                if (count($writers) > 1 || $vhost->accessLogList() === [] && $key === 'access_logs' || $vhost->error_log === null && $key === 'error_logs') {
+                    $shared[] = $path;
+                }
+            }
+        }
+
+        return ['access' => $access, 'error' => $error, 'shared' => array_values(array_unique($shared))];
+    }
+
+    /**
+     * @param array{access: list<string>, error: list<string>, shared: list<string>}|null $logs one vhost's, or null for all
+     * @return \Illuminate\Database\Eloquent\Builder<ApacheLogEntry>
+     */
+    private function entries(Server $server, ?array $logs): \Illuminate\Database\Eloquent\Builder
+    {
+        $query = ApacheLogEntry::query()->where('server_id', $server->id);
+
+        return $logs === null ? $query : $query->whereIn('source', $logs['error']);
+    }
+
+    /**
      * Error log entries per level and interval, zero-filled.
+     *
+     * @param array{access: list<string>, error: list<string>, shared: list<string>}|null $logs
      *
      * @return array<string, list<array{0: int, 1: float}>>
      */
-    private function logCounts(Server $server, Carbon $from, Carbon $to, int $minutes): array
+    private function logCounts(Server $server, ?array $logs, Carbon $from, Carbon $to, int $minutes): array
     {
         $seconds = $minutes * 60;
         $counts = [];
 
-        foreach (ApacheLogEntry::query()->where('server_id', $server->id)->where('logged_at', '>=', $from)->whereIn('level', array_keys(self::LOG_LEVELS))->get(['level', 'logged_at']) as $entry) {
+        foreach ($this->entries($server, $logs)->where('logged_at', '>=', $from)->whereIn('level', array_keys(self::LOG_LEVELS))->get(['level', 'logged_at']) as $entry) {
             $bucket = intdiv($entry->logged_at->getTimestamp(), $seconds) * $seconds;
             $counts[$entry->level][$bucket] = ($counts[$entry->level][$bucket] ?? 0) + 1;
         }

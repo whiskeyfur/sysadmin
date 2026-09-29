@@ -13,14 +13,16 @@ class ApacheConfigParser
     /**
      * Directives in file order.
      *
-     * @return list<array{name: string, args: list<string>, vhost: ?string, location: ?string}>
-     *         name lowercased; vhost/location: the enclosing block's argument, if any
+     * @return list<array{name: string, args: list<string>, vhost: ?string, vhost_index: ?int, location: ?string}>
+     *         name lowercased; vhost/location: the enclosing block's argument, if any; vhost_index: which
+     *         <VirtualHost> block (counted from 0 in this text), since several can share an address
      */
     public function directives(string $text): array
     {
         $directives = [];
         $stack = [];
         $pending = '';
+        $blocks = 0;
 
         foreach (preg_split('/\R/', $text) ?: [] as $line) {
             $line = trim($line);
@@ -46,7 +48,8 @@ class ApacheConfigParser
             }
 
             if (preg_match('#^<(\w+)\s*([^>]*)>$#', $line, $m) === 1) {
-                $stack[] = [strtolower($m[1]), trim($m[2], " \t\"")];
+                $block = strtolower($m[1]);
+                $stack[] = [$block, trim($m[2], " \t\""), $block === 'virtualhost' ? $blocks++ : null];
 
                 continue;
             }
@@ -54,17 +57,19 @@ class ApacheConfigParser
             $parts = $this->arguments($line);
             $name = strtolower((string) array_shift($parts));
             $vhost = null;
+            $vhostIndex = null;
             $location = null;
 
-            foreach ($stack as [$block, $argument]) {
+            foreach ($stack as [$block, $argument, $index]) {
                 if ($block === 'virtualhost') {
                     $vhost = $argument;
+                    $vhostIndex = $index;
                 } elseif (in_array($block, ['location', 'locationmatch'], true)) {
                     $location = $argument;
                 }
             }
 
-            $directives[] = ['name' => $name, 'args' => $parts, 'vhost' => $vhost, 'location' => $location];
+            $directives[] = ['name' => $name, 'args' => $parts, 'vhost' => $vhost, 'vhost_index' => $vhostIndex, 'location' => $location];
         }
 
         return $directives;

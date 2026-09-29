@@ -6,6 +6,9 @@ use App\DTOs\HostKey;
 use App\Enums\ServerPlatform;
 use App\Exceptions\AuthorizationException;
 use App\Models\Account;
+use App\Models\ApacheLogEntry;
+use App\Models\ApacheTraffic;
+use App\Models\ApacheVhost;
 use App\Models\HealthCheck;
 use App\Models\Server;
 use App\Models\SslBinding;
@@ -72,7 +75,7 @@ class ServerService
         'ssh' => ['ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed'],
         'mysql' => ['mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_password', 'mysql_tls', 'mysql_tls_ca'],
         // Apache is read over SSH (a new server brings SSH's settings).
-        'apache' => ['apache_config_file'],
+        'apache' => ['apache_config_file', 'apache_error_logs', 'apache_access_logs'],
     ];
 
     /**
@@ -174,6 +177,8 @@ class ServerService
             'mysql_tls_ca' => $server->mysql_tls_ca ?? '',
             'apache_enabled' => $server->apache_enabled ? '1' : '',
             'apache_config_file' => $server->apache_config_file ?? '',
+            'apache_error_logs' => $server->apache_error_logs ?? '',
+            'apache_access_logs' => $server->apache_access_logs ?? '',
         ];
     }
 
@@ -185,6 +190,9 @@ class ServerService
         $server->getConnection()->transaction(function () use ($server) {
             HealthCheck::query()->where('server_id', $server->id)->delete();
             SslCheck::query()->where('server_id', $server->id)->delete();
+            ApacheVhost::query()->where('server_id', $server->id)->delete();
+            ApacheTraffic::query()->where('server_id', $server->id)->delete();
+            ApacheLogEntry::query()->where('server_id', $server->id)->delete();
             $server->delete();
         });
     }
@@ -415,6 +423,7 @@ class ServerService
             $server->apache_scanned_at = null;
             $server->apache_import_state = null;
             $server->apache_container = null;
+            ApacheVhost::query()->where('server_id', $server->id)->delete();
         }
 
         $server->apache_enabled = $apacheEnabled;
@@ -423,6 +432,15 @@ class ServerService
         if ($configFile !== $server->apache_config_file) {
             $server->apache_config_file = $configFile;
             $server->apache_scanned_at = null; // scan again with it
+        }
+
+        foreach (['apache_error_logs' => 'error', 'apache_access_logs' => 'access'] as $field => $kind) {
+            $logs = $apacheEnabled ? $this->apacheLogList($input[$field] ?? null, $kind) : null;
+
+            if ($logs !== $server->{$field}) {
+                $server->{$field} = $logs;
+                $server->apache_scanned_at = null;
+            }
         }
 
         $mysqlAccountId = filter_var($input['mysql_account_id'] ?? null, FILTER_VALIDATE_INT) ?: null;
@@ -528,6 +546,32 @@ class ServerService
         }
 
         return $path;
+    }
+
+    public const MAX_APACHE_LOGS = 20;
+
+    /**
+     * Log files typed one per line: full paths, duplicates dropped; null when none.
+     *
+     * @param 'error'|'access' $kind
+     *
+     * @throws DomainException
+     */
+    private function apacheLogList(mixed $value, string $kind): ?string
+    {
+        $paths = array_values(array_unique(array_filter(array_map('trim', preg_split('/\R/', (string) $value) ?: []), fn ($p) => $p !== '')));
+
+        foreach ($paths as $path) {
+            if (!str_starts_with($path, '/') || strlen($path) > 500 || preg_match('/[\x00-\x1f\x7f]/', $path) === 1) {
+                throw new DomainException("Apache $kind logs must be full paths, one per line (e.g. /var/log/httpd/{$kind}_log); \"" . mb_substr($path, 0, 100) . '" isn\'t one.');
+            }
+        }
+
+        if (count($paths) > self::MAX_APACHE_LOGS) {
+            throw new DomainException('At most ' . self::MAX_APACHE_LOGS . " Apache $kind logs.");
+        }
+
+        return $paths === [] ? null : implode("\n", $paths);
     }
 
     private function mysqlPasswordKnown(Server $server, ?int $accountId, string $username): bool

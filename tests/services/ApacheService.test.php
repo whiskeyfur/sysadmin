@@ -5,10 +5,12 @@ use App\Enums\ServerPlatform;
 use App\Exceptions\ServerConnectionException;
 use App\Models\ApacheLogEntry;
 use App\Models\ApacheTraffic;
+use App\Models\ApacheVhost;
 use App\Models\Server;
 use App\Models\User;
 use App\Services\ApacheConfigParser;
 use App\Services\ApacheLogParser;
+use App\Services\ApacheReportService;
 use App\Services\ApacheService;
 use App\Services\ServerService;
 use App\Services\SettingsService;
@@ -286,6 +288,94 @@ test('Apache 2.2 in a podman container: found, remembered, configuration followe
     $results = ($this->apache)()->run($server->fresh(), rescan: true);
 
     expect($results[0]->summary)->toContain('no longer answers in podman:apache-image')->toContain("main configuration file");
+});
+
+test('log files set by hand are read as well, and on their own when Apache can\'t be found', function () {
+    $this->servers->update($this->admin, $this->server, ['apache_error_logs' => "/srv/app/error.log\n\n/var/log/apache2/error.log\n/srv/app/error.log", 'apache_access_logs' => '/srv/app/access.log'] + $this->servers->settingsAsInput($this->server));
+    $this->ssh->files += ['/srv/app/error.log' => ($this->errorLine)(5, 'error', 'app failed'), '/srv/app/access.log' => ($this->accessLine)(5, 200)];
+
+    expect($this->server->fresh()->apacheLogs('error'))->toBe(['/srv/app/error.log', '/var/log/apache2/error.log']);
+
+    ($this->apache)()->run($this->server->fresh());
+    $config = $this->server->fresh()->apache_config;
+
+    expect($config['error_logs'])->toBe(['/var/log/apache2/error.log' => ['main server', 'set in settings'], '/srv/app/error.log' => ['set in settings']])
+        ->and($config['access_logs'])->toHaveKey('/srv/app/access.log')
+        ->and(ApacheLogEntry::query()->where('source', '/srv/app/error.log')->count())->toBe(1);
+
+    unset($this->ssh->outputs['for b in apache2ctl']);
+    $results = ($this->results)(($this->apache)()->run($this->server->fresh(), rescan: true));
+    $config = $this->server->fresh()->apache_config;
+
+    expect($results)->toHaveKey('apache_errors')
+        ->and(array_keys($config['error_logs']))->toBe(['/srv/app/error.log', '/var/log/apache2/error.log'])
+        ->and($config['notes'][0])->toContain('Only the logs set');
+
+    expect(fn () => $this->servers->update($this->admin, $this->server->fresh(), ['apache_access_logs' => "logs/access_log"] + $this->servers->settingsAsInput($this->server->fresh())))
+        ->toThrow(DomainException::class, 'full paths');
+});
+
+test('virtual hosts are found in the configuration, kept in step with it, and reported from their own logs', function () {
+    $this->ssh->files['/etc/apache2/sites-enabled/shop.conf'] = <<<'CONF'
+        <VirtualHost *:80>
+            ServerName http://Shop.example.com:80
+            ServerAlias www.shop.example.com
+            DocumentRoot /srv/shop
+            CustomLog ${APACHE_LOG_DIR}/shop.log combined
+        </VirtualHost>
+        <VirtualHost *:80>
+            ServerName blog.example.com
+        </VirtualHost>
+        <VirtualHost *:443>
+            ServerName shop.example.com
+            SSLEngine on
+            DocumentRoot "htdocs"
+            ErrorLog ${APACHE_LOG_DIR}/shop-ssl-error.log
+        </VirtualHost>
+        CONF;
+    $this->ssh->files += ['/var/log/apache2/shop-ssl-error.log' => ($this->errorLine)(5, 'error', 'ssl broke')];
+    $this->ssh->files['/var/log/apache2/shop.log'] = ($this->accessLine)(5, 200) . ($this->accessLine)(4, 404);
+    $this->ssh->outputs[' -S 2>&1'] = "ServerRoot: \"/etc/apache2\"\nMain ErrorLog: \"/var/log/apache2/error.log\"\n";
+    $this->ssh->files['/etc/apache2/apache2.conf'] .= "CustomLog \${APACHE_LOG_DIR}/other_vhosts_access.log vhost_combined\n";
+    $this->ssh->files['/var/log/apache2/other_vhosts_access.log'] = ($this->accessLine)(3, 500);
+
+    ($this->apache)()->run($this->server);
+    $vhosts = ApacheVhost::query()->where('server_id', $this->server->id)->get()->keyBy(fn ($v) => $v->name . ' ' . $v->address);
+
+    expect($vhosts->keys()->sort()->values()->all())->toBe(['blog.example.com *:80', 'shop.example.com *:443', 'shop.example.com *:80'])
+        ->and($vhosts['shop.example.com *:80']->aliasList())->toBe(['www.shop.example.com'])
+        ->and($vhosts['shop.example.com *:80']->document_root)->toBe('/srv/shop')
+        ->and($vhosts['shop.example.com *:80']->accessLogList())->toBe(['/var/log/apache2/shop.log'])
+        ->and($vhosts['shop.example.com *:80']->port)->toBe(80)
+        ->and($vhosts['shop.example.com *:80']->ssl)->toBeFalse()
+        ->and($vhosts['shop.example.com *:443']->ssl)->toBeTrue()
+        ->and($vhosts['shop.example.com *:443']->document_root)->toBe('/etc/apache2/htdocs')
+        ->and($vhosts['shop.example.com *:443']->config_file)->toBe('/etc/apache2/sites-enabled/shop.conf');
+
+    $reports = new ApacheReportService($this->clock);
+    $shop = $reports->report($this->server->fresh(), '24h', $vhosts['shop.example.com *:80']);
+    $ssl = $reports->report($this->server->fresh(), '24h', $vhosts['shop.example.com *:443']);
+    $logs = $reports->vhostLogs($this->server->fresh(), $vhosts['blog.example.com *:80']);
+
+    expect(array_sum(array_column($shop['rows'], 'requests')))->toBe(2)
+        ->and(collect($ssl['log'])->pluck('message')->all())->toBe(['ssl broke'])
+        ->and(array_sum(array_column($ssl['rows'], 'requests')))->toBe(1) // the main server's access log
+        ->and($logs['access'])->toBe(['/var/log/apache2/other_vhosts_access.log'])
+        ->and($logs['shared'])->toContain('/var/log/apache2/other_vhosts_access.log');
+
+    // Blog removed from the configuration: gone from the list; the others keep their first-seen time.
+    $firstSeen = $vhosts['shop.example.com *:80']->first_seen_at->getTimestamp();
+    $this->ssh->files['/etc/apache2/sites-enabled/shop.conf'] = str_replace("<VirtualHost *:80>\n    ServerName blog.example.com\n</VirtualHost>\n", '', $this->ssh->files['/etc/apache2/sites-enabled/shop.conf']);
+    $this->clock->advance(3600);
+    ($this->apache)()->run($this->server->fresh(), rescan: true);
+    $after = ApacheVhost::query()->where('server_id', $this->server->id)->get();
+
+    expect($after->pluck('name')->sort()->values()->all())->toBe(['shop.example.com', 'shop.example.com'])
+        ->and($after->firstWhere('address', '*:80')->first_seen_at->getTimestamp())->toBe($firstSeen);
+
+    // Apache turned off: its vhosts go too.
+    $this->servers->update($this->admin, $this->server->fresh(), ['apache_enabled' => ''] + $this->servers->settingsAsInput($this->server->fresh()));
+    expect(ApacheVhost::query()->where('server_id', $this->server->id)->count())->toBe(0);
 });
 
 test('a control program whose -S fails is passed over, as when it is missing', function () {

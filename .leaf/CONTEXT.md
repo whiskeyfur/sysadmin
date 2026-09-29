@@ -96,6 +96,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — SSL checks scheduled on their own interval, once a day by default (SSL setting `ssl_check_hours`, 1–168): each run checks certificates not checked in that long; server health checks stay every 5 minutes (`ScheduledCheckService::sslDue()`).
 * 2026-09-29 — Apache without its control program in PATH: the admin sets the main configuration file (`servers.apache_config_file`), read with its includes followed (`ApacheConfigFiles`).
 * 2026-09-29 — Apache in Docker/Podman containers: found when the host has no working `-S`, remembered (`servers.apache_container`), commands run via `ContainerShell`, container output read with `logs --since`; Apache 2.2 read from `-V` + its main file (`ApacheConfigParser::compiled()`/`answered()`).
+* 2026-09-29 — Apache logs can be set by hand per server (`apache_error_logs`/`apache_access_logs`); virtual hosts discovered from the configuration (`apache_vhosts`), with a Vhosts menu: List (SSL coverage, Monitor link) and Reports (per-vhost traffic/errors from its logs).
 
 ---
 

@@ -4,44 +4,14 @@ namespace App\Services;
 
 use App\Models\HealthCheck as StoredCheck;
 use App\Models\Server;
-use App\Utils\SystemClock;
 use Carbon\Carbon;
-use Psr\Clock\ClockInterface;
 
 /**
  * SSH reports: disk, load and memory over time for one server, read from
  * the stored health check runs (kept HealthCheckService::RETENTION_DAYS).
  */
-class SshReportService
+class SshReportService extends HistoryReport
 {
-    /**
-     * Report periods: key => [label, hours].
-     *
-     * @var array<string, array{0: string, 1: int}>
-     */
-    public const RANGES = [
-        '24h' => ['Last 24 hours', 24],
-        '7d' => ['Last 7 days', 24 * 7],
-        '30d' => ['Last 30 days', 24 * 30],
-    ];
-
-    public const DEFAULT_RANGE = '7d';
-
-    /**
-     * More runs than this (e.g. 7 days of 5-minute checks) are averaged
-     * into time buckets, for readable charts and a table of sane length.
-     */
-    public const MAX_POINTS = 300;
-
-    /**
-     * Bucket widths to pick from, in minutes.
-     */
-    private const BUCKET_MINUTES = [5, 10, 15, 30, 60, 120, 240, 360, 720, 1440];
-
-    public function __construct(private readonly ClockInterface $clock = new SystemClock())
-    {
-    }
-
     /**
      * Chart series and table rows for a server over a period, oldest first.
      *
@@ -65,9 +35,7 @@ class SshReportService
      */
     public function report(Server $server, string $range = self::DEFAULT_RANGE): array
     {
-        $hours = (self::RANGES[$range] ?? self::RANGES[self::DEFAULT_RANGE])[1];
-        $to = Carbon::instance($this->clock->now());
-        $from = $to->copy()->subHours($hours);
+        [$from, $to] = $this->window($range);
 
         $checks = StoredCheck::query()
             ->where('server_id', $server->id)
@@ -141,7 +109,12 @@ class SshReportService
             $disk = array_map(fn (array $points) => $this->averageSeries($points, $seconds), $disk);
             $load = array_map(fn (array $points) => $this->averageSeries($points, $seconds), $load);
             $memory = array_map(fn (array $points) => $this->averageSeries($points, $seconds), $memory);
-            $rows = $this->averageRows($rows, $seconds);
+            $rows = $this->averageRows($rows, $seconds, ['disk', 'load1', 'load5', 'load15', 'per_core', 'memory', 'swap'], ['cores'], function (array $group, array $row) {
+                $fullest = collect($group)->filter(fn ($r) => $r['disk'] !== null)->sortByDesc('disk')->first();
+                $row['disk_mount'] = $fullest['disk_mount'] ?? null;
+
+                return $row;
+            });
         }
 
         return [
@@ -153,68 +126,5 @@ class SshReportService
             'rows' => array_values($rows),
             'bucket_minutes' => $bucket,
         ];
-    }
-
-    private function bucketMinutes(int $spanSeconds): int
-    {
-        foreach (self::BUCKET_MINUTES as $minutes) {
-            if ($spanSeconds / ($minutes * 60) <= self::MAX_POINTS) {
-                return $minutes;
-            }
-        }
-
-        return self::BUCKET_MINUTES[count(self::BUCKET_MINUTES) - 1];
-    }
-
-    /**
-     * @param list<array{0: int, 1: float}> $points
-     * @return list<array{0: int, 1: float}> one averaged point per bucket, at the bucket's start
-     */
-    private function averageSeries(array $points, int $seconds): array
-    {
-        $buckets = [];
-
-        foreach ($points as [$time, $value]) {
-            $buckets[intdiv($time, $seconds) * $seconds][] = $value;
-        }
-
-        $averaged = [];
-
-        foreach ($buckets as $time => $values) {
-            $averaged[] = [$time, round(array_sum($values) / count($values), 2)];
-        }
-
-        return $averaged;
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $rows keyed by run time
-     * @return array<int, array<string, mixed>> one row per bucket: averages, the fullest disk's mount and the latest core count
-     */
-    private function averageRows(array $rows, int $seconds): array
-    {
-        $groups = [];
-
-        foreach ($rows as $time => $row) {
-            $groups[intdiv($time, $seconds) * $seconds][] = $row;
-        }
-
-        $averaged = [];
-
-        foreach ($groups as $time => $group) {
-            $row = ['time' => Carbon::createFromTimestamp($time)];
-
-            foreach (['disk', 'load1', 'load5', 'load15', 'per_core', 'memory', 'swap'] as $field) {
-                $values = array_filter(array_column($group, $field), fn ($v) => $v !== null);
-                $row[$field] = $values === [] ? null : round(array_sum($values) / count($values), 2);
-            }
-
-            $fullest = collect($group)->filter(fn ($r) => $r['disk'] !== null)->sortByDesc('disk')->first();
-            $row['disk_mount'] = $fullest['disk_mount'] ?? null;
-            $row['cores'] = collect($group)->pluck('cores')->filter()->last();
-            $averaged[$time] = $row;
-        }
-
-        return $averaged;
     }
 }

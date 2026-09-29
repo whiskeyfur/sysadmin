@@ -88,11 +88,11 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 
 ## Recent Changes
 
+* 2026-09-29 — MariaDB reports: connections, buffer pool hit ratio, replication lag, crashed tables and uptime as line charts plus data table; report periods and averaging shared in `HistoryReport` (`MariadbReportService`, `reports/mariadb.blade.php`, `LineChart` scale floor).
 * 2026-09-29 — Scheduled checks every 5 minutes: `php leaf app:run-checks` from cron (or `--loop`), backing off to at most hourly for unreachable servers, never overlapping; SSH reports average dense data into buckets (`ScheduledCheckService`, `AppRunChecksCommand`, `SshReportService`).
 * 2026-09-29 — SSH reports: disk per filesystem, load and memory/swap over 24 h / 7 d / 30 d as server-rendered SVG line charts plus a data table, from the stored check runs (`SshReportService`, `App\Utils\LineChart`, `reports/ssh.blade.php`).
 * 2026-09-29 — Add item in each module's menu: SSL › Add (`/admin/ssl/new`, the certificate form moved off the SSL list), SSH › Add and MariaDB › Add (`/admin/ssh/new`, `/admin/mariadb/new`: that module's server form) (`SslController::create()`, `ServerConfigController::createSsh()/createMariadb()`).
 * 2026-09-29 — Servers managed per module: SSH/MariaDB pages add (new or existing server), edit and remove only their module; MariaDB logins pick database accounts; deleting a server drops its certificate links; menu highlights only the current item (`ServerService::saveModule()`/`removeModule()`, `ServerConfigController`, `servers/form.blade.php`).
-* 2026-09-29 — Accounts split into SSH and database accounts (own menus; mixed legacy accounts split in two); Reports placeholders first in each menu; all tables sortable and filterable; SSL list wider with an Expires column; SSH/MariaDB/overview pages wide and top-aligned (`AccountService::assignServices()`, `ReportController`, `layouts/app.blade.php`, `SslCertificate::expiresAt()`).
 
 ---
 

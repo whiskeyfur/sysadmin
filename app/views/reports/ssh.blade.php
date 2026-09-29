@@ -7,23 +7,7 @@
     <div class="card">
         <div class="actions" style="margin-top: 0; justify-content: space-between">
             <h1>SSH reports</h1>
-            @if (count($servers))
-                <form method="get" action="/ssh/reports" class="row-actions">
-                    <label for="server" class="visually-hidden">Server</label>
-                    <select id="server" name="server" onchange="this.form.submit()">
-                        @foreach ($servers as $option)
-                            <option value="{{ $option->id }}" {{ $server && $option->id === $server->id ? 'selected' : '' }}>{{ $option->name }}</option>
-                        @endforeach
-                    </select>
-                    <label for="range" class="visually-hidden">Period</label>
-                    <select id="range" name="range" onchange="this.form.submit()">
-                        @foreach (\App\Services\SshReportService::RANGES as $key => [$label])
-                            <option value="{{ $key }}" {{ $range === $key ? 'selected' : '' }}>{{ $label }}</option>
-                        @endforeach
-                    </select>
-                    <noscript><button type="submit">Show</button></noscript>
-                </form>
-            @endif
+            @include('reports.picker', ['action' => '/ssh/reports'])
         </div>
         <p class="muted">Disk, load and memory from each SSH check run: every {{ \App\Services\ScheduledCheckService::DEFAULT_INTERVAL_MINUTES }} minutes when checks are scheduled (<code>php leaf app:run-checks</code>), and whenever someone runs them. Results are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days. Hover a point for its value.</p>
 

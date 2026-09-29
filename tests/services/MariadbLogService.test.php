@@ -26,6 +26,7 @@ beforeEach(function () {
     // A scripted server: file contents, directory listings and other command output; everything else fails.
     $this->ssh = new class () extends SshService {
         public array $files = [];
+        public array $inodes = [];
         public array $outputs = [];
         public array $commands = [];
         public ServerPlatform $platform = ServerPlatform::Unix;
@@ -52,16 +53,22 @@ beforeEach(function () {
         {
             $this->commands[] = $command;
 
-            if (preg_match("/^(?:cat|tail -c \\d+) -- '([^']+)'/", $command, $m) === 1) {
-                if (!array_key_exists($m[1], $this->files)) {
-                    throw new ServerConnectionException("The command exited with status 1: cat: {$m[1]}: No such file or directory");
+            if (preg_match("/^(?:cat|tail -c \\+(\\d+)|\\{ ls -di) -- '([^']+)'/", $command, $m) === 1) {
+                $path = $m[2];
+
+                if (!array_key_exists($path, $this->files)) {
+                    throw new ServerConnectionException("The command exited with status 1: cat: $path: No such file or directory");
                 }
 
-                if ($this->files[$m[1]] === false) {
-                    throw new ServerConnectionException("The command exited with status 1: tail: cannot open '{$m[1]}' for reading: Permission denied");
+                if ($this->files[$path] === false) {
+                    throw new ServerConnectionException("The command exited with status 1: $path: Permission denied");
                 }
 
-                return $this->files[$m[1]];
+                if (str_starts_with($command, '{ ls -di')) {
+                    return ($this->inodes[$path] ?? '100') . " $path\n" . strlen($this->files[$path]) . "\n";
+                }
+
+                return $m[1] === '' ? $this->files[$path] : substr($this->files[$path], (int) $m[1] - 1);
             }
 
             foreach ($this->outputs as $pattern => $output) {
@@ -198,4 +205,31 @@ test('a 5 MB log is imported in bounded memory', function () {
     expect($result['sources'][0]['imported'])->toBeGreaterThan(30000)
         // Parsed all at once this took over 128 MB (PHP's usual memory_limit).
         ->and($peak)->toBeLessThan(48 * 1024 * 1024);
+});
+
+test('later imports read only what was added since, and start over when the file is rotated', function () {
+    $line = fn (int $minutesAgo, string $text) => ($this->recent)($minutesAgo) . " 0 [Warning] $text\n";
+    $this->ssh->files = ['/etc/my.cnf' => "[mysqld]\nlog_error=/logs/e.log\n", '/logs/e.log' => $line(30, 'first')];
+    ($this->service)()->import($this->admin, $this->server);
+
+    // Appended, plus half a line still being written: only the complete line now.
+    $this->ssh->files['/logs/e.log'] .= $line(20, 'second') . substr($line(10, 'third'), 0, 15);
+    $this->ssh->commands = [];
+    $second = ($this->service)()->import($this->admin, $this->server->fresh());
+    $tail = collect($this->ssh->commands)->first(fn ($c) => str_starts_with($c, 'tail'));
+
+    expect($second['sources'][0]['read'])->toBe(1)
+        ->and($tail)->toContain('tail -c +' . (strlen($line(30, 'first')) + 1))
+        ->and(MariadbLogEntry::query()->pluck('message')->all())->toBe(['first', 'second']);
+
+    // The rest of the half-written line arrives; then the file is rotated.
+    $this->ssh->files['/logs/e.log'] .= substr($line(10, 'third'), 15);
+    ($this->service)()->import($this->admin, $this->server->fresh());
+    $this->ssh->files['/logs/e.log'] = $line(1, 'after rotation');
+    $this->ssh->inodes['/logs/e.log'] = '200';
+    $rotated = ($this->service)()->import($this->admin, $this->server->fresh());
+
+    expect(MariadbLogEntry::query()->orderBy('logged_at')->pluck('message')->all())->toBe(['first', 'second', 'third', 'after rotation'])
+        ->and($rotated['sources'][0]['imported'])->toBe(1)
+        ->and($this->server->fresh()->log_import_message)->toBe('1 new entry.');
 });

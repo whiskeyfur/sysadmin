@@ -8,6 +8,7 @@ use App\Models\SslBinding;
 use App\Models\SslCertificate;
 use App\Models\User;
 use App\Services\HealthCheckService;
+use App\Services\MariadbLogService;
 use App\Services\ScheduledCheckService;
 use App\Services\ServerService;
 use App\Services\SslCheckService;
@@ -35,7 +36,8 @@ beforeEach(function () {
         {
             $this->test->ran[] = $server->name;
             $status = $this->test->failing[$server->name] ?? false ? HealthStatus::Critical : HealthStatus::Ok;
-            $key = $status === HealthStatus::Critical ? 'connection' : 'connections';
+            // A failing server fails its MariaDB connection, or its SSH connection with sshDown.
+            $key = $status === HealthStatus::Critical ? (($this->test->sshDown ?? false) ? 'ssh' : 'connection') : 'connections';
             $now = Carbon::instance($this->test->clock->now())->startOfSecond();
             StoredCheck::query()->create(['server_id' => $server->id, 'check_key' => $key, 'status' => $status, 'summary' => 'x', 'checked_at' => $now]);
             $server->last_checked_at = $now;
@@ -59,7 +61,34 @@ beforeEach(function () {
         }
     };
     $this->checker = $checker;
-    $this->scheduler = new ScheduledCheckService($this->health, new SslMonitorService($checker, $this->clock), $this->clock);
+    // Stand-in log import: records the servers it imported from.
+    $this->imported = [];
+    $this->logs = new class ($test) extends MariadbLogService {
+        public bool $fails = false;
+
+        public function __construct(private $test)
+        {
+        }
+
+        public array $usedDatabase = [];
+
+        public function importNow(Server $server, bool $useDatabase = true): array
+        {
+            $this->test->imported[] = $server->name;
+            $this->usedDatabase[] = $useDatabase;
+
+            if ($this->fails) {
+                throw new App\Exceptions\ServerConnectionException('ssh refused');
+            }
+
+            $server->log_imported_at = Carbon::instance($this->test->clock->now());
+            $server->log_import_message = '3 new entries.';
+            $server->save();
+
+            return ['configuration' => [], 'sources' => []];
+        }
+    };
+    $this->scheduler = new ScheduledCheckService($this->health, new SslMonitorService($checker, $this->clock), $this->clock, $this->logs);
     $this->db = fn (string $name) => $this->servers->create($this->admin, [
         'name' => $name, 'hostname' => "$name.example.com", 'ssh_enabled' => '', 'mysql_enabled' => '1', 'mysql_username' => 'mon', 'mysql_password' => 'pw!', 'mysql_tls' => 'off',
     ]);
@@ -127,4 +156,67 @@ test('servers with nothing to check are skipped; certificates on servers and ser
     $this->clock->advance(5 * 60);
     $this->scheduler->runDue();
     expect($this->checker->calls)->toHaveCount(4);
+});
+
+test('MariaDB logs of servers with SSH set up are imported on their own interval', function () {
+    $both = ($this->db)('both');
+    $both->ssh_enabled = true;
+    $both->ssh_username = 'ops';
+    $both->ssh_host_key = 'ssh-ed25519 AAAA';
+    $both->save();
+    ($this->db)('db-only'); // no SSH: nothing to import from
+
+    $log = $this->scheduler->runDue();
+    expect($this->imported)->toBe(['both'])
+        ->and(implode("\n", $log))->toContain('both: log import: 3 new entries.');
+
+    $this->clock->advance(59 * 60);
+    $this->scheduler->runDue();
+    expect($this->imported)->toHaveCount(1);
+
+    $this->clock->advance(60);
+    $this->scheduler->runDue();
+    expect($this->imported)->toHaveCount(2);
+});
+
+test('a failed scheduled import is recorded and not retried before the interval; 0 turns imports off', function () {
+    $server = ($this->db)('both');
+    $server->ssh_enabled = true;
+    $server->ssh_username = 'ops';
+    $server->ssh_host_key = 'ssh-ed25519 AAAA';
+    $server->save();
+    $this->logs->fails = true;
+
+    $this->scheduler->runDue();
+    $this->clock->advance(5 * 60);
+    $this->scheduler->runDue();
+
+    expect($this->imported)->toBe(['both'])
+        ->and($server->fresh()->log_import_message)->toContain('ssh refused');
+
+    (new App\Services\SettingsService())->update(new User(['role' => User::ROLE_ADMIN]), ['mysql_log_import_minutes' => '0']);
+    $this->clock->advance(2 * 3600);
+    $this->scheduler->runDue();
+
+    expect($this->imported)->toHaveCount(1);
+});
+
+test('with MariaDB down its log is still imported, without logging into it; with SSH failing, not at all', function () {
+    $server = ($this->db)('down');
+    $server->ssh_enabled = true;
+    $server->ssh_username = 'ops';
+    $server->ssh_host_key = 'ssh-ed25519 AAAA';
+    $server->save();
+    $this->failing = ['down' => true]; // the stand-in fails the MariaDB connection
+
+    $this->scheduler->runDue();
+
+    expect($this->imported)->toBe(['down'])
+        ->and($this->logs->usedDatabase)->toBe([false]);
+
+    $this->sshDown = true;
+    $this->clock->advance(3 * 3600);
+    $this->scheduler->runDue();
+
+    expect($this->imported)->toHaveCount(1);
 });

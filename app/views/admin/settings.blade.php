@@ -74,6 +74,13 @@
                     <input type="text" id="mysql_restart_warning_minutes" name="mysql_restart_warning_minutes" value="{{ $value('mysql_restart_warning_minutes') }}" inputmode="numeric" required>
                     <p class="hint">A restart this recent is a warning, as it may have been a crash (1–10080, default {{ $default('mysql_restart_warning_minutes') }}).</p>
                 </fieldset>
+
+                <fieldset>
+                    <legend>Log import</legend>
+                    <label for="mysql_log_import_minutes">Import logs every (minutes)</label>
+                    <input type="text" id="mysql_log_import_minutes" name="mysql_log_import_minutes" value="{{ $value('mysql_log_import_minutes') }}" inputmode="numeric" required>
+                    <p class="hint">Scheduled checks also import the MariaDB logs of servers with SSH set up, reading only what's new since the last import. 0 turns it off; admins can still use Import log (0–1440, default {{ $default('mysql_log_import_minutes') }}).</p>
+                </fieldset>
             @endif
 
             <div class="actions">

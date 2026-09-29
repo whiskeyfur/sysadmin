@@ -78,11 +78,31 @@ class MariadbLogService
             throw new AuthorizationException('Only admins can import logs.');
         }
 
+        return $this->importNow($server);
+    }
+
+    /**
+     * Import without a user: the scheduler (ScheduledCheckService). The
+     * outcome is kept in servers.log_import_message for the report, since
+     * nobody sees a scheduled import happen. $useDatabase false skips the
+     * MariaDB login (when it's failing, so failed attempts don't pile up).
+     *
+     * @return array{
+     *     configuration: list<string>,
+     *     sources: list<array{label: string, where: string, read: int, imported: int, problem: ?string}>
+     * }
+     *
+     * @throws DomainException when the server can't be imported from
+     * @throws ServerConnectionException when SSH fails
+     */
+    public function importNow(Server $server, bool $useDatabase = true): array
+    {
         if (!$this->canImport($server)) {
             throw new DomainException("{$server->name} needs both MariaDB monitoring and SSH set up to import its log.");
         }
 
-        $variables = $this->variables($server);
+        // The running server's variables only fill gaps in the option files; skip them when its login is failing.
+        $variables = $useDatabase ? $this->variables($server) : [];
         $connection = $this->ssh->connect($server);
 
         try {
@@ -95,15 +115,20 @@ class MariadbLogService
             $sources = $this->locate($connection, $settings, $variables, $configuration);
             $configuration[] = 'Server timezone: UTC' . $zone->getName() . '.';
             $results = [];
+            $state = $server->log_import_state ?? [];
 
             foreach ($sources as $source) {
-                $results[] = $this->importSource($connection, $server, $source, $zone);
+                $results[] = $this->importSource($connection, $server, $source, $zone, $state);
             }
         } finally {
             $connection->disconnect();
         }
 
+        $imported = array_sum(array_column($results, 'imported'));
+        $problems = array_filter(array_map(fn (array $r) => $r['problem'] === null ? null : "{$r['label']}: {$r['problem']}", $results));
         $server->log_imported_at = Carbon::instance($this->clock->now());
+        $server->log_import_state = $state;
+        $server->log_import_message = mb_substr(implode(' ', ["$imported new entr" . ($imported === 1 ? 'y' : 'ies') . '.', ...$problems]), 0, 2000);
         $server->save();
         $this->prune();
 
@@ -269,9 +294,10 @@ class MariadbLogService
 
     /**
      * @param array{type: 'error'|'slow'|'journal', label: string, path: ?string, since: ?Carbon} $source
+     * @param array<string, array{inode: string, offset: int}> $state how far each file was read before; updated
      * @return array{label: string, where: string, read: int, imported: int, problem: ?string}
      */
-    private function importSource(SSH2 $connection, Server $server, array $source, DateTimeZone $zone): array
+    private function importSource(SSH2 $connection, Server $server, array $source, DateTimeZone $zone, array &$state): array
     {
         $cutoff = Carbon::instance($this->clock->now())->subDays(HealthCheckService::RETENTION_DAYS);
         $where = $source['path'] ?? 'the systemd journal, processes mariadbd and mysqld';
@@ -283,7 +309,7 @@ class MariadbLogService
                     escapeshellarg('@' . max($cutoff->getTimestamp(), (int) $server->log_imported_at?->copy()->subHour()->getTimestamp())),
                     self::MAX_JOURNAL_LINES,
                 ))
-                : $this->ssh->exec($connection, sprintf('tail -c %d -- %s 2>&1', self::MAX_BYTES, escapeshellarg((string) $source['path'])));
+                : $this->readNew($connection, (string) $source['path'], $state);
         } catch (ServerConnectionException $e) {
             $hint = str_contains($e->getMessage(), 'ermission denied') || str_contains($e->getMessage(), 'not seeing messages')
                 ? ($source['type'] === 'journal'
@@ -329,6 +355,35 @@ class MariadbLogService
             'imported' => $imported,
             'problem' => $problem,
         ];
+    }
+
+    /**
+     * What's new in a log file since the last import: from the byte the last
+     * import stopped at, or (new, rotated or truncated file) the last
+     * MAX_BYTES. Stops at the last complete line, so a line being written is
+     * read whole next time.
+     *
+     * @param array<string, array{inode: string, offset: int}> $state
+     *
+     * @throws ServerConnectionException
+     */
+    private function readNew(SSH2 $connection, string $path, array &$state): string
+    {
+        $quoted = escapeshellarg($path);
+        // "<inode> <path>" then the size in bytes.
+        $info = preg_split('/\R/', trim($this->ssh->exec($connection, "{ ls -di -- $quoted && wc -c < $quoted; } 2>&1"))) ?: [];
+        $inode = (string) strtok((string) ($info[0] ?? ''), ' ');
+        $size = (int) trim((string) ($info[1] ?? '0'));
+        $previous = $state[$path] ?? null;
+        $start = $previous !== null && $previous['inode'] === $inode && $previous['offset'] <= $size ? $previous['offset'] : 0;
+        $start = max($start, $size - self::MAX_BYTES);
+
+        $text = $start >= $size ? '' : $this->ssh->exec($connection, sprintf('tail -c +%d -- %s 2>&1', $start + 1, $quoted));
+        $complete = strrpos($text, "\n");
+        $text = $complete === false ? '' : substr($text, 0, $complete + 1);
+        $state[$path] = ['inode' => $inode, 'offset' => $start + strlen($text)];
+
+        return $text;
     }
 
     /**

@@ -23,6 +23,10 @@ use Throwable;
  * MariaDB's max_connect_errors. Only the app's key (or a stored password on
  * servers already set up for password login) is ever used; no new
  * credentials are tried.
+ *
+ * MariaDB logs of servers with SSH set up are imported too, every
+ * mysql_log_import_minutes (an admin setting; 0 = off), reading only what's
+ * new; skipped while a server is backing off.
  */
 class ScheduledCheckService
 {
@@ -36,6 +40,8 @@ class ScheduledCheckService
         private readonly HealthCheckService $health = new HealthCheckService(),
         private readonly SslMonitorService $ssl = new SslMonitorService(),
         private readonly ClockInterface $clock = new SystemClock(),
+        private ?MariadbLogService $logs = null,
+        private readonly SettingsService $settings = new SettingsService(),
     ) {
     }
 
@@ -53,21 +59,11 @@ class ScheduledCheckService
             $health = $this->health->canCheck($server);
             $ssl = SslBinding::query()->where('server_id', $server->id)->exists();
 
-            if ((!$health && !$ssl) || !$this->isDue($server, $health, $now)) {
-                continue;
+            if ($health || $ssl) {
+                $this->checkIfDue($server, $health, $ssl, $now, $log);
             }
 
-            try {
-                $results = $health ? $this->health->runNow($server) : [];
-                $certificates = $ssl ? $this->ssl->checkServer(null, $server) : 0;
-                $worst = $results === [] ? null : HealthStatus::worst(array_map(fn ($r) => $r->status, $results))->value;
-                $log[] = "{$server->name}: " . implode(', ', array_filter([
-                    $health ? count($results) . " checks ($worst)" : null,
-                    $ssl ? "$certificates certificate(s)" : null,
-                ]));
-            } catch (Throwable $e) {
-                $log[] = "{$server->name}: failed: {$e->getMessage()}";
-            }
+            $this->importLogIfDue($server, $now, $log);
         }
 
         $direct = $this->ssl->checkDirectDue($now->copy()->subMinutes(self::DEFAULT_INTERVAL_MINUTES)->addSeconds(30));
@@ -77,6 +73,59 @@ class ScheduledCheckService
         }
 
         return $log;
+    }
+
+    /**
+     * @param list<string> $log
+     */
+    private function checkIfDue(Server $server, bool $health, bool $ssl, Carbon $now, array &$log): void
+    {
+        if (!$this->isDue($server, $health, $now)) {
+            return;
+        }
+
+        try {
+            $results = $health ? $this->health->runNow($server) : [];
+            $certificates = $ssl ? $this->ssl->checkServer(null, $server) : 0;
+            $worst = $results === [] ? null : HealthStatus::worst(array_map(fn ($r) => $r->status, $results))->value;
+            $log[] = "{$server->name}: " . implode(', ', array_filter([
+                $health ? count($results) . " checks ($worst)" : null,
+                $ssl ? "$certificates certificate(s)" : null,
+            ]));
+        } catch (Throwable $e) {
+            $log[] = "{$server->name}: failed: {$e->getMessage()}";
+        }
+    }
+
+    /**
+     * Import the server's MariaDB log when the interval has passed; not while
+     * its connections are failing (see intervalMinutes()).
+     *
+     * @param list<string> $log
+     */
+    private function importLogIfDue(Server $server, Carbon $now, array &$log): void
+    {
+        $minutes = $this->settings->integer(SettingsService::MYSQL_LOG_IMPORT_MINUTES);
+
+        // SSH failing: wait (fail2ban). Only MariaDB failing: import anyway, without logging into it.
+        if ($minutes === 0 || !$server->mysql_enabled || !$server->sshReady() || $this->consecutiveConnectionFailures($server, ['ssh']) > 0) {
+            return;
+        }
+
+        if ($server->log_imported_at !== null && $server->log_imported_at->copy()->addMinutes($minutes)->subSeconds(30)->greaterThan($now)) {
+            return;
+        }
+
+        try {
+            ($this->logs ??= new MariadbLogService())->importNow($server, useDatabase: $this->consecutiveConnectionFailures($server, ['connection']) === 0);
+            $log[] = "{$server->name}: log import: {$server->fresh()?->log_import_message}";
+        } catch (Throwable $e) {
+            // Remember the failure for the report, and don't retry before the interval.
+            $server->log_imported_at = $now;
+            $server->log_import_message = mb_substr("The last scheduled import failed: {$e->getMessage()}", 0, 2000);
+            $server->save();
+            $log[] = "{$server->name}: log import failed: {$e->getMessage()}";
+        }
     }
 
     /**
@@ -113,7 +162,10 @@ class ScheduledCheckService
         return $failures === 0 ? $interval : min(self::MAX_BACKOFF_MINUTES, $interval * 2 ** min($failures, 6));
     }
 
-    private function consecutiveConnectionFailures(Server $server): int
+    /**
+     * @param list<string> $keys the connection checks that count: 'ssh', 'connection' (MariaDB)
+     */
+    private function consecutiveConnectionFailures(Server $server, array $keys = self::CONNECTION_KEYS): int
     {
         $runs = StoredCheck::query()->where('server_id', $server->id)
             ->select('checked_at')->distinct()->orderByDesc('checked_at')->limit(8)->pluck('checked_at');
@@ -121,7 +173,7 @@ class ScheduledCheckService
 
         foreach ($runs as $time) {
             $failed = StoredCheck::query()->where('server_id', $server->id)->where('checked_at', $time)
-                ->whereIn('check_key', self::CONNECTION_KEYS)->where('status', HealthStatus::Critical->value)->exists();
+                ->whereIn('check_key', $keys)->where('status', HealthStatus::Critical->value)->exists();
 
             if (!$failed) {
                 break;

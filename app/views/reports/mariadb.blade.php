@@ -114,20 +114,26 @@
     @if ($server !== null)
         <div class="card">
             <h2>Log</h2>
+            @php($importEvery = (new \App\Services\SettingsService())->integer(\App\Services\SettingsService::MYSQL_LOG_IMPORT_MINUTES))
+            @if ($server->mysql_enabled && $server->sshReady())
+                <p class="hint">
+                    {{ $importEvery > 0 ? "Imported automatically every $importEvery minutes by the scheduled checks." : 'Automatic imports are off (MariaDB settings).' }}
+                    @if ($server->log_imported_at)
+                        Last import {{ \App\Utils\LocalTime::format($server->log_imported_at) }}: {{ $server->log_import_message }}
+                    @endif
+                </p>
+            @endif
             @if ($report['log'] === [])
                 <p class="muted">
                     No imported log entries in this period.
-                    @if ($server->log_imported_at)
-                        Last imported {{ \App\Utils\LocalTime::format($server->log_imported_at) }}.
-                    @endif
-                    @if ($canImport)
+                    @if ($canImport && !$server->log_imported_at)
                         Use Import log to read {{ $server->name }}'s MariaDB logs.
                     @elseif (!$server->sshReady())
                         Importing the log needs SSH set up on {{ $server->name }}.
                     @endif
                 </p>
             @else
-                <p class="muted">From MariaDB's own logs on {{ $server->name }}{{ $server->log_imported_at ? ', last imported ' . \App\Utils\LocalTime::format($server->log_imported_at) : '' }}.{{ count($report['log']) >= 500 ? ' Showing the newest 500.' : '' }}</p>
+                <p class="muted">From MariaDB's own logs on {{ $server->name }}.{{ count($report['log']) >= 500 ? ' Showing the newest 500.' : '' }}</p>
                 @if ($report['log_counts'])
                     {!! \App\Utils\LineChart::render('Log entries per ' . ($report['log_bucket_minutes'] >= 1440 ? 'day' : ($report['log_bucket_minutes'] / 60) . ' hour' . ($report['log_bucket_minutes'] > 60 ? 's' : '')), $report['log_counts'], $report['from']->getTimestamp(), $report['to']->getTimestamp()) !!}
                 @endif

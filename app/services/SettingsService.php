@@ -34,6 +34,8 @@ class SettingsService
 
     public const MYSQL_RESTART_WARNING_MINUTES = 'mysql_restart_warning_minutes';
 
+    public const MYSQL_LOG_IMPORT_MINUTES = 'mysql_log_import_minutes';
+
     /**
      * @var array<string, int>
      */
@@ -48,6 +50,7 @@ class SettingsService
         self::MYSQL_LAG_CRITICAL_SECONDS => 600,
         self::MYSQL_BUFFER_POOL_WARNING_PERCENT => 95,
         self::MYSQL_RESTART_WARNING_MINUTES => 60,
+        self::MYSQL_LOG_IMPORT_MINUTES => 60,
     ];
 
     /**
@@ -65,6 +68,7 @@ class SettingsService
             self::MYSQL_LAG_CRITICAL_SECONDS,
             self::MYSQL_BUFFER_POOL_WARNING_PERCENT,
             self::MYSQL_RESTART_WARNING_MINUTES,
+            self::MYSQL_LOG_IMPORT_MINUTES,
         ],
     ];
 
@@ -82,6 +86,7 @@ class SettingsService
         self::MYSQL_LAG_CRITICAL_SECONDS => ['min' => 1, 'max' => 86400],
         self::MYSQL_BUFFER_POOL_WARNING_PERCENT => ['min' => 1, 'max' => 100],
         self::MYSQL_RESTART_WARNING_MINUTES => ['min' => 1, 'max' => 10080],
+        self::MYSQL_LOG_IMPORT_MINUTES => ['min' => 0, 'max' => 1440],
     ];
 
     /**
@@ -192,6 +197,7 @@ class SettingsService
             self::MYSQL_LAG_CRITICAL_SECONDS => 'replication lag critical level',
             self::MYSQL_BUFFER_POOL_WARNING_PERCENT => 'Buffer pool warning level',
             self::MYSQL_RESTART_WARNING_MINUTES => 'Recent restart window',
+            self::MYSQL_LOG_IMPORT_MINUTES => 'Log import interval',
             default => $key,
         };
     }

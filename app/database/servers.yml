@@ -102,6 +102,14 @@ columns:
   log_imported_at:
     type: timestamp
     nullable: true
+  # JSON: per log file, how far the last import read (inode and byte offset), so scheduled imports read only new lines.
+  log_import_state:
+    type: text
+    nullable: true
+  # The last import's outcome, e.g. "12 new entries" or a permission problem (imports also run on a schedule).
+  log_import_message:
+    type: text
+    nullable: true
   last_health_status:
     type: string
     nullable: true

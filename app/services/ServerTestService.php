@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\DTOs\ServerTestResult;
-use App\Exceptions\AuthorizationException;
 use App\Exceptions\HostKeyUnknownException;
 use App\Exceptions\ServerConnectionException;
 use App\Models\Server;
@@ -11,8 +10,9 @@ use App\Models\User;
 use PDO;
 
 /**
- * Admin-triggered connection test: SSH (host key, login, a harmless
- * command) and, if configured, MySQL (connect and read the version).
+ * Connection test, for anyone signed in (see CheckCooldown): SSH (host
+ * key, login, a harmless command) and, if configured, MySQL (connect and
+ * read the version).
  */
 class ServerTestService
 {
@@ -20,14 +20,16 @@ class ServerTestService
         private readonly ServerService $servers = new ServerService(),
         private readonly SshService $ssh = new SshService(),
         private readonly MysqlService $mysql = new MysqlService(),
+        private readonly CheckCooldown $cooldown = new CheckCooldown(),
     ) {
     }
 
-    public function test(User $admin, Server $server): ServerTestResult
+    /**
+     * @throws \DomainException while a non-admin must wait (CheckCooldown)
+     */
+    public function test(User $user, Server $server): ServerTestResult
     {
-        if (!$admin->isAdmin()) {
-            throw new AuthorizationException('Only admins can test servers.');
-        }
+        $this->cooldown->require($user, $server->last_tested_at, "{$server->name} was tested");
 
         [$sshOk, $sshMessage, $untrusted] = [null, null, null];
 

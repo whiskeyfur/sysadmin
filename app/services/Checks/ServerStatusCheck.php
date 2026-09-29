@@ -13,6 +13,10 @@ class ServerStatusCheck extends MariaDbCheck
 {
     public const RECENT_RESTART_SECONDS = 3600;
 
+    public function __construct(private readonly int $recentRestartSeconds = self::RECENT_RESTART_SECONDS)
+    {
+    }
+
     public function key(): string
     {
         return 'server_status';
@@ -35,7 +39,7 @@ class ServerStatusCheck extends MariaDbCheck
     {
         $running = 'Running ' . $version . ', up ' . self::duration($uptimeSeconds) . '.';
 
-        if ($uptimeSeconds < self::RECENT_RESTART_SECONDS) {
+        if ($uptimeSeconds < $this->recentRestartSeconds) {
             return $this->result(HealthStatus::Warning, "$running Restarted recently; check the error log for a crash.", $uptimeSeconds, 's', ['version' => $version]);
         }
 

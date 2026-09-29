@@ -13,6 +13,7 @@
         @endif
 
         <form method="post" action="{{ $editing ? '/admin/servers/' . $server->id : '/admin/servers' }}">
+            <input type="hidden" name="back" value="{{ $back }}">
             @csrf
             <div class="grid-2">
                 <div>
@@ -126,7 +127,7 @@
 
             <div class="actions">
                 <button type="submit">{{ $editing ? 'Save' : 'Add server' }}</button>
-                <a href="/admin/servers">Cancel</a>
+                <a href="{{ $back }}">Cancel</a>
             </div>
         </form>
     </div>

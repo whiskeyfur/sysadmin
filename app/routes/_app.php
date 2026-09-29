@@ -2,4 +2,5 @@
 
 use App\Middleware\Authenticate;
 
-app()->get('/', ['middleware' => Authenticate::class, 'DashboardController@index']);
+// Home: the overview of every server.
+app()->get('/', ['middleware' => Authenticate::class, 'ServerController@index']);

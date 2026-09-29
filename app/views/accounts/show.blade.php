@@ -35,7 +35,7 @@
     <div class="card">
         <h2>Used on</h2>
         @if ($account->servers->isEmpty())
-            <p class="muted">No servers use this account yet. Choose it as a server's SSH or database login under Configure.</p>
+            <p class="muted">No servers use this account yet. Choose it as a server's SSH or database login when editing the server.</p>
         @else
             <div class="table-wrap">
             <table>

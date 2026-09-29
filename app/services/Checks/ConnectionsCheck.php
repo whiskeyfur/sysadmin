@@ -15,6 +15,12 @@ class ConnectionsCheck extends MariaDbCheck
 
     public const CRITICAL_PERCENT = 95;
 
+    public function __construct(
+        private readonly int $warningPercent = self::WARNING_PERCENT,
+        private readonly int $criticalPercent = self::CRITICAL_PERCENT,
+    ) {
+    }
+
     public function key(): string
     {
         return 'connections';
@@ -44,8 +50,8 @@ class ConnectionsCheck extends MariaDbCheck
         $details = ['connected' => $connected, 'peak' => $peak, 'max' => $max];
 
         $status = match (true) {
-            $percent >= self::CRITICAL_PERCENT => HealthStatus::Critical,
-            $percent >= self::WARNING_PERCENT => HealthStatus::Warning,
+            $percent >= $this->criticalPercent => HealthStatus::Critical,
+            $percent >= $this->warningPercent => HealthStatus::Warning,
             default => HealthStatus::Ok,
         };
 

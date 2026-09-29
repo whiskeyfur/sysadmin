@@ -18,6 +18,12 @@ class ReplicationCheck extends MariaDbCheck
 
     public const CRITICAL_LAG_SECONDS = 600;
 
+    public function __construct(
+        private readonly int $warningLagSeconds = self::WARNING_LAG_SECONDS,
+        private readonly int $criticalLagSeconds = self::CRITICAL_LAG_SECONDS,
+    ) {
+    }
+
     private const STATEMENTS = ['SHOW ALL REPLICAS STATUS', 'SHOW ALL SLAVES STATUS', 'SHOW REPLICA STATUS', 'SHOW SLAVE STATUS'];
 
     private const ACCESS_DENIED = [1045, 1142, 1227];
@@ -78,8 +84,8 @@ class ReplicationCheck extends MariaDbCheck
             $lag = (int) $lag;
             $maxLag = max($maxLag, $lag);
             $lagStatus = match (true) {
-                $lag >= self::CRITICAL_LAG_SECONDS => HealthStatus::Critical,
-                $lag >= self::WARNING_LAG_SECONDS => HealthStatus::Warning,
+                $lag >= $this->criticalLagSeconds => HealthStatus::Critical,
+                $lag >= $this->warningLagSeconds => HealthStatus::Warning,
                 default => HealthStatus::Ok,
             };
             $status = HealthStatus::worst([$status, $lagStatus]);

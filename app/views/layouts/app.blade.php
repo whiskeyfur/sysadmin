@@ -25,7 +25,14 @@
         header .brand { font-weight: 700; letter-spacing: .02em; color: inherit; text-decoration: none; }
         header nav { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
         header nav.primary .brand { margin-right: 8px; }
-        header nav a[aria-current="page"] { font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
+        header nav a[aria-current="page"], header nav summary.current { font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
+        details.menu { position: relative; }
+        details.menu summary { cursor: pointer; list-style: none; color: var(--accent); }
+        details.menu summary::-webkit-details-marker { display: none; }
+        details.menu summary::after { content: ' ▾'; font-size: 11px; }
+        details.menu .menu-items { position: absolute; top: calc(100% + 8px); left: 0; z-index: 10; min-width: 150px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 0; box-shadow: 0 6px 18px rgba(0, 0, 0, .15); }
+        details.menu .menu-items a { padding: 6px 14px; text-decoration: none; }
+        details.menu .menu-items a:hover { background: var(--code-bg); }
         main { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
         main.narrow { max-width: 440px; }
         .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 24px; }
@@ -94,17 +101,32 @@
         <nav class="primary" aria-label="Monitoring">
             <a class="brand" href="/">sys</a>
             @isset($auth)
-                <a href="/servers" @if (str_starts_with($path, '/servers')) aria-current="page" @endif>Servers</a>
-                <a href="/ssl" @if (str_starts_with($path, '/ssl')) aria-current="page" @endif>SSL</a>
+                {{-- Each area is a menu: its test page, then (admins) its accounts and settings. --}}
+                @php($menus = [
+                    'SSL' => ['/ssl' => 'Test', '/admin/settings/ssl' => 'Settings'],
+                    'SSH' => ['/ssh' => 'Test', '/admin/accounts' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
+                    'MariaDB' => ['/mariadb' => 'Test', '/admin/settings/mariadb' => 'Settings'],
+                ])
+                @foreach ($menus as $menu => $items)
+                    @php($current = collect(array_keys($items))->contains(fn ($href) => $path === $href || str_starts_with($path, $href . '/')))
+                    <details class="menu">
+                        <summary @if ($current) class="current" @endif>{{ $menu }}</summary>
+                        <div class="menu-items">
+                            @foreach ($items as $href => $label)
+                                @if ($label === 'Test' || $auth->isAdmin())
+                                    <a href="{{ $href }}" @if ($path === $href || str_starts_with($path, $href . '/')) aria-current="page" @endif>{{ $label }}</a>
+                                @endif
+                            @endforeach
+                        </div>
+                    </details>
+                @endforeach
+                <span class="muted" title="Coming soon">Apache <small>(coming soon)</small></span>
             @endisset
         </nav>
         @isset($auth)
             <nav class="secondary" aria-label="Configuration and account">
                 @if ($auth->isAdmin())
-                    <a href="/admin/servers" @if (str_starts_with($path, '/admin/servers')) aria-current="page" @endif>Configure</a>
-                    <a href="/admin/accounts" @if (str_starts_with($path, '/admin/accounts')) aria-current="page" @endif>Accounts</a>
                     <a href="/admin/users" @if (str_starts_with($path, '/admin/users')) aria-current="page" @endif>Users</a>
-                    <a href="/admin/settings" @if (str_starts_with($path, '/admin/settings')) aria-current="page" @endif>Settings</a>
                 @endif
                 <span class="muted">{{ $auth->user->username }}</span>
                 <form method="post" action="/logout">
@@ -114,6 +136,23 @@
             </nav>
         @endisset
     </header>
+    <script>
+        // One menu open at a time; close on outside click or Escape.
+        (function () {
+            var menus = document.querySelectorAll('details.menu');
+            menus.forEach(function (menu) {
+                menu.addEventListener('toggle', function () {
+                    if (menu.open) { menus.forEach(function (other) { if (other !== menu) { other.open = false; } }); }
+                });
+            });
+            document.addEventListener('click', function (event) {
+                menus.forEach(function (menu) { if (!menu.contains(event.target)) { menu.open = false; } });
+            });
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') { menus.forEach(function (menu) { menu.open = false; }); }
+            });
+        })();
+    </script>
     <main class="@yield('width')">
         @yield('content')
     </main>

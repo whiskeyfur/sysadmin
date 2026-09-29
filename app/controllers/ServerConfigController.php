@@ -7,7 +7,6 @@ use App\DTOs\ServerTestResult;
 use App\DTOs\SshSetupResult;
 use App\Models\Server;
 use App\Models\Account;
-use App\Models\SslBinding;
 use App\Services\AccountService;
 use App\Services\CaCertificateService;
 use App\Services\ServerService;
@@ -24,6 +23,8 @@ use DomainException;
  */
 class ServerConfigController extends Controller
 {
+    private const BACK_PAGES = ['/', '/ssh', '/mariadb'];
+
     private const FIELDS = ['name', 'hostname', 'ssh_enabled', 'ssh_port', 'ssh_account_id', 'ssh_username', 'ssh_password_allowed', 'mysql_enabled', 'mysql_host', 'mysql_port', 'mysql_account_id', 'mysql_username', 'mysql_tls', 'mysql_tls_ca'];
 
     private readonly ServerService $servers;
@@ -35,25 +36,29 @@ class ServerConfigController extends Controller
         $this->servers = new ServerService();
     }
 
+    /**
+     * The old Configure page: its tools now live on the monitoring pages.
+     */
     public function index()
     {
-        $auth = $this->authContext();
-
-        (new SslMonitorService())->convertLegacy();
-
-        $this->response->view('servers.config', [
-            'sslCounts' => SslBinding::query()->whereNotNull('server_id')->get()->countBy('server_id')->all(),
-            'auth' => $auth,
-            'servers' => $this->servers->all(),
-            'publicKey' => $auth->isAdmin() ? (new SshKeyService())->publicKey() : null,
-            'notice' => $this->request->flash('notice'),
-            'error' => $this->request->flash('error'),
-        ]);
+        $this->response->redirect('/');
     }
 
+    /**
+     * ?kind=mysql starts with MariaDB on and SSH off (a server reached with
+     * the database client only); ?kind=ssh the other way round.
+     */
     public function create()
     {
-        $this->renderForm(new Server(['ssh_enabled' => true, 'ssh_port' => 22, 'mysql_port' => 3306, 'mysql_tls' => Server::TLS_VERIFY]));
+        $kind = $this->request->get('kind');
+
+        $this->renderForm(new Server([
+            'ssh_enabled' => $kind !== 'mysql',
+            'mysql_enabled' => $kind === 'mysql',
+            'ssh_port' => 22,
+            'mysql_port' => 3306,
+            'mysql_tls' => Server::TLS_VERIFY,
+        ]));
     }
 
     public function store()
@@ -72,7 +77,7 @@ class ServerConfigController extends Controller
             return;
         }
 
-        $this->response->withFlash('notice', "Added {$server->name}.")->redirect('/admin/servers');
+        $this->response->withFlash('notice', "Added {$server->name}.")->redirect($this->back());
     }
 
     public function edit($id)
@@ -100,7 +105,7 @@ class ServerConfigController extends Controller
             return;
         }
 
-        $this->response->withFlash('notice', "Saved {$server->name}.")->redirect('/admin/servers');
+        $this->response->withFlash('notice', "Saved {$server->name}.")->redirect($this->back());
     }
 
     public function delete($id)
@@ -109,7 +114,7 @@ class ServerConfigController extends Controller
 
         if ($server !== null) {
             $this->servers->delete($this->authContext()->user, $server);
-            $this->response->withFlash('notice', "Deleted {$server->name}.")->redirect('/admin/servers');
+            $this->response->withFlash('notice', "Deleted {$server->name}.")->redirect($this->back());
         }
     }
 
@@ -117,9 +122,19 @@ class ServerConfigController extends Controller
     {
         $server = $this->findOrRedirect($id);
 
-        if ($server !== null) {
-            $this->renderTest($server, (new ServerTestService())->test($this->authContext()->user, $server));
+        if ($server === null) {
+            return;
         }
+
+        try {
+            $result = (new ServerTestService())->test($this->authContext()->user, $server);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect("/servers/{$server->id}");
+
+            return;
+        }
+
+        $this->renderTest($server, $result);
     }
 
     public function sshSetup($id)
@@ -153,6 +168,7 @@ class ServerConfigController extends Controller
         $this->response->view('servers.form', [
             'auth' => $this->authContext(),
             'server' => $server,
+            'back' => $this->back(),
             'caCertificates' => $server->mysql_tls_ca ? (new CaCertificateService())->describe($server->mysql_tls_ca) : [],
             'bindings' => $server->exists ? (new SslMonitorService())->bindingsFor($server) : [],
             'sharedAccounts' => array_values(array_filter((new AccountService())->selectableFor($server->exists ? $server : null), fn (Account $a) => $a->type !== Account::TYPE_LOCAL)),
@@ -209,12 +225,22 @@ class ServerConfigController extends Controller
         $server = Server::query()->find((int) $id);
 
         if (!$server instanceof Server) {
-            $this->response->withFlash('error', 'That server no longer exists.')->redirect('/admin/servers');
+            $this->response->withFlash('error', 'That server no longer exists.')->redirect('/');
 
             return null;
         }
 
         return $server;
+    }
+
+    /**
+     * Where to go after saving: the monitoring page the admin came from.
+     */
+    private function back(): string
+    {
+        $back = $this->request->get('back', false);
+
+        return in_array($back, self::BACK_PAGES, true) ? $back : '/';
     }
 
     private function authContext(): AuthContext

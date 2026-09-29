@@ -13,16 +13,14 @@
     <div class="card">
         <div class="actions" style="margin-top: 0; justify-content: space-between">
             <h1>SSL certificates</h1>
-            @if ($auth->isAdmin())
-                <form method="post" action="/ssl/check-all">
-                    @csrf
-                    <button type="submit">Check all now</button>
-                </form>
-            @endif
+            <form method="post" action="/ssl/check-all">
+                @csrf
+                <button type="submit">Check all now</button>
+            </form>
         </div>
         <p class="muted">Each certificate is checked on every server that serves it: the app connects to the server's own address and port and asks for the certificate's first hostname, then checks it like a browser would (trusted issuer, matching names, not expired). Invalid certificates are critical; valid ones are a warning once they expire within {{ $warningDays }} days or don't cover all their listed hostnames.
             @if ($auth->isAdmin())
-                <a href="/admin/settings">Change the warning period</a>.
+                <a href="/admin/settings/ssl">Change the warning period</a>.
             @endif
         </p>
 

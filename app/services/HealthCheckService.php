@@ -6,7 +6,6 @@ use App\Contracts\HealthCheck;
 use App\Contracts\SshHealthCheck;
 use App\DTOs\CheckResult;
 use App\Enums\HealthStatus;
-use App\Exceptions\AuthorizationException;
 use App\Exceptions\ServerConnectionException;
 use App\Models\HealthCheck as StoredCheck;
 use App\Models\Server;
@@ -38,6 +37,10 @@ class HealthCheckService
 {
     public const RETENTION_DAYS = 30;
 
+    public const KIND_MYSQL = 'mysql';
+
+    public const KIND_SSH = 'ssh';
+
     private const SECTION_MARKER = '@@sys-check:';
 
     /**
@@ -61,13 +64,30 @@ class HealthCheckService
         private readonly SshService $ssh = new SshService(),
         ?array $sshChecks = null,
     ) {
-        $this->sshChecks = $sshChecks ?? self::defaultSshChecks(new SettingsService());
-        $this->checks = $checks ?? [
-            new ServerStatusCheck(),
-            new ConnectionsCheck(),
+        $settings = fn () => new SettingsService();
+        $this->sshChecks = $sshChecks ?? self::defaultSshChecks($settings());
+        $this->checks = $checks ?? self::defaultChecks($settings());
+    }
+
+    /**
+     * The MariaDB/MySQL checks, with the levels from the admin settings.
+     *
+     * @return list<HealthCheck>
+     */
+    public static function defaultChecks(SettingsService $settings): array
+    {
+        return [
+            new ServerStatusCheck($settings->integer(SettingsService::MYSQL_RESTART_WARNING_MINUTES) * 60),
+            new ConnectionsCheck(
+                $settings->integer(SettingsService::MYSQL_CONNECTIONS_WARNING_PERCENT),
+                $settings->integer(SettingsService::MYSQL_CONNECTIONS_CRITICAL_PERCENT),
+            ),
             new CrashedTablesCheck(),
-            new ReplicationCheck(),
-            new BufferPoolCheck(),
+            new ReplicationCheck(
+                $settings->integer(SettingsService::MYSQL_LAG_WARNING_SECONDS),
+                $settings->integer(SettingsService::MYSQL_LAG_CRITICAL_SECONDS),
+            ),
+            new BufferPoolCheck($settings->integer(SettingsService::MYSQL_BUFFER_POOL_WARNING_PERCENT)),
         ];
     }
 
@@ -92,9 +112,7 @@ class HealthCheckService
      */
     public function run(User $user, Server $server): array
     {
-        if (!$user->isAdmin()) {
-            throw new AuthorizationException('Only admins can run health checks.');
-        }
+        (new CheckCooldown($this->clock))->require($user, $server->last_checked_at, "{$server->name} was checked");
 
         if (!$this->canCheck($server)) {
             throw new DomainException("Nothing to check on {$server->name} yet: set up SSH or configure MySQL first.");
@@ -130,6 +148,91 @@ class HealthCheckService
     public function canCheck(Server $server): bool
     {
         return $server->sshReady() || $server->mysql_enabled;
+    }
+
+    /**
+     * The checks of one kind, key => label, in run order.
+     *
+     * @return array<string, string>
+     */
+    public function columns(string $kind): array
+    {
+        $columns = [];
+
+        foreach ($kind === self::KIND_SSH ? $this->sshChecks : $this->checks as $check) {
+            $columns[$check->key()] = $check->label();
+        }
+
+        return $columns;
+    }
+
+    /**
+     * Whether a stored check key belongs to the SSH checks (disk, load,
+     * memory, or the SSH connection itself) rather than MariaDB/MySQL.
+     */
+    public function isSshCheck(string $key): bool
+    {
+        if ($key === 'ssh') {
+            return true;
+        }
+
+        foreach ($this->sshChecks as $check) {
+            if ($check->key() === $key) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The latest run split into its MariaDB and SSH results.
+     *
+     * @param list<StoredCheck>|null $latest the latest run, if already loaded
+     * @return array{mysql: list<StoredCheck>, ssh: list<StoredCheck>}
+     */
+    public function latestByKind(Server $server, ?array $latest = null): array
+    {
+        $split = [self::KIND_MYSQL => [], self::KIND_SSH => []];
+
+        foreach ($latest ?? $this->latest($server) as $check) {
+            $split[$this->isSshCheck($check->check_key) ? self::KIND_SSH : self::KIND_MYSQL][] = $check;
+        }
+
+        return $split;
+    }
+
+    /**
+     * For the servers list: per kind, the worst status of the latest run and
+     * the checks that weren't OK (as "Label: summary").
+     *
+     * @return array{mysql: array{status: HealthStatus, issues: list<string>, count: int}|null, ssh: array{status: HealthStatus, issues: list<string>, count: int}|null}
+     */
+    public function summary(Server $server): array
+    {
+        $summary = [self::KIND_MYSQL => null, self::KIND_SSH => null];
+
+        foreach ($this->latestByKind($server) as $kind => $checks) {
+            if ($checks === []) {
+                continue;
+            }
+
+            $issues = [];
+
+            foreach ($checks as $check) {
+                if ($check->status !== HealthStatus::Ok) {
+                    $issues[] = $this->label($check->check_key) . ': ' . $check->summary;
+                }
+            }
+
+            $summary[$kind] = [
+                'status' => HealthStatus::worst(array_map(fn (StoredCheck $c) => $c->status, $checks)),
+                'issues' => $issues,
+                'count' => count($checks),
+            ];
+        }
+
+        return $summary;
     }
 
     /**

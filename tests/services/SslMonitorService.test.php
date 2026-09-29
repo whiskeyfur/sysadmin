@@ -160,13 +160,20 @@ test('per-server SSL hosts from before certificates existed are converted once',
         ->and($web->fresh()->ssl_enabled)->toBeFalse();
 });
 
-test('only admins manage certificates or run checks', function () {
+test('only admins manage certificates; anyone can run checks, non-admins once per cooldown', function () {
     $user = new User(['role' => User::ROLE_USER]);
-    $certificate = ($this->certificate)();
+    $certificate = ($this->certificate)(['port' => '443']);
 
     expect(fn () => $this->ssl->createCertificate($user, ['name' => 'x', 'hostnames' => 'x.example.com']))->toThrow(AuthorizationException::class)
-        ->and(fn () => $this->ssl->addBinding($user, $certificate, null, 443))->toThrow(AuthorizationException::class)
-        ->and(fn () => $this->ssl->checkAll($user))->toThrow(AuthorizationException::class);
+        ->and(fn () => $this->ssl->addBinding($user, $certificate, null, 8443))->toThrow(AuthorizationException::class)
+        ->and(fn () => $this->ssl->deleteCertificate($user, $certificate))->toThrow(AuthorizationException::class)
+        ->and($this->ssl->checkAll($user))->toBe(1)
+        ->and(fn () => $this->ssl->checkCertificate($user, $certificate->fresh()))->toThrow(DomainException::class, 'Try again in')
+        ->and($this->ssl->checkCertificate($this->admin, $certificate->fresh()))->toBe(1);
+
+    $this->clock->advance(App\Services\CheckCooldown::SECONDS);
+
+    expect($this->ssl->checkCertificate($user, $certificate->fresh()))->toBe(1);
 });
 
 test('a certificate named after its hostname needs no hostname list', function () {
@@ -195,4 +202,27 @@ test('without a binding or a readable certificate, nothing is added', function (
         ->and($this->ssl->addNamesFromCertificate($this->admin, $bound))->toBeNull()
         ->and($bound->fresh()->hostnameList())->toBe(['shop.example.com', 'www.shop.example.com'])
         ->and(fn () => $this->ssl->addNamesFromCertificate(new User(['role' => User::ROLE_USER]), $bound))->toThrow(AuthorizationException::class);
+});
+
+test('deleting a certificate clears the SSL status of the servers that served it', function () {
+    $web = ($this->server)('web', '10.0.0.5');
+    $certificate = ($this->certificate)(['server_id' => (string) $web->id, 'port' => '443']);
+    $this->ssl->checkCertificate($this->admin, $certificate);
+
+    expect($web->fresh()->last_ssl_status)->toBe('ok');
+
+    $this->ssl->deleteCertificate($this->admin, $certificate);
+
+    expect($web->fresh()->last_ssl_status)->toBeNull()
+        ->and($web->fresh()->last_ssl_checked_at)->toBeNull()
+        ->and(SslCheck::count())->toBe(0);
+});
+
+test('servers left with a stale SSL status are cleared', function () {
+    $web = ($this->server)('web', '10.0.0.5');
+    $web->last_ssl_status = 'ok';
+    $web->save();
+    $this->ssl->convertLegacy();
+
+    expect($web->fresh()->last_ssl_status)->toBeNull();
 });

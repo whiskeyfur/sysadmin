@@ -7,38 +7,68 @@ use App\Services\SettingsService;
 use DomainException;
 
 /**
- * App-wide settings (admins).
+ * Settings of each monitoring area (admins): /admin/settings/{ssl,ssh,mariadb},
+ * reached from that area's menu.
  */
 class SettingsController extends Controller
 {
-    public function show()
+    private const TITLES = ['ssl' => 'SSL settings', 'ssh' => 'SSH settings', 'mariadb' => 'MariaDB settings'];
+
+    /**
+     * The old single settings page.
+     */
+    public function index()
     {
-        $this->renderPage(notice: $this->request->flash('notice'));
+        $this->response->redirect('/admin/settings/ssh');
     }
 
-    public function update()
+    public function show($section)
     {
+        if ($this->known($section)) {
+            $this->renderPage($section, notice: $this->request->flash('notice'));
+        }
+    }
+
+    public function update($section)
+    {
+        if (!$this->known($section)) {
+            return;
+        }
+
+        $input = [];
+
+        foreach (SettingsService::SECTIONS[$section] as $key) {
+            $input[$key] = $this->request->get($key, false);
+        }
+
         try {
-            $input = [];
-
-            foreach (array_keys(SettingsService::DEFAULTS) as $key) {
-                $input[$key] = $this->request->get($key, false);
-            }
-
             (new SettingsService())->update($this->authContext()->user, $input);
         } catch (DomainException $e) {
-            $this->renderPage(error: $e->getMessage(), status: 422);
+            $this->renderPage($section, error: $e->getMessage(), status: 422);
 
             return;
         }
 
-        $this->response->withFlash('notice', 'Settings saved. They apply from the next check.')->redirect('/admin/settings');
+        $this->response->withFlash('notice', 'Settings saved. They apply from the next check.')->redirect("/admin/settings/$section");
     }
 
-    private function renderPage(?string $error = null, ?string $notice = null, int $status = 200): void
+    private function known(mixed $section): bool
+    {
+        if (is_string($section) && isset(self::TITLES[$section])) {
+            return true;
+        }
+
+        $this->response->redirect('/admin/settings/ssh');
+
+        return false;
+    }
+
+    private function renderPage(string $section, ?string $error = null, ?string $notice = null, int $status = 200): void
     {
         $this->response->view('admin.settings', [
             'auth' => $this->authContext(),
+            'section' => $section,
+            'title' => self::TITLES[$section],
             'settings' => new SettingsService(),
             'error' => $error,
             'notice' => $notice,

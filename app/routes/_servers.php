@@ -3,27 +3,32 @@
 use App\Middleware\Authenticate;
 use App\Middleware\RequireAdmin;
 
-// Monitoring (left side of the navbar): everyone signed in.
+// Monitoring (left side of the navbar: SSL, SSH, MariaDB): everyone signed in.
+// The overview of all servers is the home page; /servers shows it too.
 app()->get('/servers', ['middleware' => Authenticate::class, 'ServerController@index']);
+app()->get('/ssh', ['middleware' => Authenticate::class, 'ServerController@ssh']);
+app()->get('/mariadb', ['middleware' => Authenticate::class, 'ServerController@mariadb']);
 app()->get('/servers/{id}', ['middleware' => Authenticate::class, 'ServerController@show']);
 app()->get('/ssl', ['middleware' => Authenticate::class, 'SslController@index']);
 app()->get('/ssl/{id}', ['middleware' => Authenticate::class, 'SslController@show']);
 
-app()->post('/servers/{id}/checks', ['middleware' => RequireAdmin::class, 'ServerController@runChecks']);
-app()->post('/ssl/check-all', ['middleware' => RequireAdmin::class, 'SslController@checkAll']);
+// Testing and running checks: everyone signed in (non-admins wait CheckCooldown::SECONDS per server).
+app()->post('/servers/{id}/checks', ['middleware' => Authenticate::class, 'ServerController@runChecks']);
+app()->post('/servers/{id}/test', ['middleware' => Authenticate::class, 'ServerConfigController@test']);
+app()->post('/ssl/check-all', ['middleware' => Authenticate::class, 'SslController@checkAll']);
+app()->post('/ssl/{id}/check', ['middleware' => Authenticate::class, 'SslController@check']);
 
 // Managing certificates and where they're served: admins.
 app()->group('/admin/ssl', ['middleware' => RequireAdmin::class, function () {
     app()->post('/', 'SslController@store');
     app()->post('/{id}', 'SslController@update');
     app()->post('/{id}/delete', 'SslController@delete');
-    app()->post('/{id}/check', 'SslController@check');
     app()->post('/{id}/names', 'SslController@importNames');
     app()->post('/{id}/bindings', 'SslController@addBinding');
     app()->post('/{id}/bindings/{bindingId}/delete', 'SslController@removeBinding');
 }]);
 
-// Configuration (right side of the navbar): admins.
+// Adding, editing and deleting servers, and SSH setup: admins, from the monitoring pages.
 app()->group('/admin/servers', ['middleware' => RequireAdmin::class, function () {
     app()->get('/', 'ServerConfigController@index');
     app()->get('/new', 'ServerConfigController@create');
@@ -31,7 +36,6 @@ app()->group('/admin/servers', ['middleware' => RequireAdmin::class, function ()
     app()->get('/{id}/edit', 'ServerConfigController@edit');
     app()->post('/{id}', 'ServerConfigController@update');
     app()->post('/{id}/delete', 'ServerConfigController@delete');
-    app()->post('/{id}/test', 'ServerConfigController@test');
     app()->get('/{id}/ssh-setup', 'ServerConfigController@sshSetup');
     app()->post('/{id}/ssh-setup', 'ServerConfigController@runSshSetup');
 }]);

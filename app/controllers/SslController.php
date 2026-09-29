@@ -141,10 +141,19 @@ class SslController extends Controller
     {
         $certificate = $this->findOrRedirect($id);
 
-        if ($certificate !== null) {
-            $count = $this->ssl->checkCertificate($this->authContext()->user, $certificate);
-            $this->response->withFlash('notice', "Checked $count place(s).")->redirect("/ssl/{$certificate->id}");
+        if ($certificate === null) {
+            return;
         }
+
+        try {
+            $count = $this->ssl->checkCertificate($this->authContext()->user, $certificate);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect("/ssl/{$certificate->id}");
+
+            return;
+        }
+
+        $this->response->withFlash('notice', "Checked $count place(s).")->redirect("/ssl/{$certificate->id}");
     }
 
     public function importNames($id)
@@ -173,7 +182,13 @@ class SslController extends Controller
 
     public function checkAll()
     {
-        $count = $this->ssl->checkAll($this->authContext()->user);
+        try {
+            $count = $this->ssl->checkAll($this->authContext()->user);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect('/ssl');
+
+            return;
+        }
 
         $this->response->withFlash('notice', $count === 0 ? 'No certificates are attached to a server yet.' : "Checked $count certificate/server pair(s).")->redirect('/ssl');
     }

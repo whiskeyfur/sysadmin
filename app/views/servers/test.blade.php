@@ -16,7 +16,11 @@
             <div class="alert warn" role="status">
                 <p>SSH isn't set up yet: the server's host key ({{ $result->untrustedHostKey->fingerprint() }}) has to be checked and trusted first.</p>
             </div>
-            <a class="button" href="/admin/servers/{{ $server->id }}/ssh-setup">Set up SSH</a>
+            @if ($auth->isAdmin())
+                <a class="button" href="/admin/servers/{{ $server->id }}/ssh-setup">Set up SSH</a>
+            @else
+                <p class="muted">An admin can set it up.</p>
+            @endif
         @endif
 
         @if ($result->mysqlMessage !== null)
@@ -25,7 +29,7 @@
         @endif
 
         <div class="actions">
-            <a href="/admin/servers">Back to configuration</a>
+            <a href="/servers/{{ $server->id }}">Back to {{ $server->name }}</a>
         </div>
     </div>
 @endsection

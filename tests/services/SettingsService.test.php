@@ -53,8 +53,40 @@ test('disk levels default to 85% and 95%, and the disk check uses the saved ones
 
 test('the disk warning level must be below the critical level', function (array $input) {
     $this->settings->update($this->admin, $input);
-})->throws(DomainException::class, 'below the critical')->with([
+})->throws(DomainException::class, 'must be below the disk critical level')->with([
     [['disk_warning_percent' => '95', 'disk_critical_percent' => '90']],
     [['disk_warning_percent' => '96']],
     [['disk_critical_percent' => '85']],
 ]);
+
+test('MariaDB levels default to the old fixed values, and the checks use the saved ones', function () {
+    $checks = collect(HealthCheckService::defaultChecks($this->settings))->keyBy(fn ($c) => $c->key());
+
+    expect($checks['connections']->evaluate(80, 80, 100)->status)->toBe(App\Enums\HealthStatus::Warning)
+        ->and($checks['server_status']->evaluate('10.11', 3599)->status)->toBe(App\Enums\HealthStatus::Warning);
+
+    $this->settings->update($this->admin, [
+        'mysql_connections_warning_percent' => '50', 'mysql_connections_critical_percent' => '70',
+        'mysql_lag_warning_seconds' => '5', 'mysql_lag_critical_seconds' => '30',
+        'mysql_buffer_pool_warning_percent' => '99', 'mysql_restart_warning_minutes' => '5',
+    ]);
+    $checks = collect(HealthCheckService::defaultChecks($this->settings))->keyBy(fn ($c) => $c->key());
+
+    expect($checks['connections']->evaluate(70, 70, 100)->status)->toBe(App\Enums\HealthStatus::Critical)
+        ->and($checks['server_status']->evaluate('10.11', 600)->status)->toBe(App\Enums\HealthStatus::Ok)
+        ->and($checks['innodb_buffer_pool']->evaluate(100000, 2000)->status)->toBe(App\Enums\HealthStatus::Warning);
+});
+
+test('each MariaDB warning level must be below its critical level', function (array $input, string $message) {
+    $this->settings->update($this->admin, $input);
+})->throws(DomainException::class)->with([
+    [['mysql_connections_warning_percent' => '96'], 'connections'],
+    [['mysql_lag_warning_seconds' => '600'], 'replication lag'],
+]);
+
+test('every setting belongs to one settings page', function () {
+    $listed = array_merge(...array_values(SettingsService::SECTIONS));
+
+    expect($listed)->toEqualCanonicalizing(array_keys(SettingsService::DEFAULTS))
+        ->and(count($listed))->toBe(count(array_unique($listed)));
+});

@@ -16,11 +16,13 @@
                 <h1>{{ $certificate->name }}</h1>
                 <p class="muted">Covers {{ implode(', ', $certificate->hostnameList()) }}</p>
             </div>
-            @if ($auth->isAdmin() && $certificate->bindings->isNotEmpty())
-                <form method="post" action="/admin/ssl/{{ $certificate->id }}/check">
+            @if ($certificate->bindings->isNotEmpty())
+                <form method="post" action="/ssl/{{ $certificate->id }}/check">
                     @csrf
                     <button type="submit">Check now</button>
                 </form>
+            @endif
+            @if ($auth->isAdmin() && $certificate->bindings->isNotEmpty())
                 <form method="post" action="/admin/ssl/{{ $certificate->id }}/names">
                     @csrf
                     <button type="submit" class="secondary">Get hostnames from the certificate</button>

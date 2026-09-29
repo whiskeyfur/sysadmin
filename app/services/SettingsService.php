@@ -8,7 +8,8 @@ use App\Models\User;
 use DomainException;
 
 /**
- * App-wide settings, changed by admins on /admin/settings. Each setting has a
+ * App-wide settings, changed by admins on the settings page of each
+ * monitoring area (/admin/settings/{ssl,ssh,mariadb}). Each setting has a
  * default here and its own validation; unset settings use the default.
  */
 class SettingsService
@@ -21,6 +22,18 @@ class SettingsService
 
     public const DISK_CRITICAL_PERCENT = 'disk_critical_percent';
 
+    public const MYSQL_CONNECTIONS_WARNING_PERCENT = 'mysql_connections_warning_percent';
+
+    public const MYSQL_CONNECTIONS_CRITICAL_PERCENT = 'mysql_connections_critical_percent';
+
+    public const MYSQL_LAG_WARNING_SECONDS = 'mysql_lag_warning_seconds';
+
+    public const MYSQL_LAG_CRITICAL_SECONDS = 'mysql_lag_critical_seconds';
+
+    public const MYSQL_BUFFER_POOL_WARNING_PERCENT = 'mysql_buffer_pool_warning_percent';
+
+    public const MYSQL_RESTART_WARNING_MINUTES = 'mysql_restart_warning_minutes';
+
     /**
      * @var array<string, int>
      */
@@ -29,6 +42,30 @@ class SettingsService
         self::ACCOUNT_WARNING_DAYS => 7,
         self::DISK_WARNING_PERCENT => 85,
         self::DISK_CRITICAL_PERCENT => 95,
+        self::MYSQL_CONNECTIONS_WARNING_PERCENT => 80,
+        self::MYSQL_CONNECTIONS_CRITICAL_PERCENT => 95,
+        self::MYSQL_LAG_WARNING_SECONDS => 60,
+        self::MYSQL_LAG_CRITICAL_SECONDS => 600,
+        self::MYSQL_BUFFER_POOL_WARNING_PERCENT => 95,
+        self::MYSQL_RESTART_WARNING_MINUTES => 60,
+    ];
+
+    /**
+     * Which settings each area's settings page shows.
+     *
+     * @var array<string, list<string>>
+     */
+    public const SECTIONS = [
+        'ssl' => [self::SSL_WARNING_DAYS],
+        'ssh' => [self::DISK_WARNING_PERCENT, self::DISK_CRITICAL_PERCENT, self::ACCOUNT_WARNING_DAYS],
+        'mariadb' => [
+            self::MYSQL_CONNECTIONS_WARNING_PERCENT,
+            self::MYSQL_CONNECTIONS_CRITICAL_PERCENT,
+            self::MYSQL_LAG_WARNING_SECONDS,
+            self::MYSQL_LAG_CRITICAL_SECONDS,
+            self::MYSQL_BUFFER_POOL_WARNING_PERCENT,
+            self::MYSQL_RESTART_WARNING_MINUTES,
+        ],
     ];
 
     /**
@@ -39,6 +76,23 @@ class SettingsService
         self::ACCOUNT_WARNING_DAYS => ['min' => 1, 'max' => 365],
         self::DISK_WARNING_PERCENT => ['min' => 1, 'max' => 100],
         self::DISK_CRITICAL_PERCENT => ['min' => 1, 'max' => 100],
+        self::MYSQL_CONNECTIONS_WARNING_PERCENT => ['min' => 1, 'max' => 100],
+        self::MYSQL_CONNECTIONS_CRITICAL_PERCENT => ['min' => 1, 'max' => 100],
+        self::MYSQL_LAG_WARNING_SECONDS => ['min' => 1, 'max' => 86400],
+        self::MYSQL_LAG_CRITICAL_SECONDS => ['min' => 1, 'max' => 86400],
+        self::MYSQL_BUFFER_POOL_WARNING_PERCENT => ['min' => 1, 'max' => 100],
+        self::MYSQL_RESTART_WARNING_MINUTES => ['min' => 1, 'max' => 10080],
+    ];
+
+    /**
+     * Warning level => critical level: the warning must be the lower one.
+     *
+     * @var array<string, string>
+     */
+    private const WARNING_BELOW_CRITICAL = [
+        self::DISK_WARNING_PERCENT => self::DISK_CRITICAL_PERCENT,
+        self::MYSQL_CONNECTIONS_WARNING_PERCENT => self::MYSQL_CONNECTIONS_CRITICAL_PERCENT,
+        self::MYSQL_LAG_WARNING_SECONDS => self::MYSQL_LAG_CRITICAL_SECONDS,
     ];
 
     /**
@@ -85,7 +139,7 @@ class SettingsService
     }
 
     /**
-     * @param array<string, mixed> $input setting key => submitted value
+     * @param array<string, mixed> $input setting key => submitted value; keys left out keep their value
      *
      * @throws DomainException with a user-facing message when a value is invalid
      */
@@ -111,11 +165,13 @@ class SettingsService
             $values[$key] = $value;
         }
 
-        $warning = $values[self::DISK_WARNING_PERCENT] ?? $this->diskWarningPercent();
-        $critical = $values[self::DISK_CRITICAL_PERCENT] ?? $this->diskCriticalPercent();
+        foreach (self::WARNING_BELOW_CRITICAL as $warningKey => $criticalKey) {
+            $warning = $values[$warningKey] ?? $this->integer($warningKey);
+            $critical = $values[$criticalKey] ?? $this->integer($criticalKey);
 
-        if ($warning >= $critical) {
-            throw new DomainException('The disk warning level must be below the critical level.');
+            if ($warning >= $critical) {
+                throw new DomainException("The {$this->label($warningKey)} must be below the {$this->label($criticalKey)}.");
+            }
         }
 
         foreach ($values as $key => $value) {
@@ -128,8 +184,14 @@ class SettingsService
         return match ($key) {
             self::SSL_WARNING_DAYS => 'SSL warning period',
             self::ACCOUNT_WARNING_DAYS => 'Account rotation warning period',
-            self::DISK_WARNING_PERCENT => 'Disk warning level',
-            self::DISK_CRITICAL_PERCENT => 'Disk critical level',
+            self::DISK_WARNING_PERCENT => 'disk warning level',
+            self::DISK_CRITICAL_PERCENT => 'disk critical level',
+            self::MYSQL_CONNECTIONS_WARNING_PERCENT => 'connections warning level',
+            self::MYSQL_CONNECTIONS_CRITICAL_PERCENT => 'connections critical level',
+            self::MYSQL_LAG_WARNING_SECONDS => 'replication lag warning',
+            self::MYSQL_LAG_CRITICAL_SECONDS => 'replication lag critical level',
+            self::MYSQL_BUFFER_POOL_WARNING_PERCENT => 'Buffer pool warning level',
+            self::MYSQL_RESTART_WARNING_MINUTES => 'Recent restart window',
             default => $key,
         };
     }

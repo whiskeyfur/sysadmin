@@ -16,10 +16,10 @@
             </ul>
             @if ($result->ok)
                 <div class="alert notice" role="status">SSH is set up{{ $server->ssh_auth === 'password' ? ' (password login)' : ' (key login)' }}.</div>
-                <form method="post" action="/admin/servers/{{ $server->id }}/test">
+                <form method="post" action="/servers/{{ $server->id }}/test">
                     @csrf
                     <button type="submit">Test the connection</button>
-                    <a href="/admin/servers">Back to configuration</a>
+                    <a href="/ssh">Back to SSH</a>
                 </form>
             @endif
         @endif
@@ -91,7 +91,7 @@
 
                 <div class="actions">
                     <button type="submit" @if (!$hostKey && $server->ssh_host_key === null) disabled @endif>Continue</button>
-                    <a href="/admin/servers">Cancel</a>
+                    <a href="/servers/{{ $server->id }}">Cancel</a>
                 </div>
             </form>
         @endif

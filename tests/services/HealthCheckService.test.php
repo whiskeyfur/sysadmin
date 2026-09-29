@@ -3,7 +3,6 @@
 use App\Contracts\HealthCheck;
 use App\DTOs\CheckResult;
 use App\Enums\HealthStatus;
-use App\Exceptions\AuthorizationException;
 use App\Exceptions\ServerConnectionException;
 use App\Models\HealthCheck as StoredCheck;
 use App\Models\Server;
@@ -137,10 +136,17 @@ test('history returns recent runs per check, oldest first', function () {
         ->and($history['alpha'][0]->checked_at->lessThan($history['alpha'][1]->checked_at))->toBeTrue();
 });
 
-test('only admins run checks, and only for servers with SSH or MySQL', function () {
+test('anyone can run checks, non-admins at most once per cooldown; only for servers with SSH or MySQL', function () {
     $service = ($this->service)([]);
+    $user = new User(['role' => User::ROLE_USER]);
+    $service->run($user, $this->server);
 
-    expect(fn () => $service->run(new User(['role' => User::ROLE_USER]), $this->server))->toThrow(AuthorizationException::class);
+    expect(fn () => $service->run($user, $this->server->fresh()))->toThrow(DomainException::class, 'Try again in')
+        ->and($service->run($this->admin, $this->server->fresh()))->toBeArray();
+
+    $this->clock->advance(App\Services\CheckCooldown::SECONDS);
+
+    expect($service->run($user, $this->server->fresh()))->toBeArray();
 
     $this->servers->update($this->admin, $this->server, ['name' => 'db', 'hostname' => 'db.example.com', 'ssh_port' => 22, 'ssh_username' => 'x', 'mysql_enabled' => '']);
 

@@ -145,12 +145,22 @@ class SslMonitorService
     {
         $this->requireAdmin($admin);
 
+        $serverIds = $certificate->bindings()->whereNotNull('server_id')->pluck('server_id')->unique();
+
         $certificate->getConnection()->transaction(function () use ($certificate) {
             $bindingIds = $certificate->bindings()->pluck('id');
             SslCheck::query()->whereIn('binding_id', $bindingIds)->delete();
             SslBinding::query()->whereIn('id', $bindingIds)->delete();
             $certificate->delete();
         });
+
+        // The servers that served it no longer report its status.
+        /** @var list<Server> $servers */
+        $servers = Server::query()->whereIn('id', $serverIds->all())->get()->all();
+
+        foreach ($servers as $server) {
+            $this->refreshSummaries(null, $server);
+        }
     }
 
     /**
@@ -203,7 +213,13 @@ class SslMonitorService
      */
     public function checkServer(User $user, Server $server): int
     {
-        return $this->checkBindings($user, SslBinding::query()->with(['certificate', 'server'])->where('server_id', $server->id)->get()->all());
+        $checked = $this->checkBindings($user, SslBinding::query()->with(['certificate', 'server'])->where('server_id', $server->id)->get()->all());
+
+        if ($checked === 0) {
+            $this->refreshSummaries(null, $server);
+        }
+
+        return $checked;
     }
 
     /**
@@ -227,11 +243,20 @@ class SslMonitorService
 
     /**
      * Turn per-server SSL host lists from before certificates existed into
-     * certificates (one per hostname) bound to the same server and port.
-     * Idempotent.
+     * certificates (one per hostname) bound to the same server and port,
+     * and clear the SSL status of servers that no longer serve any
+     * certificate. Idempotent; runs when /servers loads.
      */
     public function convertLegacy(): void
     {
+        // Servers left with an SSL status after their certificates were deleted.
+        /** @var list<Server> $stale */
+        $stale = Server::query()->whereNotNull('last_ssl_status')->whereNotIn('id', SslBinding::query()->whereNotNull('server_id')->select('server_id'))->get()->all();
+
+        foreach ($stale as $server) {
+            $this->refreshSummaries(null, $server);
+        }
+
         foreach (Server::query()->where('ssl_enabled', true)->get() as $server) {
             foreach ($server->sslTargets() as $target) {
                 $certificate = SslCertificate::query()->where('name', $target['host'])->first()
@@ -255,9 +280,8 @@ class SslMonitorService
      */
     private function checkBindings(User $user, array $bindings): int
     {
-        if (!$user->isAdmin()) {
-            throw new AuthorizationException('Only admins can run SSL checks.');
-        }
+        $last = collect($bindings)->max(fn (SslBinding $b) => $b->last_checked_at?->getTimestamp());
+        (new CheckCooldown($this->clock))->require($user, $last === null ? null : Carbon::createFromTimestamp($last), 'These certificates were checked');
 
         $now = Carbon::instance($this->clock->now())->startOfSecond();
         $certificates = [];

@@ -17,6 +17,10 @@ class BufferPoolCheck extends MariaDbCheck
     // Too few reads since start for the ratio to mean anything.
     public const MIN_READ_REQUESTS = 10000;
 
+    public function __construct(private readonly int $warningBelowPercent = self::WARNING_BELOW_PERCENT)
+    {
+    }
+
     public function key(): string
     {
         return 'innodb_buffer_pool';
@@ -48,7 +52,7 @@ class BufferPoolCheck extends MariaDbCheck
         $summary = "$percent% of reads served from memory since start.";
         $details = ['read_requests' => $readRequests, 'disk_reads' => $diskReads];
 
-        if ($percent < self::WARNING_BELOW_PERCENT) {
+        if ($percent < $this->warningBelowPercent) {
             return $this->result(HealthStatus::Warning, "$summary Consider a larger innodb_buffer_pool_size.", $percent, '%', $details);
         }
 

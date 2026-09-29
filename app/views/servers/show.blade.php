@@ -23,32 +23,51 @@
                         off
                     @endif
                     · SSL: {{ count($bindings) ? count($bindings) . ' certificate(s)' : 'none' }}
-                    @if ($auth->isAdmin()) · <a href="/admin/servers/{{ $server->id }}/edit">Configure</a>@endif
                 </p>
             </div>
-            @if ($auth->isAdmin() && $canCheck)
-                <form method="post" action="/servers/{{ $server->id }}/checks">
-                    @csrf
-                    <button type="submit">Run checks now</button>
-                </form>
-            @endif
+            <div class="row-actions">
+                @if ($canCheck)
+                    <form method="post" action="/servers/{{ $server->id }}/checks">
+                        @csrf
+                        <button type="submit">Run checks now</button>
+                    </form>
+                @endif
+                @if ($server->ssh_enabled || $server->mysql_enabled)
+                    <form method="post" action="/servers/{{ $server->id }}/test">
+                        @csrf
+                        <button type="submit" class="secondary">Test connection</button>
+                    </form>
+                @endif
+                @if ($auth->isAdmin())
+                    <a class="button secondary-link" href="/admin/servers/{{ $server->id }}/edit">Edit</a>
+                    <form method="post" action="/admin/servers/{{ $server->id }}/delete" data-confirm="Delete {{ $server->name }} and its history?">
+                        @csrf
+                        <button type="submit" class="danger">Delete</button>
+                    </form>
+                @endif
+            </div>
         </div>
 
         @if (!$canCheck && $server->last_checked_at === null)
             <p class="muted">Nothing to check yet: set up SSH (for disk, load and memory), MariaDB (for database health) or SSL.</p>
         @elseif ($server->last_checked_at === null && ($server->sshReady() || $server->mysql_enabled))
-            <p class="muted">No health checks have run yet.{{ $auth->isAdmin() ? '' : ' An admin can run them.' }}</p>
+            <p class="muted">No health checks have run yet.</p>
         @elseif ($server->last_checked_at !== null)
-            <h2 style="margin-top: 16px">Health</h2>
-            <p class="muted">Last checked {{ \App\Utils\LocalTime::format($server->last_checked_at) }}. SSH checks use one login per run. Checks run when an admin starts them; results are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days.</p>
+            <p class="muted" style="margin-top: 16px">Last checked {{ \App\Utils\LocalTime::format($server->last_checked_at) }}. Checks run when an admin starts them; results are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days.</p>
 
+            @foreach (['mysql' => 'MariaDB', 'ssh' => 'SSH: disk, load and memory'] as $kind => $heading)
+            @continue($checks[$kind] === [] && !($kind === 'mysql' ? $server->mysql_enabled : $server->ssh_enabled))
+            <h2 style="margin-top: 16px">{{ $heading }}</h2>
+            @if ($checks[$kind] === [])
+                <p class="muted">{{ $kind === 'ssh' && !$server->sshReady() ? "SSH isn't set up yet, so these checks don't run." : 'Not checked in the last run.' }}</p>
+            @else
             <div class="table-wrap">
             <table>
                 <thead>
                     <tr><th>Check</th><th>Status</th><th>Result</th><th>Recent runs</th></tr>
                 </thead>
                 <tbody>
-                    @foreach ($checks as $check)
+                    @foreach ($checks[$kind] as $check)
                         <tr>
                             <td>{{ $health->label($check->check_key) }}</td>
                             <td><span class="badge {{ $check->status->value }}">{{ $check->status->label() }}</span></td>
@@ -65,6 +84,8 @@
                 </tbody>
             </table>
             </div>
+            @endif
+            @endforeach
         @endif
     </div>
 
@@ -113,5 +134,12 @@
     </div>
     @endif
 
-    <p><a href="/servers">Back to servers</a></p>
+    <p><a href="/">Back to all servers</a></p>
+    <script>
+        document.querySelectorAll('form[data-confirm]').forEach(function (form) {
+            form.addEventListener('submit', function (event) {
+                if (!window.confirm(form.dataset.confirm)) { event.preventDefault(); }
+            });
+        });
+    </script>
 @endsection

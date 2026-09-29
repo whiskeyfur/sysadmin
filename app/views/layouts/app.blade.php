@@ -52,7 +52,15 @@
         .badge.user { background: var(--code-bg); }
         .badge.ok { background: var(--notice-bg); color: var(--notice); }
         .badge.failed { background: var(--error-bg); color: var(--error); }
-        .badge.untested { background: var(--warn-bg); color: var(--warn); }
+        .badge.untested, .badge.warning { background: var(--warn-bg); color: var(--warn); }
+        .badge.critical { background: var(--error-bg); color: var(--error); }
+        .badge.unknown { background: var(--code-bg); color: var(--muted); }
+        .history { display: inline-flex; gap: 2px; }
+        .dot { width: 8px; height: 16px; border-radius: 2px; background: var(--line); }
+        .dot.ok { background: var(--notice); }
+        .dot.warning { background: var(--warn); }
+        .dot.critical { background: var(--error); }
+        .dot.unknown { background: var(--muted); }
         .pubkey { display: block; padding: 10px; background: var(--code-bg); border-radius: 6px; font: 12px/1.5 ui-monospace, monospace; word-break: break-all; }
         fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 4px 16px 16px; margin: 20px 0 0; }
         legend { font-weight: 600; padding: 0 6px; }

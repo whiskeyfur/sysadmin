@@ -24,12 +24,19 @@
             <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>Name</th><th>SSH</th><th>MySQL</th><th>Last test</th>@if ($auth->isAdmin())<th><span class="muted">Actions</span></th>@endif</tr>
+                    <tr><th>Name</th><th>Health</th><th>SSH</th><th>MySQL</th><th>Last test</th>@if ($auth->isAdmin())<th><span class="muted">Actions</span></th>@endif</tr>
                 </thead>
                 <tbody>
                     @foreach ($servers as $server)
                         <tr>
-                            <td>{{ $server->name }}</td>
+                            <td><a href="/servers/{{ $server->id }}">{{ $server->name }}</a></td>
+                            <td>
+                                @if ($server->last_health_status)
+                                    <span class="badge {{ $server->last_health_status }}">{{ ucfirst($server->last_health_status) }}</span>
+                                @else
+                                    <span class="muted">—</span>
+                                @endif
+                            </td>
                             {{-- Not "}}@{{": Blade treats @{{ as an escaped, literal {{. --}}
                             <td><code>{{ $server->ssh_username . '@' . $server->hostname . ':' . $server->ssh_port }}</code></td>
                             <td>

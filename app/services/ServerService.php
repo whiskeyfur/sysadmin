@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\DTOs\HostKey;
 use App\Exceptions\AuthorizationException;
+use App\Models\HealthCheck;
 use App\Models\Server;
 use App\Models\User;
 use Carbon\Carbon;
@@ -61,7 +62,11 @@ class ServerService
     public function delete(User $admin, Server $server): void
     {
         $this->requireAdmin($admin);
-        $server->delete();
+
+        $server->getConnection()->transaction(function () use ($server) {
+            HealthCheck::query()->where('server_id', $server->id)->delete();
+            $server->delete();
+        });
     }
 
     /**

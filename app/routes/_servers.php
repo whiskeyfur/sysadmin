@@ -4,6 +4,7 @@ use App\Middleware\Authenticate;
 use App\Middleware\RequireAdmin;
 
 app()->get('/servers', ['middleware' => Authenticate::class, 'ServerController@index']);
+app()->get('/servers/{id}', ['middleware' => Authenticate::class, 'ServerController@show']);
 
 app()->group('/admin/servers', ['middleware' => RequireAdmin::class, function () {
     app()->get('/new', 'ServerController@create');
@@ -12,6 +13,7 @@ app()->group('/admin/servers', ['middleware' => RequireAdmin::class, function ()
     app()->post('/{id}', 'ServerController@update');
     app()->post('/{id}/delete', 'ServerController@delete');
     app()->post('/{id}/test', 'ServerController@test');
+    app()->post('/{id}/checks', 'ServerController@runChecks');
     app()->get('/{id}/ssh-setup', 'ServerController@sshSetup');
     app()->post('/{id}/ssh-setup', 'ServerController@runSshSetup');
 }]);

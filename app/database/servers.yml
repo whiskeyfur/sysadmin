@@ -59,3 +59,13 @@ columns:
   last_test_message:
     type: text
     nullable: true
+  # Health checks (HealthCheckService). The interval is for a future scheduler.
+  check_interval_minutes:
+    type: integer
+    default: 5
+  last_checked_at:
+    type: timestamp
+    nullable: true
+  last_health_status:
+    type: string
+    nullable: true

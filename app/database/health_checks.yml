@@ -1,0 +1,24 @@
+# One row per check per run (HealthCheckService). Kept HealthCheckService::RETENTION_DAYS.
+# status: "ok", "warning", "critical" or "unknown".
+# value/unit: the check's headline number, for statistics (e.g. connection usage %).
+# details: JSON with extra data (e.g. the list of crashed tables).
+timestamps: false
+columns:
+  server_id:
+    type: integer
+    index: true
+  check_key: string
+  status: string
+  summary: text
+  value:
+    type: float
+    nullable: true
+  unit:
+    type: string
+    nullable: true
+  details:
+    type: text
+    nullable: true
+  checked_at:
+    type: timestamp
+    index: true

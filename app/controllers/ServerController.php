@@ -7,6 +7,7 @@ use App\DTOs\ServerTestResult;
 use App\DTOs\SshSetupResult;
 use App\Models\Server;
 use App\Services\CaCertificateService;
+use App\Services\HealthCheckService;
 use App\Services\ServerService;
 use App\Services\ServerTestService;
 use App\Services\SshKeyService;
@@ -41,6 +42,46 @@ class ServerController extends Controller
             'notice' => $this->request->flash('notice'),
             'error' => $this->request->flash('error'),
         ]);
+    }
+
+    public function show($id)
+    {
+        $server = $this->findOrRedirect($id);
+
+        if ($server === null) {
+            return;
+        }
+
+        $health = new HealthCheckService();
+
+        $this->response->view('servers.show', [
+            'auth' => $this->authContext(),
+            'server' => $server,
+            'checks' => $health->latest($server),
+            'history' => $health->history($server),
+            'health' => $health,
+            'notice' => $this->request->flash('notice'),
+            'error' => $this->request->flash('error'),
+        ]);
+    }
+
+    public function runChecks($id)
+    {
+        $server = $this->findOrRedirect($id);
+
+        if ($server === null) {
+            return;
+        }
+
+        try {
+            (new HealthCheckService())->run($this->authContext()->user, $server);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect("/servers/{$server->id}");
+
+            return;
+        }
+
+        $this->response->redirect("/servers/{$server->id}");
     }
 
     public function create()

@@ -120,3 +120,15 @@ Monitored servers are configured at `/servers` (everyone sees the list; admins m
   - A DSN host of `localhost` makes PDO use the local Unix socket, not TCP.
 - **Testing SSH setup:** a non-root throwaway `sshd` can't check passwords, so the password path is unit-tested with a recording stand-in for `SshService`; the key path and host key trust are tested against a real throwaway `sshd`.
 - **Connection test** (`ServerTestService`, admin only): SSH runs `uname -srm`, MySQL runs `SELECT VERSION()`; the outcome is stored in `last_tested_at` / `last_test_ok` / `last_test_message`.
+
+## Health checks
+
+`HealthCheckService` runs the MariaDB/MySQL checks for a server when an admin clicks "Run checks now" on `/servers/{id}` (no scheduler yet; `servers.check_interval_minutes`, default 5, is stored for one). Results go to `health_checks` (one row per check per run, kept `RETENTION_DAYS` = 30, pruned on each run); the server's worst status is stored in `last_health_status` for the list page.
+
+- Checks implement `App\Contracts\HealthCheck` and live in `app/services/Checks` (`App\Services\Checks\`). Each queries in `run()` and judges in a pure `evaluate()` that the unit tests in `tests/checks` exercise without a database.
+- A check must not throw for expected problems: a missing privilege or unused feature returns `unknown` or `ok` with an explanation. If one throws anyway, the service records `unknown` and carries on; a failed connection is a single `critical` "Connection" result.
+- `HealthStatus::worst()` ranks `unknown` between `warning` and `critical`, so a check that couldn't run is never hidden behind OK.
+- Current checks: server status (a restart within the last hour is a warning), connections (80 % / 95 % of `max_connections`), crashed tables, replication (MariaDB multi-source and MySQL, old and new column names; lag 60 s / 600 s), InnoDB buffer pool hit ratio (warning below 95 %).
+- The monitoring user needs `SELECT, PROCESS, SLAVE MONITOR` (`REPLICATION CLIENT` on MySQL and MariaDB before 10.5).
+- **Limit of the crashed-table check (verified against real MariaDB):** it reads `information_schema` (tables MariaDB can't open) and runs `CHECK TABLE ... FAST QUICK` on MyISAM/Aria. That catches tables MariaDB has already flagged, but **misses** an index corrupted while the server was down and a MyISAM table interrupted mid bulk insert by a crash, because MyISAM's "not closed properly" flag wasn't set; only a full `CHECK TABLE` (MEDIUM) found those. The server-status check's "restarted recently" warning is the indirect signal. Test crashed tables with a throwaway `mariadbd --myisam-recover-options=OFF --aria-recover-options=OFF`, or MariaDB auto-repairs them on open.
+

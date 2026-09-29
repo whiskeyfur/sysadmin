@@ -1,0 +1,12 @@
+# Only lookup and KDF fields are plaintext (CLAUDE.md rule 4).
+# user_data: master key + flags, encrypted with the user's password-derived key.
+# role: "admin" or "user", encrypted with the data key so other admins can read it.
+columns:
+  username:
+    type: string
+    unique: true
+  kdf_salt: string
+  kdf_opslimit: integer
+  kdf_memlimit: integer
+  user_data: text
+  role: text

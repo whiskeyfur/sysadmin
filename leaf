@@ -1,0 +1,51 @@
+#!/usr/bin/env php
+<?php
+
+/*
+|--------------------------------------------------------------------------
+| Switch to root path
+|--------------------------------------------------------------------------
+|
+| Point to the application root directory so leaf can accurately
+| resolve app paths.
+|
+*/
+chdir(__DIR__);
+
+/*
+|--------------------------------------------------------------------------
+| Register The Auto Loader
+|--------------------------------------------------------------------------
+|
+| Composer provides a convenient, automatically generated class loader
+| for our application. We just need to utilize it! We'll require it
+| into the script here so that we do not have to worry about the
+| loading of any our classes "manually". Feels great to relax.
+|
+*/
+require __DIR__ . '/vendor/autoload.php';
+
+/*
+|--------------------------------------------------------------------------
+| Bring in (env)
+|--------------------------------------------------------------------------
+|
+| Quickly use our environment variables
+|
+*/
+try {
+    \Dotenv\Dotenv::createUnsafeImmutable(__DIR__)->load();
+} catch (\Throwable $th) {
+    trigger_error($th);
+}
+
+/*
+|--------------------------------------------------------------------------
+| Boot Leaf Console
+|--------------------------------------------------------------------------
+|
+| Automatically load your config, paths and commands,
+| and then run the console application.
+|
+*/
+Leaf\Core::loadConsole();

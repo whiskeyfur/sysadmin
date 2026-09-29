@@ -1,5 +1,37 @@
-# Composer
-/vendor/
+# Packages
+composer.phar
+vendor
+node_modules
+
+# Environment
+.env
+.env.backup
+.env.production
+
+# Build
+build
+dist
+compiled
+
+# System/Editor
+.fleet
+.idea
+.nova
+.vscode
+.zed
+
+# Leaf
+.hana
+.alchemy
+hot
+storage/framework
+storage/logs
+storage/database
+public/storage
+
+# Logs
+npm-debug.log
+yarn-error.log
 
 # SQLite databases (encrypted, but still live data)
 *.sqlite
@@ -9,9 +41,6 @@
 *.sqlite-wal
 *.sqlite-shm
 
-# Local environment and secrets
-.env
+# Other env files
 *.env
-
-# IDE
-/.idea/
+.phpunit.result.cache

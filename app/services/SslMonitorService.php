@@ -246,7 +246,37 @@ class SslMonitorService
      */
     public function checkAll(User $user): int
     {
+        $this->removeOrphans();
+
         return $this->checkBindings($user, SslBinding::query()->with(['certificate', 'server'])->get()->all());
+    }
+
+    /**
+     * Drop bindings whose certificate or server no longer exists (left by
+     * deletes in older versions), with their check history. A binding whose
+     * server is gone would otherwise be checked as "direct via DNS".
+     */
+    public function removeOrphans(): void
+    {
+        $orphans = SslBinding::query()
+            ->whereNotIn('certificate_id', SslCertificate::query()->select('id'))
+            ->orWhere(fn ($q) => $q->whereNotNull('server_id')->whereNotIn('server_id', Server::query()->select('id')));
+        $ids = (clone $orphans)->pluck('id')->all();
+
+        if ($ids === []) {
+            return;
+        }
+
+        $certificateIds = (clone $orphans)->pluck('certificate_id')->unique()->all();
+        SslCheck::query()->whereIn('binding_id', $ids)->delete();
+        SslBinding::query()->whereIn('id', $ids)->delete();
+
+        /** @var list<SslCertificate> $certificates */
+        $certificates = SslCertificate::query()->whereIn('id', $certificateIds)->get()->all();
+
+        foreach ($certificates as $certificate) {
+            $this->refreshSummaries($certificate, null);
+        }
     }
 
     /**
@@ -263,11 +293,13 @@ class SslMonitorService
     /**
      * Turn per-server SSL host lists from before certificates existed into
      * certificates (one per hostname) bound to the same server and port,
-     * and clear the SSL status of servers that no longer serve any
-     * certificate. Idempotent; runs when /servers loads.
+     * clear the SSL status of servers that no longer serve any certificate,
+     * and drop orphaned bindings. Idempotent; runs when / and /ssl load.
      */
     public function convertLegacy(): void
     {
+        $this->removeOrphans();
+
         // Servers left with an SSL status after their certificates were deleted.
         /** @var list<Server> $stale */
         $stale = Server::query()->whereNotNull('last_ssl_status')->whereNotIn('id', SslBinding::query()->whereNotNull('server_id')->select('server_id'))->get()->all();
@@ -308,6 +340,11 @@ class SslMonitorService
 
         foreach ($bindings as $binding) {
             $certificate = $binding->certificate;
+
+            if (!$certificate instanceof SslCertificate) {
+                continue; // orphaned: see removeOrphans()
+            }
+
             $result = $this->checker->check(
                 $certificate->primaryHostname(),
                 $binding->port,

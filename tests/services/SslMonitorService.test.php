@@ -226,3 +226,20 @@ test('servers left with a stale SSL status are cleared', function () {
 
     expect($web->fresh()->last_ssl_status)->toBeNull();
 });
+
+test('bindings whose certificate or server is gone are dropped, and never break a check', function () {
+    $web = ($this->server)('web', '10.0.0.5');
+    $kept = ($this->certificate)(['server_id' => (string) $web->id, 'port' => '443']);
+    $gone = ($this->certificate)(['name' => 'Gone', 'port' => '443']);
+    $orphanCertificate = SslBinding::query()->where('certificate_id', $gone->id)->first();
+    $gone->delete(); // as older versions could leave it
+    $ghost = App\Models\Server::query()->create(['name' => 'ghost', 'hostname' => 'ghost.example.com', 'ssh_enabled' => false, 'ssh_username' => '']);
+    $orphanServer = SslBinding::query()->create(['certificate_id' => $kept->id, 'server_id' => $ghost->id, 'port' => 8443]);
+    $ghost->delete();
+
+    // A check over every binding skips the orphan instead of failing.
+    expect($this->ssl->checkAll($this->admin))->toBe(1)
+        ->and(SslBinding::query()->find($orphanCertificate->id))->toBeNull()
+        ->and(SslBinding::query()->find($orphanServer->id))->toBeNull()
+        ->and(SslBinding::query()->where('certificate_id', $kept->id)->count())->toBe(1);
+});

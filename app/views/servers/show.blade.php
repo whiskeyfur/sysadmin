@@ -30,8 +30,10 @@
             @endif
         </div>
 
-        @if ($server->last_checked_at === null)
-            <p class="muted">No health checks have run yet.{{ $auth->isAdmin() || !$server->mysql_enabled ? '' : ' An admin can run them.' }}</p>
+        @if (!$server->mysql_enabled && $server->last_checked_at === null)
+            <p class="muted">Health checks currently cover MariaDB/MySQL only, so there's nothing to check on this server yet.</p>
+        @elseif ($server->last_checked_at === null)
+            <p class="muted">No health checks have run yet.{{ $auth->isAdmin() ? '' : ' An admin can run them.' }}</p>
         @else
             <p class="muted">Last checked {{ \App\Utils\LocalTime::format($server->last_checked_at) }}. Checks run when an admin starts them; results are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days.</p>
 
@@ -61,12 +63,14 @@
         @endif
     </div>
 
+    @if ($server->mysql_enabled)
     <div class="card">
         <h2>Monitoring user</h2>
         <p>The checks need these privileges; a check without them reports <em>Unknown</em>:</p>
         <code class="pubkey">GRANT SELECT, PROCESS, SLAVE MONITOR ON *.* TO 'sys_monitor'@'this-host';</code>
         <p class="hint">SELECT lets the crashed-table check run CHECK TABLE; SLAVE MONITOR (MariaDB 10.5+; REPLICATION CLIENT on older versions and MySQL) lets it read replication status.</p>
     </div>
+    @endif
 
     <p><a href="/servers">Back to servers</a></p>
 @endsection

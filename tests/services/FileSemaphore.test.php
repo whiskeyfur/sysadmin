@@ -24,3 +24,20 @@ test('at most the given number of holders at once', function () {
 
     expect($third->tryAcquire())->toBeTrue();
 });
+
+test('read-only lock files still work', function () {
+    (new FileSemaphore($this->dir, 1))->tryAcquire();
+    chmod($this->dir . '/slot-0.lock', 0o444);
+
+    $first = new FileSemaphore($this->dir, 1);
+    $second = new FileSemaphore($this->dir, 1);
+
+    expect($first->tryAcquire())->toBeTrue()
+        ->and($second->tryAcquire())->toBeFalse();
+});
+
+test('an unusable lock directory is an error, not a permanent busy', function () {
+    mkdir($this->dir, 0o555);
+
+    (new FileSemaphore($this->dir, 2))->tryAcquire();
+})->throws(RuntimeException::class);

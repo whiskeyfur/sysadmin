@@ -2,6 +2,7 @@
 # user_data: master key, TOTP secret and flags, encrypted with the user's password-derived key.
 # role: "pending", "user" or "admin", encrypted with the data key so admins can read it.
 # totp_last_step: last accepted TOTP time step, so a code can't be reused.
+# session_version: bumped to sign the user out everywhere (e.g. admin password reset).
 columns:
   username:
     type: string
@@ -14,3 +15,6 @@ columns:
   totp_last_step:
     type: integer
     nullable: true
+  session_version:
+    type: integer
+    default: 0

@@ -39,7 +39,13 @@
         button, .button { display: inline-block; padding: 9px 16px; border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
         button:hover, .button:hover { background: var(--accent-hover); }
         button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--line); }
-        button.danger { background: transparent; color: var(--error); border: 1px solid var(--line); }
+        button.danger, .button.danger-link { background: transparent; color: var(--error); border: 1px solid var(--line); }
+        button.danger-solid { background: var(--error); color: var(--panel); }
+        .button.secondary-link { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+        .button.danger-link:hover, .button.secondary-link:hover, button.secondary:hover, button.danger:hover { background: var(--bg); }
+        .row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+        .row-actions button, .row-actions .button { padding: 5px 10px; font-size: 13px; }
+        .table-wrap { overflow-x: auto; }
         .actions { margin-top: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; }
         .alert.error { background: var(--error-bg); color: var(--error); }

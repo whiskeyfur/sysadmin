@@ -224,7 +224,8 @@ class UserKeyService
     /**
      * Admin-only password reset. The admin can't read the target's old
      * user-data field, so their authenticator is removed too: at next login
-     * they must set a new password and enrol an authenticator again.
+     * they must set a new password and enrol an authenticator again. Their
+     * existing sessions are ended.
      *
      * @throws InvalidMasterKeyException if the admin's master key does not unlock the vault.
      * @throws AuthorizationException if $admin is not an admin.
@@ -236,6 +237,7 @@ class UserKeyService
 
         $this->writeUserData($target, $temporaryPassword, $adminMasterKey, true, null);
         $target->totp_last_step = null;
+        $target->session_version = $target->session_version + 1;
         $target->save();
     }
 

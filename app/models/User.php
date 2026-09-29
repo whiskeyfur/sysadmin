@@ -3,8 +3,8 @@
 namespace App\Models;
 
 /**
- * A user account. Only the username, key-derivation parameters and last
- * TOTP step are plaintext; everything else is ciphertext handled by
+ * A user account. Only the username, key-derivation parameters, last TOTP
+ * step and session version are plaintext; everything else is ciphertext handled by
  * UserKeyService.
  *
  * @property int $id
@@ -15,6 +15,7 @@ namespace App\Models;
  * @property string $user_data
  * @property string $role
  * @property int|null $totp_last_step
+ * @property int $session_version
  */
 class User extends Model
 {
@@ -22,7 +23,7 @@ class User extends Model
      * @var list<string>
      */
     protected $fillable = [
-        'username', 'kdf_salt', 'kdf_opslimit', 'kdf_memlimit', 'user_data', 'role', 'totp_last_step',
+        'username', 'kdf_salt', 'kdf_opslimit', 'kdf_memlimit', 'user_data', 'role', 'totp_last_step', 'session_version',
     ];
 
     /**
@@ -39,5 +40,6 @@ class User extends Model
         'kdf_opslimit' => 'integer',
         'kdf_memlimit' => 'integer',
         'totp_last_step' => 'integer',
+        'session_version' => 'integer',
     ];
 }

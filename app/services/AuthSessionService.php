@@ -56,6 +56,7 @@ class AuthSessionService
 
         Session::set(self::SESSION_KEY, [
             'user_id' => $user->id,
+            'version' => (int) $user->session_version,
             'sealed' => $sealed->ciphertext,
         ]);
 
@@ -72,8 +73,9 @@ class AuthSessionService
 
     /**
      * The signed-in user for this request, or null. Ends the session if it
-     * can no longer be unsealed, the user was deleted, or the master key was
-     * rotated since sign-in.
+     * can no longer be unsealed, the user was deleted, their sessions were
+     * revoked (session_version changed), or the master key was rotated since
+     * sign-in.
      */
     public function current(): ?AuthContext
     {
@@ -86,7 +88,7 @@ class AuthSessionService
 
         $user = User::query()->find($auth['user_id'] ?? null);
 
-        if (!$user instanceof User) {
+        if (!$user instanceof User || (int) ($auth['version'] ?? -1) !== (int) $user->session_version) {
             $this->end();
 
             return null;

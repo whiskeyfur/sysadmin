@@ -38,6 +38,17 @@ require "$appPath/vendor/autoload.php";
 
 /*
 |--------------------------------------------------------------------------
+| Make sure APP_KEY exists
+|--------------------------------------------------------------------------
+|
+| Creates .env from .env.example if needed and generates APP_KEY when it's
+| empty, before Leaf loads .env (its CSRF module needs the key at boot).
+|
+*/
+\App\Utils\AppKeyBootstrap::ensureOrFail($appPath);
+
+/*
+|--------------------------------------------------------------------------
 | Load application paths
 |--------------------------------------------------------------------------
 |

@@ -1,39 +1,158 @@
-# README
+# sys
 
-This README would normally document whatever steps are necessary to get the
-application up and running.
+A system and network admin tool for monitoring servers and websites, built on [Leaf MVC](https://leafphp.dev).
 
-Things you may want to cover:
+- **Servers:** disk, load and memory over SSH; MariaDB/MySQL health (connections, crashed tables, replication, buffer pool).
+- **SSL:** certificates downloaded straight from each site and checked like a browser would (trusted issuer, matching name, expiry).
+- **Accounts:** created by admins; every sign-in needs a password and an authenticator app; passwords expire every 30 days.
 
-## App Info
+## Requirements
 
-Created with Leaf MVC v4 + Leaf v4
+- PHP 8.3 or newer with the `sodium`, `openssl`, `pdo_sqlite`, `pdo_mysql`, `mbstring`, `xml`, `curl` and `zip` extensions
+- [Composer](https://getcomposer.org) (PHP's package manager)
+- The [Leaf CLI](https://leafphp.dev/docs/cli/) (optional, but handy: `leaf serve`, generators)
 
-## Installation
+## 1. Install PHP and Composer
 
-You can set up your dependencies by running:
+### Windows
+
+1. Install PHP: download the latest **VS16/VS17 x64 Non Thread Safe** zip from <https://windows.php.net/download/>, unzip it to `C:\php`, and add `C:\php` to your `PATH` (Start → "Edit the system environment variables" → Environment Variables → `Path` → New).
+2. In `C:\php`, copy `php.ini-development` to `php.ini`, then remove the `;` in front of these lines:
+
+   ```ini
+   extension_dir = "ext"
+   extension=curl
+   extension=mbstring
+   extension=openssl
+   extension=pdo_mysql
+   extension=pdo_sqlite
+   extension=sodium
+   extension=zip
+   ```
+
+3. Install Composer with **Composer-Setup.exe** from <https://getcomposer.org/download/>. It finds your PHP and adds `composer` to your `PATH`.
+4. Open a **new** terminal and check: `php -v` and `composer --version`.
+
+### Linux (Debian / Ubuntu)
+
+1. Install PHP and the extensions:
+
+   ```bash
+   sudo apt update
+   sudo apt install php8.3-cli php8.3-sqlite3 php8.3-mysql php8.3-mbstring php8.3-xml php8.3-curl php8.3-zip unzip
+   ```
+
+   (`sodium` and `openssl` come with `php8.3-cli`. On other distributions, install the equivalent packages.)
+
+2. Install Composer with the official installer, which checks the download's signature:
+
+   ```bash
+   EXPECTED_CHECKSUM="$(php -r 'copy("https://composer.github.io/installer.sig", "php://stdout");')"
+   php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+   ACTUAL_CHECKSUM="$(php -r "echo hash_file('sha384', 'composer-setup.php');")"
+   if [ "$EXPECTED_CHECKSUM" != "$ACTUAL_CHECKSUM" ]; then echo 'ERROR: Invalid installer checksum' >&2; rm composer-setup.php; exit 1; fi
+   php composer-setup.php --quiet && rm composer-setup.php
+   sudo mv composer.phar /usr/local/bin/composer
+   ```
+
+3. Check: `php -v` and `composer --version`.
+
+### macOS
+
+1. Install [Homebrew](https://brew.sh) if you don't have it.
+2. Install PHP (the extensions above are included) and Composer:
+
+   ```bash
+   brew install php composer
+   ```
+
+3. Check: `php -v` and `composer --version`.
+
+## 2. Install the Leaf CLI
+
+The same on every system:
 
 ```bash
+composer global require leafs/cli
+```
+
+Composer puts the `leaf` command in its global `bin` folder. Find that folder with:
+
+```bash
+composer global config bin-dir --absolute
+```
+
+If `leaf --version` then says "command not found", add that folder to your `PATH`:
+
+- **Linux** (usually `~/.config/composer/vendor/bin`), in `~/.bashrc`:
+
+  ```bash
+  export PATH="$PATH:$HOME/.config/composer/vendor/bin"
+  ```
+
+- **macOS** (usually `~/.composer/vendor/bin`), in `~/.zshrc`:
+
+  ```bash
+  export PATH="$PATH:$HOME/.composer/vendor/bin"
+  ```
+
+- **Windows** (usually `%APPDATA%\Composer\vendor\bin`): Composer-Setup normally adds it for you. If not, add it to `Path` the same way as PHP above.
+
+Open a new terminal and check with `leaf --version`.
+
+## 3. Set up the project
+
+```bash
+git clone https://github.com/whiskeyfur/sysadmin.git
+cd sysadmin
 composer install
 ```
 
-## System dependencies
+### Create `.env` first
 
-To run this application, you need to have:
-
-- PHP 7.4 or higher
-- Composer
-
-## Configuration
-
-## Database creation
-
-To create your database, you can run:
+> **Don't skip this.** The app's settings, including its encryption key, live in a file called `.env` in the project folder. Git doesn't include it, so every new copy of the project needs one made from `.env.example`.
 
 ```bash
-leaf db:migrate
+cp .env.example .env                 # Linux, macOS, Git Bash, PowerShell
+copy .env.example .env               # Windows Command Prompt (cmd)
 ```
 
-## Deployment instructions
+Check it's there before going on: `ls -a` (Linux/macOS) or `dir /a` (Windows) should list `.env`.
 
-Check out the [Leaf documentation](https://leafphp.dev/learn/deployment/) for more information on how to deploy your Leaf app.
+Then generate the encryption key and create the database:
+
+```bash
+php leaf key:generate                # writes APP_KEY into .env
+php leaf db:migrate                  # creates the SQLite database in storage/app/db/
+```
+
+- If you forget, the app covers for you on the first web request: it creates `.env` from `.env.example` and generates `APP_KEY` if either is missing. For that, the web server's user must be able to write `.env` (and the project folder, if `.env` doesn't exist yet); otherwise the page tells you to run `php leaf key:generate`.
+- Keep `APP_KEY` once it's set: it encrypts stored secrets (authenticator secrets, SSH keys, database passwords). Changing it makes them unreadable.
+- Without a `.env`, `php leaf key:generate` still says "APP_KEY generated successfully" but saves nothing. Check with `grep APP_KEY .env` (Linux/macOS) or `findstr APP_KEY .env` (Windows); it should show `APP_KEY=base64:...`.
+- In `.env`, set `APP_TIMEZONE` to your timezone (e.g. `America/Los_Angeles`) so times show in local time.
+
+Run it:
+
+```bash
+leaf serve                      # or: php -S localhost:5500 -t public public/index.php
+```
+
+Then open the address it prints (by default <http://localhost:5500>, the `APP_URL` in `.env`). On a fresh install, sign in as **`admin`** with password **`changeme`**. You'll be asked to choose a new password and set up an authenticator app (e.g. Google Authenticator) straight away. Do this right after installing: until then, anyone who can reach the site can claim that account.
+
+To serve it with Apache instead, point the site's `DocumentRoot` at `public/` with `AllowOverride All`, and make `storage/` writable by the web server user (e.g. `chgrp -R www-data storage && chmod -R g+w storage`).
+
+## Development
+
+```bash
+composer run test               # tests (Pest)
+composer run lint               # code style check; composer run fmt fixes it
+composer run analyse            # static analysis (PHPStan)
+```
+
+`CLAUDE.md` describes the architecture, the security rules and the conventions in detail.
+
+## Troubleshooting
+
+- **`forge could not be created`** or **`SQLSTATE[HY000] [2054] ... auth_gssapi_client`** when running `php leaf db:migrate`: the command tried a local MySQL server instead of this app's SQLite database. Older versions of the app did that when `.env` was missing. Update, make sure `.env` exists (see [Create `.env` first](#create-env-first)), and check it contains `DB_CONNECTION=sqlite`.
+- **`command not found: leaf`**: add Composer's global `bin` folder to your `PATH` (see [Install the Leaf CLI](#2-install-the-leaf-cli)), or use `php leaf ...` from the project folder instead.
+

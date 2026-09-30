@@ -212,7 +212,7 @@ class ApacheConfigService
             default => [null, null],
         };
 
-        if ($kind === null || !isset($overview[$list])) {
+        if ($kind === null || $list === null || !isset($overview[$list])) {
             return null;
         }
 

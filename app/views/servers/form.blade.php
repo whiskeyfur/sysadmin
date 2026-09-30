@@ -1,7 +1,7 @@
 @extends('layouts.app')
 
 @php($editing = $server->exists)
-@php($module = ['ssh' => 'SSH', 'mysql' => 'MariaDB', 'apache' => 'Apache'][$kind] ?? null)
+@php($module = ['ssh' => 'SSH', 'mysql' => 'MariaDB', 'apache' => 'Apache'][$kind ?? ''] ?? null)
 @php($heading = $editing ? 'Edit ' . $server->name . ($module ? ": $module" : '') : ($module ? "Add a server to $module" : 'Add server'))
 @section('title', $heading)
 @section('width', 'narrow')

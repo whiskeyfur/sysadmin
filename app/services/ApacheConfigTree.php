@@ -204,7 +204,7 @@ class ApacheConfigTree
                 'define' => isset($words[0]) ? $this->variables[$words[0]] = $words[1] ?? '' : null,
                 'undefine' => isset($words[0]) ? $this->forget($words[0]) : null,
                 'serverroot' => isset($words[0]) ? $this->serverRoot = rtrim($words[0], '/') : null,
-                'loadmodule' => isset($words[0]) ? $this->modules[preg_replace('/_module$/', '', $words[0])] = true : null,
+                'loadmodule' => isset($words[0]) ? $this->modules[(string) preg_replace('/_module$/', '', $words[0])] = true : null,
                 'include', 'includeoptional' => $this->include($words[0] ?? '', $name === 'includeoptional', $node, $file, $start),
                 default => null,
             };
@@ -281,7 +281,7 @@ class ApacheConfigTree
         $arg = ltrim($arg, '!');
 
         $result = match ($name) {
-            'ifmodule' => isset($this->modules[preg_replace(['/^mod_(.+)\.c$/', '/_module$/'], ['$1', ''], $arg)]),
+            'ifmodule' => isset($this->modules[(string) preg_replace(['/^mod_(.+)\.c$/', '/_module$/'], ['$1', ''], $arg)]),
             'ifdefine' => array_key_exists($arg, $this->variables),
             'iffile' => file_exists(str_starts_with($arg, '/') ? $arg : "{$this->serverRoot}/$arg"),
             'ifversion' => $this->versionMatches($args),

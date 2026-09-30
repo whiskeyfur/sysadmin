@@ -56,7 +56,7 @@ The app is built on **Leaf MVC v5** (leafphp.dev). **When Leaf MVC best practice
 - Times are stored in UTC (PHP's default here). Show them with `App\Utils\LocalTime::format()`, which converts to `APP_TIMEZONE` from `.env` (America/Los_Angeles on this machine). Don't call `->format()` on a stored time directly in a view.
 - Write everything as object-oriented as possible, within Leaf's conventions. Don't add global functions, global variables or procedural logic beyond what Leaf's own entry points (`public/index.php`, `leaf`) and route files require.
 - SSH uses **phpseclib 3** (the user's preference). It has no port forwarding, so MySQL is reached over direct TCP only; don't add SSH tunnels without asking.
-- Target the server's current PHP (8.3.6 at the time of writing; check with `php -v`). The `sodium`, `pdo_sqlite` and `pdo_mysql` extensions are required.
+- Target the server's current PHP (8.3.6 at the time of writing; check with `php -v`). A copy also runs on Windows with PHP 8.5, so code must work on 8.3 through 8.5: nothing deprecated there (`$http_response_header`, null as an array key: write `[$key ?? '']` in views), nothing new without a fallback. `phpstan-php85.neon` checks the null-key case in `app/` (command in the file). The `sodium`, `pdo_sqlite` and `pdo_mysql` extensions are required.
 
 ### Commands
 

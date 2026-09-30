@@ -1,0 +1,14 @@
+# PHP 8.5 compatibility check (the Windows copy runs 8.5): PHP 8.5 deprecates null as an array key, and
+# PHPStan only reports "Possibly invalid array key type ...|null" (offsetAccess.invalidOffset) with PHP 8.5
+# as the target and its stricter rules. The rest of what this level reports isn't part of the check:
+#   vendor/bin/phpstan analyse -c phpstan-php85.neon --error-format=raw --memory-limit=1G | grep invalidOffset | grep null
+# Blade views aren't covered (their variables have no types): write [$key ?? ''] where $key can be null.
+includes:
+    - vendor/phpstan/phpstan/conf/bleedingEdge.neon
+parameters:
+    level: 9
+    phpVersion: 80500
+    paths:
+        - app
+    excludePaths:
+        - app/views

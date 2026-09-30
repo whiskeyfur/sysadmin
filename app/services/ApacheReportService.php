@@ -369,8 +369,10 @@ class ApacheReportService extends HistoryReport
         $found = ApacheLogEntry::query()->where('server_id', $server->id)->whereIn('request_id', $ids)->orderBy('logged_at')->orderBy('id')->get()->all();
 
         foreach ($found as $entry) {
-            if (count($entries[$entry->request_id] ?? []) < self::ERRORS_PER_REQUEST) {
-                $entries[$entry->request_id][] = $entry;
+            $id = (string) $entry->request_id;
+
+            if (count($entries[$id] ?? []) < self::ERRORS_PER_REQUEST) {
+                $entries[$id][] = $entry;
             }
         }
 

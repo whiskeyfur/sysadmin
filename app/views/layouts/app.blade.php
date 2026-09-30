@@ -133,7 +133,9 @@
                     'SSL' => ['/ssl/reports' => 'Reports', '/ssl' => 'Test', '/admin/ssl/new' => 'Add', '/admin/settings/ssl' => 'Settings'],
                     'SSH' => ['/ssh/reports' => 'Reports', '/ssh' => 'Test', '/admin/ssh/new' => 'Add', '/admin/accounts/ssh' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
                     'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/admin/settings/mariadb' => 'Settings'],
-                    'Apache' => ['/apache/reports' => 'Reports', '/apache' => 'Test', '/admin/apache/new' => 'Add', '/admin/settings/apache' => 'Settings'],
+                    'Apache' => ['/apache/reports' => 'Reports', '/apache' => 'Test', '/admin/apache/new' => 'Add', '/admin/settings/apache' => 'Settings']
+                        // This machine's own Apache: only where the root helper is installed, for admins on this machine.
+                        + (\App\Services\LocalApacheService::installed() && \App\Middleware\RequireLocalAdmin::fromThisMachine() ? ['/admin/apache/local' => 'This server'] : []),
                     'Vhosts' => ['/vhosts/reports' => 'Reports', '/vhosts' => 'List'],
                 ])
                 @foreach ($menus as $menu => $items)
@@ -266,6 +268,13 @@
                 if (event.key === 'Escape') { menus.forEach(function (menu) { menu.open = false; }); }
             });
         })();
+
+        // "Are you sure?" for forms and buttons with data-confirm.
+        document.addEventListener('submit', function (event) {
+            var button = event.submitter;
+            var message = (button && button.getAttribute('data-confirm')) || event.target.getAttribute('data-confirm');
+            if (message && !window.confirm(message)) { event.preventDefault(); }
+        });
     </script>
     <main class="@yield('width')">
         @yield('content')

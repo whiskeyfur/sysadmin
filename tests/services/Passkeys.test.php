@@ -38,7 +38,8 @@ beforeEach(function () {
     $this->credentialId = random_bytes(16);
     $this->create = function (string $challenge, array $overrides = []) use ($bytes) {
         $ec = openssl_pkey_get_details($this->key)['ec'];
-        $cose = ($this->cbor)([1 => 2, 3 => -7, -1 => 1, -2 => $bytes($ec['x']), -3 => $bytes($ec['y'])]);
+        // OpenSSL drops leading zero bytes; COSE wants both coordinates 32 bytes long.
+        $cose = ($this->cbor)([1 => 2, 3 => -7, -1 => 1, -2 => $bytes(str_pad($ec['x'], 32, "\0", STR_PAD_LEFT)), -3 => $bytes(str_pad($ec['y'], 32, "\0", STR_PAD_LEFT))]);
         $flags = $overrides['flags'] ?? 0x45; // user present, user verified, attested credential data
         $authData = hash('sha256', $overrides['rp_id'] ?? 'sys.localhost', true) . chr($flags) . pack('N', 0) . str_repeat("\0", 16) . pack('n', strlen($this->credentialId)) . $this->credentialId . $cose;
         $clientData = json_encode(['type' => 'webauthn.create', 'challenge' => PasskeyService::encode($challenge), 'origin' => $overrides['origin'] ?? 'http://sys.localhost:5015']);

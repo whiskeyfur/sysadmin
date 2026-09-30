@@ -1,0 +1,18 @@
+# Changes made to this machine's Apache through sys-apache-helper (LocalApacheService): who, what, and how it went.
+# action: e.g. "write", "enable", "reload"; target: e.g. "site 002-sys"; output: what Apache and the tools said.
+timestamps: false
+columns:
+  user_id:
+    type: integer
+    index: true
+  action: string
+  target:
+    type: string
+    nullable: true
+  ok: boolean
+  output:
+    type: mediumText
+    nullable: true
+  created_at:
+    type: timestamp
+    index: true

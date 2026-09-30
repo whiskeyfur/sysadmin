@@ -1,0 +1,318 @@
+#!/usr/bin/php
+<?php
+
+/*
+ * sys-apache-helper: the only part of sys that runs as root. It manages
+ * this machine's Apache (Debian/Ubuntu layout, /etc/apache2) for the web
+ * app, which calls it through one sudoers rule:
+ *
+ *     www-data ALL=(root) NOPASSWD: /usr/local/sbin/sys-apache-helper
+ *
+ * Install it as root (bin/install-apache-helper); never run it from the
+ * app's directory with sudo, which other users can write to. It loads no
+ * other code and trusts nothing it's given: names are checked, files stay
+ * inside /etc/apache2, and output is JSON on stdout.
+ *
+ *   version                         {"helper": N}
+ *   list                            sites, confs and modules, enabled or not; Apache's version and state
+ *   read site|conf|main|ports NAME  a file's contents (NAME ignored for main/ports)
+ *   write site|conf|main|ports NAME  replace a file with stdin; backed up, then `apache2ctl configtest`;
+ *                                    put back if the test fails
+ *   create site|conf NAME           write a new file from stdin (refuses an existing one), same checks
+ *   enable|disable site|conf|mod NAME  a2ensite, a2dismod and so on; undone if the test then fails
+ *   test                            apache2ctl configtest
+ *   reload | restart                configtest, then systemctl reload/restart apache2
+ *   errorlog [LINES]                the end of Apache's main error log
+ *
+ * For tests, when NOT running as root, SYS_APACHE_ROOT, SYS_APACHE_BIN (a
+ * directory with stand-ins for apache2ctl, a2en*, systemctl) and
+ * SYS_APACHE_BACKUPS override the real locations. As root they're ignored
+ * (sudo resets the environment anyway).
+ */
+
+const HELPER_VERSION = 1;
+const MAX_CONTENT = 524288;
+
+$root = posix_geteuid() === 0;
+$confdir = !$root && getenv('SYS_APACHE_ROOT') ? rtrim((string) getenv('SYS_APACHE_ROOT'), '/') : '/etc/apache2';
+$bin = !$root && getenv('SYS_APACHE_BIN') ? rtrim((string) getenv('SYS_APACHE_BIN'), '/') : '/usr/sbin';
+$backups = !$root && getenv('SYS_APACHE_BACKUPS') ? rtrim((string) getenv('SYS_APACHE_BACKUPS'), '/') : '/var/backups/sys-apache';
+$systemctl = !$root && getenv('SYS_APACHE_BIN') ? "$bin/systemctl" : '/usr/bin/systemctl';
+
+umask(022);
+
+function reply(array $data, int $code = 0): never
+{
+    echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE), "\n";
+    exit($code);
+}
+
+function fail(string $message, array $extra = []): never
+{
+    reply(['ok' => false, 'error' => $message] + $extra, 1);
+}
+
+/**
+ * Run a program (no shell): [exit code, stdout + stderr].
+ */
+function run(array $command, int $timeout = 120): array
+{
+    $process = proc_open($command, [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes, '/', ['PATH' => '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG' => 'C']);
+
+    if (!is_resource($process)) {
+        return [127, 'Could not run ' . $command[0]];
+    }
+
+    stream_set_blocking($pipes[1], false);
+    $output = '';
+    $until = time() + $timeout;
+
+    while (true) {
+        $output .= (string) stream_get_contents($pipes[1]);
+        $status = proc_get_status($process);
+
+        if (!$status['running']) {
+            $output .= (string) stream_get_contents($pipes[1]);
+            fclose($pipes[1]);
+            proc_close($process);
+
+            return [$status['exitcode'], trim($output)];
+        }
+
+        if (time() > $until) {
+            proc_terminate($process);
+
+            return [124, trim($output) . "\n(timed out)"];
+        }
+
+        usleep(50000);
+    }
+}
+
+function name(?string $name): string
+{
+    $name = (string) $name;
+    $name = str_ends_with($name, '.conf') ? substr($name, 0, -5) : $name;
+
+    if (preg_match('/^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$/', $name) !== 1 || str_contains($name, '..')) {
+        fail('Names are letters, digits and . _ + - (up to 100).');
+    }
+
+    return $name;
+}
+
+/**
+ * The file a kind and name stand for, inside the Apache directory.
+ */
+function file_for(string $confdir, string $kind, ?string $name): string
+{
+    $path = match ($kind) {
+        'site' => "$confdir/sites-available/" . name($name) . '.conf',
+        'conf' => "$confdir/conf-available/" . name($name) . '.conf',
+        'main' => "$confdir/apache2.conf",
+        'ports' => "$confdir/ports.conf",
+        default => fail('Kind must be site, conf, main or ports.'),
+    };
+
+    // No symlink tricks: the directory is a real directory of the Apache directory, the file a plain file (or new).
+    $dir = dirname($path);
+
+    if (is_link($dir) || realpath($dir) !== realpath($confdir) . ($dir === $confdir ? '' : '/' . basename($dir)) || is_link($path) || (file_exists($path) && !is_file($path))) {
+        fail('That file is not a plain file in the Apache directory.');
+    }
+
+    return $path;
+}
+
+function configtest(string $bin): array
+{
+    [$code, $output] = run(["$bin/apache2ctl", 'configtest']);
+
+    return ['ok' => $code === 0, 'output' => $output];
+}
+
+function listing(string $dir, string $suffix, string $enabledDir): array
+{
+    $items = [];
+
+    foreach (glob("$dir/*$suffix") ?: [] as $file) {
+        if (!is_file($file)) {
+            continue;
+        }
+
+        $name = basename($file, $suffix);
+        $items[] = ['name' => $name, 'enabled' => file_exists("$enabledDir/$name$suffix"), 'size' => filesize($file), 'modified' => filemtime($file)];
+    }
+
+    usort($items, fn ($a, $b) => strcmp($a['name'], $b['name']));
+
+    return $items;
+}
+
+function backup(string $backups, string $path): ?string
+{
+    if (!is_file($path)) {
+        return null;
+    }
+
+    if (!is_dir($backups) && !mkdir($backups, 0700, true)) {
+        fail("Can't create $backups.");
+    }
+
+    $copy = $backups . '/' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3)) . '-' . basename($path);
+
+    if (!copy($path, $copy)) {
+        fail("Can't back up $path.");
+    }
+
+    chmod($copy, 0600);
+
+    return $copy;
+}
+
+function put(string $path, string $content): void
+{
+    $temporary = dirname($path) . '/.' . basename($path) . '.sys-' . bin2hex(random_bytes(4));
+
+    if (file_put_contents($temporary, $content) === false || !chmod($temporary, 0644) || !rename($temporary, $path)) {
+        @unlink($temporary);
+        fail("Can't write $path.");
+    }
+}
+
+function content(): string
+{
+    $content = (string) stream_get_contents(STDIN, MAX_CONTENT + 1);
+
+    if (strlen($content) > MAX_CONTENT) {
+        fail('The file is too big (' . MAX_CONTENT . ' bytes at most).');
+    }
+
+    if (str_contains($content, "\0") || !mb_check_encoding($content, 'UTF-8')) {
+        fail('The file must be UTF-8 text.');
+    }
+
+    return str_replace("\r\n", "\n", $content);
+}
+
+if (!is_dir($confdir) || !is_file("$bin/apache2ctl")) {
+    fail("This needs Apache in the Debian/Ubuntu layout ($confdir and $bin/apache2ctl).");
+}
+
+$action = $argv[1] ?? '';
+$kind = $argv[2] ?? '';
+$target = $argv[3] ?? null;
+
+switch ($action) {
+    case 'version':
+        reply(['ok' => true, 'helper' => HELPER_VERSION, 'root' => $root]);
+
+    case 'list':
+        [, $version] = run(["$bin/apache2ctl", '-v']);
+        [, $state] = run([$systemctl, 'is-active', 'apache2'], 15);
+        reply([
+            'ok' => true,
+            'version' => preg_match('/Server version:\s*(.+)/', $version, $m) === 1 ? trim($m[1]) : null,
+            'state' => trim($state),
+            'sites' => listing("$confdir/sites-available", '.conf', "$confdir/sites-enabled"),
+            'confs' => listing("$confdir/conf-available", '.conf', "$confdir/conf-enabled"),
+            'mods' => listing("$confdir/mods-available", '.load', "$confdir/mods-enabled"),
+        ]);
+
+    case 'read':
+        $path = file_for($confdir, $kind, $target);
+
+        if (!is_file($path)) {
+            fail('No such file.');
+        }
+
+        reply(['ok' => true, 'path' => $path, 'content' => (string) file_get_contents($path, false, null, 0, MAX_CONTENT)]);
+
+    case 'write':
+    case 'create':
+        $path = file_for($confdir, $kind, $target);
+        $exists = is_file($path);
+
+        if ($action === 'create' && ($exists || !in_array($kind, ['site', 'conf'], true))) {
+            fail($exists ? 'That file exists already.' : 'Only sites and confs can be created.');
+        }
+
+        if ($action === 'write' && !$exists) {
+            fail('No such file.');
+        }
+
+        $new = content();
+        $saved = backup($backups, $path);
+        put($path, $new);
+        $test = configtest($bin);
+
+        if (!$test['ok']) {
+            // Put things back as they were.
+            $saved === null ? unlink($path) : put($path, (string) file_get_contents($saved));
+            fail('Apache refused the configuration, so the change was undone.', ['output' => $test['output']]);
+        }
+
+        reply(['ok' => true, 'path' => $path, 'backup' => $saved, 'output' => $test['output']]);
+
+    case 'enable':
+    case 'disable':
+        $tools = ['site' => ['a2ensite', 'a2dissite', 'sites-available', '.conf'], 'conf' => ['a2enconf', 'a2disconf', 'conf-available', '.conf'], 'mod' => ['a2enmod', 'a2dismod', 'mods-available', '.load']];
+
+        if (!isset($tools[$kind])) {
+            fail('Kind must be site, conf or mod.');
+        }
+
+        [$on, $off, $dir, $suffix] = $tools[$kind];
+        $item = name($target);
+
+        if (!is_file("$confdir/$dir/$item$suffix")) {
+            fail('No such ' . $kind . '.');
+        }
+
+        [$do, $undo] = $action === 'enable' ? [$on, $off] : [$off, $on];
+        [$code, $output] = run(["$bin/$do", '-q', $item]);
+
+        if ($code !== 0) {
+            fail("$do failed.", ['output' => $output]);
+        }
+
+        $test = configtest($bin);
+
+        if (!$test['ok']) {
+            run(["$bin/$undo", '-q', $item]);
+            fail('Apache refused the configuration, so the change was undone.', ['output' => trim($output . "\n" . $test['output'])]);
+        }
+
+        reply(['ok' => true, 'output' => trim($output . "\n" . $test['output'])]);
+
+    case 'test':
+        $test = configtest($bin);
+        reply(['ok' => $test['ok'], 'output' => $test['output']] + ($test['ok'] ? [] : ['error' => 'Apache refused the configuration.']), $test['ok'] ? 0 : 1);
+
+    case 'reload':
+    case 'restart':
+        $test = configtest($bin);
+
+        if (!$test['ok']) {
+            fail("Apache refused the configuration, so it wasn't {$action}ed.", ['output' => $test['output']]);
+        }
+
+        [$code, $output] = run([$systemctl, $action, 'apache2']);
+        reply(['ok' => $code === 0, 'output' => trim($test['output'] . "\n" . $output)] + ($code === 0 ? [] : ['error' => "systemctl $action failed."]), $code === 0 ? 0 : 1);
+
+    case 'errorlog':
+        $lines = max(1, min(500, (int) ($argv[2] ?? 100)));
+        $log = !$root && getenv('SYS_APACHE_ROOT') ? "$confdir/error.log" : '/var/log/apache2/error.log';
+
+        if (!is_file($log)) {
+            reply(['ok' => true, 'path' => $log, 'lines' => []]);
+        }
+
+        $handle = fopen($log, 'r');
+        fseek($handle, max(0, filesize($log) - 262144));
+        $tail = array_slice(preg_split('/\R/', rtrim((string) stream_get_contents($handle))) ?: [], -$lines);
+        reply(['ok' => true, 'path' => $log, 'lines' => $tail]);
+
+    default:
+        fail('Unknown action.');
+}

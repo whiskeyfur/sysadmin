@@ -56,6 +56,7 @@ uses()->beforeEach(function () {
     Schema::migrate('app/database/ssl_certificates.yml');
     Schema::migrate('app/database/ssl_bindings.yml');
     Schema::migrate('app/database/passkeys.yml');
+    Schema::migrate('app/database/apache_admin_log.yml');
 
     // A clock tests can move: $this->clock->advance(30) jumps one TOTP period.
     $this->clock = new class () implements ClockInterface {

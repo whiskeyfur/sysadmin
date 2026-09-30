@@ -99,6 +99,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Apache logs can be set by hand per server (`apache_error_logs`/`apache_access_logs`); virtual hosts discovered from the configuration (`apache_vhosts`), with a Vhosts menu: List (SSL coverage, Monitor link) and Reports (per-vhost traffic/errors from its logs).
 * 2026-09-29 — Database setup wizard (`/install/database`, install code) and `php leaf app:db-setup`: MariaDB/MySQL, PostgreSQL or SQLite; an admin account gets the database plus a restricted app user with a generated password; existing SQLite data copied; connection saved encrypted in storage/app/db/connection.json (`DatabaseConfig`, `DatabaseSetupService`).
 * 2026-09-29 — Sign-in methods set by admins (App settings): password, authenticator, passkey/security key, each Off/Optional/Required; required = must set up, any one signs in. Profile page (/profile) for setup and changes; WebAuthn via lbuchs/webauthn parsing with the app's own ceremony checks (`LoginMethodService`, `PasskeyService`, `ProfileService`, `passkeys` table, `users.login_password`).
+* 2026-09-29 — Managing this machine's Apache (/admin/apache/local): through a small standalone root helper (bin/sys-apache-helper, installed with sudo, one sudoers rule), not by running the app as root — the user's choice; admins from this machine only, fresh check per change, configtest-and-undo, audit log (`LocalApacheService`, `apache_admin_log`).
 
 ---
 

@@ -1,0 +1,38 @@
+#!/bin/sh
+# Install sys-apache-helper as root and let the web server (www-data) run it, and nothing else, without a password.
+# Run from the app's directory:  sudo sh bin/install-apache-helper
+# Run it again after updating the app if the Apache page says the helper is out of date.
+# To remove:  sudo rm /usr/local/sbin/sys-apache-helper /etc/sudoers.d/sys-apache-helper
+set -eu
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Run it with sudo." >&2
+    exit 1
+fi
+
+here=$(cd "$(dirname "$0")" && pwd)
+user=${1:-www-data}
+rule=/etc/sudoers.d/sys-apache-helper
+
+case "$user" in
+    *[!a-z0-9_-]*|'') echo "Not a user name: $user" >&2; exit 1 ;;
+esac
+
+# Owned by root and not writable by anyone else: the copy in the app's directory is (whiskey can edit it).
+install -o root -g root -m 0755 "$here/sys-apache-helper" /usr/local/sbin/sys-apache-helper
+
+tmp=$(mktemp)
+printf '# sys: the web app manages this machine'"'"'s Apache only through this helper (see its header).\n%s ALL=(root) NOPASSWD: /usr/local/sbin/sys-apache-helper\n' "$user" > "$tmp"
+
+if ! visudo -cf "$tmp" >/dev/null; then
+    rm -f "$tmp"
+    echo "visudo rejected the rule; nothing changed in sudoers." >&2
+    exit 1
+fi
+
+install -o root -g root -m 0440 "$tmp" "$rule"
+rm -f "$tmp"
+mkdir -p -m 0700 /var/backups/sys-apache
+
+echo "Installed /usr/local/sbin/sys-apache-helper and $rule ($user may run it as root)."
+sudo -u "$user" sudo -n /usr/local/sbin/sys-apache-helper version

@@ -178,6 +178,16 @@ class AuthSessionService
         Session::set(self::CONFIRMED_KEY, time());
     }
 
+    /**
+     * Whether a passkey confirmation is waiting to be used (without using it).
+     */
+    public function hasPasskeyConfirmation(): bool
+    {
+        $at = Session::get(self::CONFIRMED_KEY, null, false);
+
+        return is_int($at) && time() - $at <= 60;
+    }
+
     public function takePasskeyConfirmation(): bool
     {
         $at = Session::get(self::CONFIRMED_KEY, null, false);

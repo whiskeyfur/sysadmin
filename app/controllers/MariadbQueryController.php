@@ -47,8 +47,33 @@ class MariadbQueryController extends Controller
             return;
         }
 
-        (new AuthSessionService())->rememberDatabaseLogin($this->authContext()->user, $username, $password);
-        $this->response->withFlash('notice', "Logged in to MariaDB as $username for this session: queries use this login until you log out of it.")->redirect('/mariadb/query');
+        // Try it on every server now: kept if any accepts it; the ones that refused it are noted.
+        try {
+            $tested = (new MariadbQueryService())->testLogin($this->authContext()->user, $username, $password);
+        } catch (DomainException $e) {
+            $this->show(error: $e->getMessage());
+
+            return;
+        }
+
+        $refused = [];
+
+        foreach ($tested as $result) {
+            if (!$result['ok']) {
+                $refused[$result['server']->id] = $result['message'];
+            }
+        }
+
+        if (count($refused) === count($tested)) {
+            $this->show(error: "No server accepted the login as $username, so it wasn't kept. Check it and log in again.", tested: $tested);
+
+            return;
+        }
+
+        (new AuthSessionService())->rememberDatabaseLogin($this->authContext()->user, $username, $password, refused: $refused);
+        $works = count($tested) - count($refused);
+        $this->response->withFlash('notice', "Logged in to MariaDB as $username: the login works on $works of " . count($tested) . ' ' . (count($tested) === 1 ? 'server' : 'servers')
+            . ($refused === [] ? '.' : '; the ones that refused it are unticked below.'))->redirect('/mariadb/query');
     }
 
     /**
@@ -91,10 +116,10 @@ class MariadbQueryController extends Controller
 
         $error = null;
 
-        // A refused login isn't kept: the next try asks for it again.
+        // Every server refused the login: it isn't kept, the next try asks for it again.
         if ($result['auth_failed']) {
             $sessions->forgetDatabaseLogin();
-            $error = "The first server refused the login as {$login['username']}, so the others weren't tried. Log in again.";
+            $error = "Every server refused the login as {$login['username']}; log in again.";
         }
 
         $this->show(error: $error, input: $input, result: $result);
@@ -103,8 +128,9 @@ class MariadbQueryController extends Controller
     /**
      * @param array{servers?: list<int>, database?: string, sql?: string, limit?: int} $input
      * @param array<string, mixed>|null $result
+     * @param list<array{server: \App\Models\Server, ok: bool, auth: bool, message: string}>|null $tested a log-in test that no server passed
      */
-    private function show(?string $error = null, array $input = [], ?array $result = null): void
+    private function show(?string $error = null, array $input = [], ?array $result = null, ?array $tested = null): void
     {
         $user = $this->authContext()->user;
         $login = (new AuthSessionService())->databaseLogin($user);
@@ -114,7 +140,8 @@ class MariadbQueryController extends Controller
             'auth' => $this->authContext(),
             'servers' => $service->servers(),
             // Only the username goes to the page, never the password.
-            'login' => $login === null ? null : ['stored' => $login['stored'], 'username' => $login['username'], 'since' => $login['since']],
+            'login' => $login === null ? null : ['stored' => $login['stored'], 'username' => $login['username'], 'since' => $login['since'], 'refused' => $login['refused']],
+            'tested' => $tested,
             'input' => $input,
             'result' => $result,
             'recent' => MariadbQuery::query()->where('user_id', $user->id)->orderByDesc('id')->limit(20)->get()->all(),

@@ -53,6 +53,10 @@
         .paged-filters select, .paged-filters input[type=text] { width: auto; margin: 0; }
         .paged-filters label.check { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: normal; font-size: 14px; white-space: nowrap; }
         .paged-pager { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+        figure.chart .legend .legend-item { background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; }
+        figure.chart .legend .legend-item[aria-pressed="false"] { text-decoration: line-through; opacity: .45; }
+        figure.chart .legend .legend-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        svg.chart .series.hidden { display: none; }
         figure.chart .legend .chart-hint { margin-left: auto; color: var(--muted); font-size: 12px; }
         svg.chart[data-from] { cursor: crosshair; touch-action: pan-y; user-select: none; }
         svg.chart .zoom-band { fill: var(--accent, #2563eb); fill-opacity: .15; stroke: var(--accent, #2563eb); stroke-opacity: .6; }
@@ -300,6 +304,70 @@
                     input.addEventListener('input', function () { dates.forEach(function (d) { d.name = d.getAttribute('data-name'); }); });
                 });
                 select.addEventListener('change', function () { form.submit(); });
+            });
+
+            // Charts: click a legend entry to hide or show its line; the value scale refits to the lines
+            // still shown (all shown again: the chart as drawn). LineChart puts each point's value in data-v.
+            document.querySelectorAll('figure.chart').forEach(function (figure) {
+                var svg = figure.querySelector('svg.chart[data-from]');
+                var items = figure.querySelectorAll('.legend-item');
+                if (!svg || !items.length) { return; }
+                var top = +svg.dataset.top, bottom = +svg.dataset.bottom;
+                var floor = +svg.dataset.min, ceiling = svg.dataset.max === '' ? null : +svg.dataset.max, unit = svg.dataset.unit || '';
+                var labels = Array.prototype.slice.call(svg.querySelectorAll('.y-label'));
+                var groups = Array.prototype.slice.call(svg.querySelectorAll('g.series'));
+                // As drawn: restored when every line is shown again.
+                var drawn = { labels: labels.map(function (l) { return l.textContent; }), points: groups.map(function (g) {
+                    return { line: g.querySelector('polyline') && g.querySelector('polyline').getAttribute('points'), cy: Array.prototype.map.call(g.querySelectorAll('circle'), function (c) { return c.getAttribute('cy'); }) };
+                }) };
+                var nice = function (value) { // LineChart::niceCeiling()
+                    if (value <= 0) { return 1; }
+                    var power = Math.pow(10, Math.floor(Math.log10(value)));
+                    var steps = [1, 2, 2.5, 5, 10];
+                    for (var i = 0; i < steps.length; i++) { if (value <= steps[i] * power) { return steps[i] * power; } }
+                    return 10 * power;
+                };
+                var number = function (value) { return String(+value.toFixed(2)); };
+
+                function refit() {
+                    var shown = groups.filter(function (g) { return !g.classList.contains('hidden'); });
+                    if (shown.length === groups.length) {
+                        labels.forEach(function (l, i) { l.textContent = drawn.labels[i]; });
+                        groups.forEach(function (g, i) {
+                            var line = g.querySelector('polyline');
+                            if (line) { line.setAttribute('points', drawn.points[i].line); }
+                            g.querySelectorAll('circle').forEach(function (c, j) { c.setAttribute('cy', drawn.points[i].cy[j]); });
+                        });
+                        return;
+                    }
+                    var values = [];
+                    shown.forEach(function (g) { g.querySelectorAll('circle').forEach(function (c) { values.push(+c.dataset.v); }); });
+                    if (!values.length) { return; }
+                    var high = nice(Math.max.apply(null, values) * 1.1);
+                    if (ceiling !== null) { high = Math.min(high, ceiling); }
+                    if (high <= floor) { high = floor + 1; }
+                    var y = function (v) { return top + (1 - (Math.max(floor, Math.min(v, high)) - floor) / (high - floor)) * (bottom - top); };
+                    labels.forEach(function (l, i) { l.textContent = number(floor + (high - floor) * i / 4) + unit; });
+                    shown.forEach(function (g) {
+                        var points = [];
+                        g.querySelectorAll('circle').forEach(function (c) {
+                            var cy = y(+c.dataset.v).toFixed(1);
+                            c.setAttribute('cy', cy);
+                            points.push(c.getAttribute('cx') + ',' + cy);
+                        });
+                        var line = g.querySelector('polyline');
+                        if (line) { line.setAttribute('points', points.join(' ')); }
+                    });
+                }
+
+                items.forEach(function (item) {
+                    item.addEventListener('click', function () {
+                        var on = item.getAttribute('aria-pressed') !== 'true';
+                        item.setAttribute('aria-pressed', on ? 'true' : 'false');
+                        groups[+item.dataset.series].classList.toggle('hidden', !on);
+                        refit();
+                    });
+                });
             });
 
             // Charts: drag across one to show just that stretch of time (the whole report follows).

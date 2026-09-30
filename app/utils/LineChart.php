@@ -50,9 +50,10 @@ class LineChart
         $y = fn (float $value) => self::TOP + (1 - (max($min, min($value, $top)) - $min) / ($top - $min)) * $plotHeight;
         $e = fn (string $text) => htmlspecialchars($text, ENT_QUOTES);
 
-        // data-*: the time axis, for zooming in by dragging across the plot (layouts/app).
+        // data-*: the time axis, for zooming in by dragging across the plot, and the value scale, for
+        // refitting it when lines are hidden from the legend (both in layouts/app).
         $svg = [sprintf(
-            '<svg class="chart" viewBox="0 0 %d %d" role="img" aria-label="%s" data-from="%d" data-to="%d" data-left="%s" data-right="%d" data-top="%d" data-bottom="%d">',
+            '<svg class="chart" viewBox="0 0 %d %d" role="img" aria-label="%s" data-from="%d" data-to="%d" data-left="%s" data-right="%d" data-top="%d" data-bottom="%d" data-min="%s" data-max="%s" data-unit="%s">',
             self::WIDTH,
             self::HEIGHT,
             $e($title . ' over time'),
@@ -62,6 +63,9 @@ class LineChart
             self::WIDTH - self::RIGHT,
             self::TOP,
             self::HEIGHT - self::BOTTOM,
+            self::number($min),
+            $max === null ? '' : self::number($max),
+            $e($unit),
         )];
 
         // Horizontal grid lines with their values.
@@ -69,7 +73,7 @@ class LineChart
             $value = $min + ($top - $min) * $i / 4;
             $lineY = round($y($value), 1);
             $svg[] = sprintf('<line x1="%d" x2="%d" y1="%s" y2="%s" class="grid"/>', $left, self::WIDTH - self::RIGHT, $lineY, $lineY);
-            $svg[] = sprintf('<text x="%d" y="%s" class="axis" text-anchor="end" dominant-baseline="middle">%s</text>', $left - 6, $lineY, $e(self::number($value) . $unit));
+            $svg[] = sprintf('<text x="%d" y="%s" class="axis y-label" text-anchor="end" dominant-baseline="middle">%s</text>', $left - 6, $lineY, $e(self::number($value) . $unit));
         }
 
         // Time labels: start, middle, end.
@@ -86,6 +90,7 @@ class LineChart
         $index = 0;
 
         foreach ($series as $name => $points) {
+            $svg[] = sprintf('<g class="series" data-series="%d">', $index);
             $colour = self::COLOURS[$index++ % count(self::COLOURS)];
             $coordinates = array_map(fn (array $point) => round($x($point[0]), 1) . ',' . round($y($point[1]), 1), $points);
 
@@ -96,13 +101,16 @@ class LineChart
             foreach ($points as $i => $point) {
                 [$cx, $cy] = explode(',', $coordinates[$i]);
                 $svg[] = sprintf(
-                    '<circle cx="%s" cy="%s" r="3" fill="%s"><title>%s</title></circle>',
+                    '<circle cx="%s" cy="%s" r="3" fill="%s" data-v="%s"><title>%s</title></circle>',
                     $cx,
                     $cy,
                     $colour,
+                    $point[1],
                     $e($name . ': ' . self::number($point[1]) . $unit . ' at ' . LocalTime::format((new \DateTimeImmutable())->setTimestamp($point[0]))),
                 );
             }
+
+            $svg[] = '</g>';
         }
 
         $svg[] = '</svg>';
@@ -110,8 +118,11 @@ class LineChart
         $legend = [];
         $index = 0;
 
+        // Each entry hides or shows its line (layouts/app); with one line there's nothing to choose.
         foreach (array_keys($series) as $name) {
-            $legend[] = sprintf('<span><i style="background:%s"></i>%s</span>', self::COLOURS[$index++ % count(self::COLOURS)], $e((string) $name));
+            $legend[] = count($series) > 1
+                ? sprintf('<button type="button" class="legend-item" data-series="%d" aria-pressed="true" title="Hide or show this line"><i style="background:%s"></i>%s</button>', $index, self::COLOURS[$index++ % count(self::COLOURS)], $e((string) $name))
+                : sprintf('<span><i style="background:%s"></i>%s</span>', self::COLOURS[$index++ % count(self::COLOURS)], $e((string) $name));
         }
 
         return '<figure class="chart"><figcaption>' . $e($title) . '</figcaption>' . implode('', $svg)

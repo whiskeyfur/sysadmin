@@ -540,6 +540,18 @@ test('the access and error logs come a page at a time, searched and sorted in th
         ->and($page(1, '', 'time', 'desc', ['hide_local' => true])['total'])->toBe(250)
         ->and($reports->report($this->server, '24h')['access_statuses'])->toBe([200, 500]);
 
+    // Banned: in any jail at the last read, or not; unknown bans filter nothing out for "no".
+    expect($page(1, '', 'time', 'desc', ['banned' => 'yes'])['total'])->toBe(0)
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'no'])['total'])->toBe(253);
+
+    $this->server->fail2ban_bans = ['sshd' => ['10.0.0.5', '127.0.0.1'], 'web-abusers' => ['10.0.1.7', '10.0.0.5'], 'empty' => []];
+    $this->server->save();
+
+    expect($page(1, '', 'time', 'desc', ['banned' => 'yes'])['total'])->toBe(3)
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'yes', 'hide_local' => true])['total'])->toBe(2)
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'no'])['total'])->toBe(250)
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'maybe'])['total'])->toBe(253);
+
     foreach (['note', 'crash', 'error', 'warning'] as $i => $level) {
         ApacheLogEntry::query()->create(['server_id' => $this->server->id, 'source' => '/var/log/apache2/error.log', 'level' => $level, 'logged_at' => $now->copy()->subMinutes(10 - $i), 'message' => "m$i", 'hash' => "h$i"]);
     }

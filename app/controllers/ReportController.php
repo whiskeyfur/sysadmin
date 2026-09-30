@@ -96,7 +96,7 @@ class ReportController extends Controller
      * One page of an Apache report's access or error log, as JSON {html (table rows), total, page, pages},
      * for the paged tables (public/assets/js/paged-table.js):
      * ?kind=access|errors&server=<id> or &vhost=<id>&range=&page=&q=&sort=&dir=asc|desc; for the access
-     * log also &status=4xx|errors|404&client=<start of address>&hide_local=1
+     * log also &status=4xx|errors|404&client=<start of address>&hide_local=1&banned=yes|no
      */
     public function apacheEntries()
     {
@@ -126,6 +126,7 @@ class ReportController extends Controller
             'status' => preg_match('/^(?:[1-5]xx|errors|\d{3})$/', $status) === 1 ? $status : '',
             'client' => mb_substr(trim((string) $this->request->get('client', false)), 0, 64),
             'hide_local' => (string) $this->request->get('hide_local', false) === '1',
+            'banned' => in_array($banned = (string) $this->request->get('banned', false), ['yes', 'no'], true) ? $banned : '',
         ];
         $page = $access ? $reports->accessPage(...$args, filters: $filters) : $reports->errorPage(...$args);
         $html = $access

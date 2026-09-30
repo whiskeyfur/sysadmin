@@ -78,7 +78,7 @@
                     @endif
                 </p>
                 <div class="paged" data-paged="/apache/reports/entries?kind=access&amp;{{ $pagedQuery }}">
-                    @include('reports.paged-controls', ['label' => 'Search requests', 'statuses' => $report['access_statuses']])
+                    @include('reports.paged-controls', ['label' => 'Search requests', 'statuses' => $report['access_statuses'], 'banFilter' => $banServer?->fail2ban_bans !== null])
                     <div class="paged-wrap">
                     <table class="top">
                         <thead>

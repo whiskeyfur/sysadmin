@@ -55,7 +55,13 @@ test('charts are inline SVG with a line and hoverable points per series, and esc
         ->and($svg)->toContain('Disk &lt;used&gt;')
         ->and($svg)->toContain('/data &amp; more: 40%')
         ->and($svg)->not->toContain('<used>')
-        ->and(LineChart::render('Empty', [], 0, 1))->toContain('No data');
+        ->and(LineChart::render('Empty', [], 0, 1))->toContain('No data')
+        // Each line in its own group with its values, and a legend button per line to hide or show it.
+        ->and(substr_count($svg, '<g class="series" data-series='))->toBe(2)
+        ->and($svg)->toContain('data-v="40"')->toContain('data-max="100"')->toContain('data-unit="%"')
+        ->and(substr_count($svg, 'class="legend-item"'))->toBe(2)
+        // One line: nothing to choose.
+        ->and(LineChart::render('One', ['a' => [[100, 1.0]]], 100, 200))->not->toContain('legend-item');
 });
 
 test('more runs than a chart can show are averaged into even intervals', function () {

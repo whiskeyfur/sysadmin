@@ -122,9 +122,10 @@ class ApacheReportService extends HistoryReport
      * One page of the access log in the period, newest first unless sorted otherwise. $search matches
      * client, host, request, referer or user agent (a 3-digit number: that status too). $filters:
      * status ("4xx", "errors" for 4xx and 5xx, or a code), client (address from its start) and
-     * hide_local (leave out 127.* and ::1).
+     * hide_local (leave out 127.* and ::1) and banned ("yes": addresses fail2ban had banned at the last
+     * read, in any jail; "no": the others).
      *
-     * @param array{status?: string, client?: string, hide_local?: bool} $filters
+     * @param array{status?: string, client?: string, hide_local?: bool, banned?: string} $filters
      * @return array{rows: list<ApacheAccessEntry>, total: int, page: int, pages: int}
      */
     public function accessPage(Server $server, string $range, ?ApacheVhost $vhost = null, int $page = 1, string $search = '', string $sort = 'time', string $direction = 'desc', array $filters = []): array
@@ -147,6 +148,30 @@ class ApacheReportService extends HistoryReport
         // Client: from the start, so "10.0.0." matches a whole subnet.
         if ($client !== '') {
             $query->where('client', 'like', addcslashes($client, '%_\\') . '%');
+        }
+
+        // Banned: the addresses fail2ban had banned at the last read (in any jail), or not.
+        $banned = (string) ($filters['banned'] ?? '');
+
+        if (in_array($banned, ['yes', 'no'], true)) {
+            $ips = array_values(array_unique(array_merge([], ...array_values(array_map(fn ($list) => (array) $list, $server->fail2ban_bans ?? [])))));
+
+            if ($banned === 'yes') {
+                // In chunks: databases limit how many values one IN () takes.
+                $query->where(function ($q) use ($ips) {
+                    $q->whereRaw('1 = 0');
+
+                    foreach (array_chunk($ips, 1000) as $chunk) {
+                        $q->orWhereIn('client', $chunk);
+                    }
+                });
+            } elseif ($ips !== []) {
+                $query->where(fn ($q) => $q->whereNull('client')->orWhere(function ($q) use ($ips) {
+                    foreach (array_chunk($ips, 1000) as $chunk) {
+                        $q->whereNotIn('client', $chunk);
+                    }
+                }));
+            }
         }
 
         if (!empty($filters['hide_local'])) {

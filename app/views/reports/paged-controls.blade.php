@@ -1,6 +1,7 @@
 {{-- Search box, optional filters and pager above a paged table (public/assets/js/paged-table.js).
      Needs $label; $statuses (the status codes in the period) adds the access log's status, client and
-     "hide localhost" filters, sent as the data-paged-param names. --}}
+     "hide localhost" filters, and $banFilter (the server's fail2ban bans are known) the banned one;
+     they're sent as the data-paged-param names. --}}
 <div class="paged-controls">
     <div class="paged-filters">
         <input type="search" class="table-filter" data-paged-search placeholder="{{ $label }}…" aria-label="{{ $label }}">
@@ -22,6 +23,14 @@
             </select>
             <label for="{{ \Illuminate\Support\Str::slug($label) }}-client" class="visually-hidden">Client address</label>
             <input type="text" id="{{ \Illuminate\Support\Str::slug($label) }}-client" data-paged-param="client" placeholder="Client IP (or its start)" size="18" spellcheck="false" inputmode="decimal">
+            @if (!empty($banFilter))
+                <label for="{{ \Illuminate\Support\Str::slug($label) }}-banned" class="visually-hidden">fail2ban</label>
+                <select id="{{ \Illuminate\Support\Str::slug($label) }}-banned" data-paged-param="banned" title="Banned by fail2ban">
+                    <option value="">Banned or not</option>
+                    <option value="yes">Banned by fail2ban</option>
+                    <option value="no">Not banned</option>
+                </select>
+            @endif
             <label class="check"><input type="checkbox" data-paged-param="hide_local" checked> Hide localhost</label>
         @endisset
     </div>

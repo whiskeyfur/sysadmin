@@ -23,10 +23,25 @@
         /* Elements with their own display (grids, flex) must still hide. */
         [hidden] { display: none !important; }
         body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-        header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+        header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 45; }
         header .brand { font-weight: 700; letter-spacing: .02em; color: inherit; text-decoration: none; }
         header nav { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-        header nav.primary .brand { margin-right: 8px; }
+        header .brand { margin-right: 8px; }
+        header nav.primary { flex: 1; }
+        header .nav-toggle { display: none; }
+        @media (max-width: 700px) {
+            /* Phones: one row (brand, menu button); the menus open as a panel under it. */
+            header { flex-wrap: wrap; padding: 8px 16px; gap: 8px; }
+            header .nav-toggle { display: inline-flex; margin-left: auto; padding: 6px 12px; }
+            header:not(.open) nav.primary, header:not(.open) nav.secondary { display: none; }
+            header.open { max-height: 100vh; overflow-y: auto; }
+            header.open nav.primary, header.open nav.secondary { flex-basis: 100%; flex-direction: column; align-items: stretch; gap: 4px; }
+            header.open nav.secondary { border-top: 1px solid var(--line); padding-top: 8px; }
+            header.open details.menu summary { padding: 6px 0; }
+            header.open details.menu .menu-items { position: static; box-shadow: none; border: 0; padding: 0 0 6px 14px; min-width: 0; background: none; }
+            header.open nav.secondary a { padding: 4px 0; }
+            header.open nav.secondary form button { width: 100%; }
+        }
         header nav a[aria-current="page"], header nav summary.current { font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
         button.link { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; }
         button.fold::before { content: '▸ '; }
@@ -168,8 +183,12 @@
 <body>
     @php($path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/')
     <header>
-        <nav class="primary" aria-label="Monitoring">
-            <a class="brand" href="/">sys</a>
+        <a class="brand" href="/">sys</a>
+        @isset($auth)
+            {{-- Phones: the menus fold away behind this button (see the header script). --}}
+            <button type="button" class="nav-toggle" aria-expanded="false" aria-controls="site-menus">☰ Menu</button>
+        @endisset
+        <nav class="primary" id="site-menus" aria-label="Monitoring">
             @isset($auth)
                 {{-- Each area is a menu: reports and its test page (everyone), then add, accounts and settings (admins). --}}
                 @php($menus = [
@@ -326,8 +345,29 @@
                 select.addEventListener('change', function () { form.submit(); });
             });
 
+            // The header is sticky: jumps (anchors, scrollIntoView) stop below it, whatever height it has.
+            // On phones its menus fold behind the ☰ Menu button.
+            (function () {
+                var header = document.querySelector('header');
+                if (!header) { return; }
+                var pad = function () { document.documentElement.style.scrollPaddingTop = (header.offsetHeight + 12) + 'px'; };
+                pad();
+                window.addEventListener('resize', pad);
+                var toggle = header.querySelector('.nav-toggle');
+                if (!toggle) { return; }
+                var set = function (open) {
+                    header.classList.toggle('open', open);
+                    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                    toggle.textContent = open ? '✕ Close' : '☰ Menu';
+                    window.dispatchEvent(new Event('resize')); // the header's height changed
+                };
+                toggle.addEventListener('click', function () { set(!header.classList.contains('open')); });
+                document.addEventListener('keydown', function (event) { if (event.key === 'Escape' && header.classList.contains('open')) { set(false); } });
+                document.addEventListener('click', function (event) { if (header.classList.contains('open') && !header.contains(event.target)) { set(false); } });
+            })();
+
             // Section navigator: every card (or collapsible section, or chart) with a heading, listed in a
-            // box at the top right that follows the scroll; click to jump (opening a closed section). In the
+            // box at the top right, under the sticky header; click to jump (opening a closed section). In the
             // right margin when it fits, else a small "Sections" button whose list stays open until the
             // button or the page is clicked; only on pages with 3 or more.
             (function () {
@@ -383,8 +423,8 @@
                 var frame = null;
                 function update() {
                     frame = null;
-                    // Below the header while it's on screen, then in the corner.
-                    var top = Math.max(12, header ? header.getBoundingClientRect().bottom + 12 : 12);
+                    // Under the (sticky) header, always.
+                    var top = (header ? header.getBoundingClientRect().bottom : 0) + 12;
                     nav.style.top = top + 'px';
                     nav.style.maxHeight = 'calc(100vh - ' + (top + 12) + 'px)';
                     // In the right margin if the box fits there, else collapsed.

@@ -164,3 +164,5 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Access log filters are tri-state (any / only ✓ / not ✗): status, banned, protected, localhost.
 * 2026-09-29 — Blocklists: blocklist.de and Spamhaus DROP downloaded daily, access-log clients checked locally; amber colour and Listed filter.
 * 2026-09-29 — Section navigator (scrollspy) at the top right of every page with 3+ sections.
+* 2026-09-29 — Sticky header; section navigator always just under it; scroll padding follows the header's height.
+* 2026-09-29 — Phones: compact header (sys + ☰ Menu panel).

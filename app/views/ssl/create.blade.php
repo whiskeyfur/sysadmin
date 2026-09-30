@@ -25,7 +25,7 @@
             </div>
             <label for="hostnames">Hostnames it covers <span class="muted">(optional)</span></label>
             <textarea id="hostnames" name="hostnames" rows="3" spellcheck="false" placeholder="shop.example.com&#10;www.shop.example.com&#10;*.shop.example.com">{{ $old['hostnames'] ?? '' }}</textarea>
-            <p class="hint">One per line. The first is sent to the server to ask for this certificate (SNI), so it must be a real hostname, not a wildcard. Leave empty to use the name as the hostname. Either way, the other hostnames the served certificate lists (SAN) are added automatically.</p>
+            <p class="hint">One per line. The first is sent to the server to ask for this certificate (SNI), so it must be a real hostname, not a wildcard. Leave empty to use the name as the hostname. Either way, every other name the served certificate lists (SAN) gets an entry of its own, checked directly through DNS, so a name on the certificate that doesn't resolve or answer shows up (wildcards are skipped).</p>
             <label for="server_id">Served on</label>
             <select id="server_id" name="server_id">
                 <option value="">Directly, via DNS (not on a tracked server)</option>

@@ -78,7 +78,7 @@ class SslController extends Controller
                 'server_id' => $this->request->get('server_id'),
                 'port' => $this->request->get('port'),
             ]);
-            $added = $this->ssl->addNamesFromCertificate($this->authContext()->user, $certificate);
+            $added = $this->ssl->addEntriesFromCertificate($this->authContext()->user, $certificate);
             $checked = $this->ssl->checkCertificate($this->authContext()->user, $certificate);
         } catch (DomainException $e) {
             $this->renderCreate($e->getMessage(), [
@@ -186,22 +186,22 @@ class SslController extends Controller
         $certificate = $this->findOrRedirect($id);
 
         if ($certificate !== null) {
-            $added = $this->ssl->addNamesFromCertificate($this->authContext()->user, $certificate);
+            $added = $this->ssl->addEntriesFromCertificate($this->authContext()->user, $certificate);
             $this->response->withFlash($added === null ? 'error' : 'notice', ucfirst(ltrim($this->namesMessage($added), '; ')) . '.')->redirect("/ssl/{$certificate->id}");
         }
     }
 
     /**
-     * "; found a.example.com, b.example.com in its certificate and added them" and the like.
+     * "; added a.example.com, b.example.com from its certificate, each checked on its own" and the like.
      *
      * @param list<string>|null $added
      */
     private function namesMessage(?array $added): string
     {
         return match (true) {
-            $added === null => "; couldn't read the certificate to add the other hostnames it covers",
-            $added === [] => '; found no other hostnames in its certificate',
-            default => '; found ' . implode(', ', $added) . ' in its certificate and added ' . (count($added) === 1 ? 'it' : 'them'),
+            $added === null => "; couldn't read the certificate to add the other names it lists",
+            $added === [] => '; its certificate lists no other names without an entry',
+            default => '; added ' . implode(', ', $added) . ' from its certificate, each checked on its own through DNS',
         };
     }
 

@@ -25,7 +25,7 @@
             @if ($auth->isAdmin() && $certificate->bindings->isNotEmpty())
                 <form method="post" action="/admin/ssl/{{ $certificate->id }}/names">
                     @csrf
-                    <button type="submit" class="secondary">Get hostnames from the certificate</button>
+                    <button type="submit" class="secondary">Add an entry per name on the certificate</button>
                 </form>
             @endif
         </div>

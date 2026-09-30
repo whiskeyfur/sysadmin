@@ -144,8 +144,12 @@ test('removing a binding or deleting the certificate removes its results', funct
     $this->ssl->addBinding($this->admin, $certificate, $web, 443);
     $this->ssl->checkCertificate($this->admin, $certificate);
     $this->ssl->deleteCertificate($this->admin, $certificate);
+    $own = fn ($query) => $query->where('certificate_id', $certificate->id)->count();
 
-    expect(SslCertificate::count() + SslBinding::count() + SslCheck::count())->toBe(0);
+    // Entries its names got stay: they're checked on their own.
+    expect(SslCertificate::query()->find($certificate->id))->toBeNull()
+        ->and($own(SslBinding::query()))->toBe(0)
+        ->and(SslCheck::query()->whereIn('binding_id', [$binding->id])->count())->toBe(0);
 });
 
 test('per-server SSL hosts from before certificates existed are converted once', function () {
@@ -185,25 +189,49 @@ test('a certificate named after its hostname needs no hostname list', function (
         ->and(fn () => $this->ssl->createCertificate($this->admin, ['name' => 'Main site', 'hostnames' => '']))->toThrow(DomainException::class, 'name it after its hostname');
 });
 
-test('the other hostnames the served certificate lists are added, from where it is served', function () {
+test('every other name the served certificate lists gets an entry of its own, checked directly through DNS', function () {
     $web = ($this->server)('web', '10.0.0.5');
     $certificate = $this->ssl->createCertificate($this->admin, ['name' => 'shop.example.com', 'hostnames' => '', 'server_id' => (string) $web->id, 'port' => '8443']);
-    $this->checker->served = ['shop.example.com', 'www.shop.example.com', '*.cdn.example.com', 'not a host'];
+    $this->checker->served = ['shop.example.com', 'WWW.shop.example.com', '*.cdn.example.com', 'not a host', 'api.example.com'];
 
-    expect($this->ssl->addNamesFromCertificate($this->admin, $certificate))->toBe(['www.shop.example.com', '*.cdn.example.com'])
-        ->and($certificate->fresh()->hostnameList())->toBe(['shop.example.com', 'www.shop.example.com', '*.cdn.example.com'])
-        ->and($this->checker->nameCalls)->toBe([['shop.example.com', 8443, '10.0.0.5']])
-        ->and($this->ssl->addNamesFromCertificate($this->admin, $certificate->fresh()))->toBe([]);
+    expect($this->ssl->addEntriesFromCertificate($this->admin, $certificate))->toBe(['www.shop.example.com', 'api.example.com'])
+        ->and($certificate->fresh()->hostnameList())->toBe(['shop.example.com'])
+        ->and($this->checker->nameCalls)->toBe([['shop.example.com', 8443, '10.0.0.5']]);
+
+    $www = SslCertificate::query()->where('name', 'www.shop.example.com')->first();
+    $binding = $www->bindings->first();
+
+    expect($www->hostnameList())->toBe(['www.shop.example.com'])
+        ->and($www->notes)->toBe('Listed on the certificate of shop.example.com (web:8443).')
+        ->and($www->bindings)->toHaveCount(1)
+        ->and($binding->server_id)->toBeNull()
+        ->and($binding->port)->toBe(8443)
+        // Nothing twice.
+        ->and($this->ssl->addEntriesFromCertificate($this->admin, $certificate->fresh()))->toBe([])
+        ->and(SslCertificate::count())->toBe(3);
+
+    // Checking the new entry asks DNS for its own name.
+    $this->ssl->checkCertificate($this->admin, $www);
+    expect(end($this->checker->calls))->toBe(['www.shop.example.com', 8443, null, ['www.shop.example.com']]);
+});
+
+test('an existing entry for the name, by name or first hostname, is kept', function () {
+    ($this->certificate)(['name' => 'Webshop', 'hostnames' => 'www.shop.example.com']);
+    ($this->certificate)(['name' => 'api.example.com', 'hostnames' => 'api2.example.com']);
+    $certificate = ($this->certificate)(['name' => 'Main', 'hostnames' => 'shop.example.com', 'port' => '443']);
+    $this->checker->served = ['shop.example.com', 'www.shop.example.com', 'api.example.com', 'new.example.com'];
+
+    expect($this->ssl->addEntriesFromCertificate($this->admin, $certificate))->toBe(['new.example.com']);
 });
 
 test('without a binding or a readable certificate, nothing is added', function () {
     $unbound = ($this->certificate)();
     $bound = ($this->certificate)(['name' => 'Direct', 'port' => '443']);
 
-    expect($this->ssl->addNamesFromCertificate($this->admin, $unbound))->toBeNull()
-        ->and($this->ssl->addNamesFromCertificate($this->admin, $bound))->toBeNull()
-        ->and($bound->fresh()->hostnameList())->toBe(['shop.example.com', 'www.shop.example.com'])
-        ->and(fn () => $this->ssl->addNamesFromCertificate(new User(['role' => User::ROLE_USER]), $bound))->toThrow(AuthorizationException::class);
+    expect($this->ssl->addEntriesFromCertificate($this->admin, $unbound))->toBeNull()
+        ->and($this->ssl->addEntriesFromCertificate($this->admin, $bound))->toBeNull()
+        ->and(SslCertificate::count())->toBe(2)
+        ->and(fn () => $this->ssl->addEntriesFromCertificate(new User(['role' => User::ROLE_USER]), $bound))->toThrow(AuthorizationException::class);
 });
 
 test('deleting a certificate clears the SSL status of the servers that served it', function () {
@@ -246,20 +274,23 @@ test('bindings whose certificate or server is gone are dropped, and never break 
         ->and(SslBinding::query()->where('certificate_id', $kept->id)->count())->toBe(1);
 });
 
-test('checks add hostnames a valid certificate covers; not from an invalid one, and not when turned off', function () {
+test('checks add entries for the names a valid certificate lists; not from an invalid one, and not when turned off', function () {
     $certificate = ($this->certificate)(['port' => '443']);
     $this->checker->extraNames = ['api.shop.example.com', 'Shop.Example.com'];
+    $names = fn () => SslCertificate::query()->orderBy('id')->pluck('name')->all();
 
     $this->ssl->checkCertificate($this->admin, $certificate);
-    expect($certificate->fresh()->hostnameList())->toBe(['shop.example.com', 'www.shop.example.com', 'api.shop.example.com']);
+    // shop.example.com is this entry's own first hostname.
+    expect($names())->toBe(['Shop 2026', 'www.shop.example.com', 'api.shop.example.com'])
+        ->and($certificate->fresh()->hostnameList())->toBe(['shop.example.com', 'www.shop.example.com']);
 
     $this->checker->extraNames = ['evil.example.net'];
     $this->checker->statuses = ['dns' => HealthStatus::Critical];
     $this->ssl->checkCertificate($this->admin, $certificate->fresh());
-    expect($certificate->fresh()->hostnameList())->not->toContain('evil.example.net');
+    expect($names())->not->toContain('evil.example.net');
 
     (new App\Services\SettingsService())->update($this->admin, ['ssl_import_names' => '0']);
     $this->checker->statuses = [];
     $this->ssl->checkCertificate($this->admin, $certificate->fresh());
-    expect($certificate->fresh()->hostnameList())->not->toContain('evil.example.net');
+    expect($names())->not->toContain('evil.example.net');
 });

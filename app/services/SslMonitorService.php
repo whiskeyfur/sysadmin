@@ -27,6 +27,11 @@ class SslMonitorService
 {
     public const RETENTION_DAYS = 30;
 
+    /**
+     * New entries one certificate's names may add at a time (a CDN certificate can list hundreds).
+     */
+    public const MAX_NEW_ENTRIES = 100;
+
     // ssl_checks.server_id for bindings checked directly via DNS (no server).
     private const DIRECT = 0;
 
@@ -87,7 +92,7 @@ class SslMonitorService
      * With no hostnames given, the name is used as the hostname (e.g. a
      * certificate named "shop.example.com"). With a first binding, the
      * certificate is then downloaded from it and the other hostnames it lists
-     * (SAN) are added; see addNamesFromCertificate().
+     * (SAN) get entries of their own; see addEntriesFromCertificate().
      *
      * @param array<string, mixed> $input name, hostnames, notes; optionally server_id ('' = direct) and port for a first binding
      *
@@ -121,12 +126,12 @@ class SslMonitorService
     }
 
     /**
-     * Download the certificate from its first binding and add the hostnames
-     * it lists (SAN) that aren't listed yet.
+     * Download the certificate from its first binding and add an entry for
+     * every other name it lists (SAN), see addEntries().
      *
-     * @return list<string>|null the hostnames added, or null if the certificate couldn't be read
+     * @return list<string>|null the entries added, or null if the certificate couldn't be read
      */
-    public function addNamesFromCertificate(User $admin, SslCertificate $certificate): ?array
+    public function addEntriesFromCertificate(User $admin, SslCertificate $certificate): ?array
     {
         $this->requireAdmin($admin);
         $binding = SslBinding::query()->with('server')->where('certificate_id', $certificate->id)->orderBy('id')->first();
@@ -141,26 +146,44 @@ class SslMonitorService
             return null;
         }
 
-        return $this->addNames($certificate, $names);
+        return $this->addEntries($certificate, $binding, $names);
     }
 
     /**
-     * Append the hostnames not listed yet.
+     * An entry of its own for every name a certificate lists (SAN) that has none yet, checked
+     * directly through DNS at the same port: a name on the certificate isn't necessarily a site that
+     * resolves or answers, and that's what its own check shows. Wildcards can't be asked for, so
+     * they're skipped.
      *
      * @param list<string> $names
-     * @return list<string> the ones added
+     * @return list<string> the hostnames that got an entry
      */
-    private function addNames(SslCertificate $certificate, array $names): array
+    private function addEntries(SslCertificate $source, SslBinding $binding, array $names): array
     {
-        $listed = $certificate->hostnameList();
-        $added = array_values(array_unique(array_filter(
-            array_map('strtolower', $names),
-            fn (string $name) => $this->isHostname(str_starts_with($name, '*.') ? substr($name, 2) : $name) && !in_array($name, $listed, true),
-        )));
+        $taken = [];
 
-        if ($added !== []) {
-            $certificate->hostnames = implode("\n", [...$listed, ...$added]);
-            $certificate->save();
+        foreach (SslCertificate::query()->get(['name', 'hostnames']) as $existing) {
+            $taken[strtolower($existing->name)] = true;
+            $taken[$existing->primaryHostname()] = true;
+        }
+
+        $added = [];
+
+        foreach (array_unique(array_map(fn ($n) => strtolower(trim($n)), $names)) as $name) {
+            if (isset($taken[$name]) || str_starts_with($name, '*.') || !$this->isHostname($name) || count($added) >= self::MAX_NEW_ENTRIES) {
+                continue;
+            }
+
+            $source->getConnection()->transaction(function () use ($source, $binding, $name) {
+                $entry = SslCertificate::query()->create([
+                    'name' => $name,
+                    'hostnames' => $name,
+                    'notes' => "Listed on the certificate of {$source->name} ({$binding->label()}).",
+                ]);
+                SslBinding::query()->create(['certificate_id' => $entry->id, 'server_id' => null, 'port' => $binding->port]);
+            });
+            $taken[$name] = true;
+            $added[] = $name;
         }
 
         return $added;
@@ -391,10 +414,10 @@ class SslMonitorService
             $this->store($binding, $result, $now);
             $certificates[$certificate->id] = $certificate;
 
-            // Keep the hostname list in step with the certificate (e.g. a renewal that added a name),
-            // but only from a certificate that checked out: an invalid one could be anyone's.
+            // Every name on the certificate gets an entry (e.g. one a renewal added), but only from a
+            // certificate that checked out: an invalid one could be anyone's.
             if ($importNames && $result->status !== HealthStatus::Critical && is_array($result->details['names'] ?? null)) {
-                $this->addNames($certificate, array_values(array_map('strval', $result->details['names'])));
+                $this->addEntries($certificate, $binding, array_values(array_map('strval', $result->details['names'])));
             }
 
             if ($binding->server !== null) {

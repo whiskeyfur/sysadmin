@@ -146,3 +146,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * _agent: record ideas the user mentions but isn't building yet._
 * 2026-09-29 — Apache page: the sign-in check moved from a card at the top into a dialog opened by each change button.
 * 2026-09-29 — URL simulator trace as a table: step, directive as written, file, line, explanation.
+* 2026-09-29 — SSL: every SAN name becomes its own entry checked directly through DNS; /ssl rows fold out only when not OK, showing the failing checks; hostname lists removed from /ssl.

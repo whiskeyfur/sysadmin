@@ -47,12 +47,12 @@
                     <input type="text" id="ssl_warning_days" name="ssl_warning_days" value="{{ $value('ssl_warning_days') }}" inputmode="numeric" required>
                     <p class="hint">A valid certificate shows as a warning once it expires within this many days (1–365, default {{ $default('ssl_warning_days') }}). Expired or otherwise invalid certificates are always critical.</p>
 
-                    <label for="ssl_import_names">Hostnames found in certificates</label>
+                    <label for="ssl_import_names">Names found on certificates</label>
                     <select id="ssl_import_names" name="ssl_import_names">
-                        <option value="1" {{ $value('ssl_import_names') === 1 ? 'selected' : '' }}>Add them to the certificate's list automatically</option>
-                        <option value="0" {{ $value('ssl_import_names') === 0 ? 'selected' : '' }}>Leave the list as I set it</option>
+                        <option value="1" {{ $value('ssl_import_names') === 1 ? 'selected' : '' }}>Give each one an entry of its own</option>
+                        <option value="0" {{ $value('ssl_import_names') === 0 ? 'selected' : '' }}>Only check the entries I add</option>
                     </select>
-                    <p class="hint">Every check reads the hostnames a certificate covers (SAN); new ones, e.g. from a renewal, are added. Only from certificates that check out as valid.</p>
+                    <p class="hint">Every check reads the names a certificate lists (SAN); each one without an entry, e.g. from a renewal, gets its own, checked directly through DNS at the same port (a name on a certificate may not resolve or answer). Only from certificates that check out as valid; wildcards are skipped.</p>
 
                     <label for="ssl_missing_intermediate">Server doesn't send its intermediate certificate</label>
                     <select id="ssl_missing_intermediate" name="ssl_missing_intermediate">

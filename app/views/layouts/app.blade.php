@@ -63,9 +63,15 @@
         .paged th[aria-sort="descending"]::after { content: ' ▼'; opacity: .8; }
         .paged.loading tbody { opacity: .5; }
         .paged-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-        .paged-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
-        .paged-filters input.table-filter { max-width: 260px; margin: 0; }
+        /* flex: 1 lets the filters take the row: their width is otherwise worked out from the inputs' narrower intrinsic size, and they wrap early. */
+        .paged-filters { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+        .paged-filters input.table-filter { max-width: 220px; margin: 0; }
+        /* Everything on the filter line is one height: the inputs and each bordered group. */
+        .paged-filters input, .paged-filters .check-group { box-sizing: border-box; height: 38px; margin: 0; }
+        .paged-filters input { padding-top: 0; padding-bottom: 0; }
         .paged-filters select, .paged-filters input[type=text] { width: auto; margin: 0; }
+        .paged-filters .check-pair { display: inline-flex; gap: 8px 12px; align-items: center; flex-wrap: nowrap; }
+        @media (max-width: 700px) { .paged-filters .check-pair { flex-wrap: wrap; } }
         .paged-filters .check-group { display: inline-flex; gap: 10px; align-items: center; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; }
         .paged-filters label.check { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: normal; font-size: 14px; white-space: nowrap; }
         .paged-filters button.tri { display: inline-flex; gap: 6px; align-items: center; background: none; border: 0; padding: 2px 0; margin: 0; font: inherit; font-size: 14px; color: var(--text); cursor: pointer; white-space: nowrap; }

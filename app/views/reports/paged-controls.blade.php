@@ -14,14 +14,19 @@
                     @include('reports.tri', ['param' => "s{$class}xx", 'label' => "<span class=\"badge $badge\">{$class}xx</span>", 'name' => "{$class}xx"])
                 @endforeach
             </span>
+            {{-- fail2ban and blocklist/localhost stay side by side: the pair wraps as one. --}}
+            <span class="check-pair">
             @if (!empty($banFilter))
                 <span class="check-group" role="group" aria-label="fail2ban">
                     @include('reports.tri', ['param' => 'banned', 'label' => '<span class="ip-banned">Banned</span>', 'name' => 'Banned'])
                     @include('reports.tri', ['param' => 'protected', 'label' => '<span class="ip-protected">Protected</span>', 'name' => 'Protected'])
                 </span>
             @endif
-            @include('reports.tri', ['param' => 'listed', 'label' => '<span class="ip-listed">Listed</span>', 'name' => 'On a blocklist'])
-            @include('reports.tri', ['param' => 'local', 'label' => 'Localhost', 'name' => 'Localhost', 'state' => 'out'])
+            <span class="check-group" role="group" aria-label="Blocklists and localhost">
+                @include('reports.tri', ['param' => 'listed', 'label' => '<span class="ip-listed">Listed</span>', 'name' => 'On a blocklist'])
+                @include('reports.tri', ['param' => 'local', 'label' => '<span class="ip-local">Localhost</span>', 'name' => 'Localhost', 'state' => 'out'])
+            </span>
+            </span>
         @endif
     </div>
     <div class="paged-pager">

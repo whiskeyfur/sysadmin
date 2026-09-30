@@ -127,7 +127,8 @@
             code.ip-banned, span.ip-banned { color: var(--error); background: var(--error-bg); font-weight: 600; }
             code.ip-protected, span.ip-protected { color: var(--notice); background: var(--notice-bg); font-weight: 600; }
             code.ip-listed, span.ip-listed { color: var(--warn); background: var(--warn-bg); font-weight: 600; }
-            span.ip-banned, span.ip-protected { padding: 1px 6px; border-radius: 4px; }
+            span.ip-local { color: var(--notice); background: var(--notice-bg); font-weight: 600; }
+            span.ip-banned, span.ip-protected, span.ip-listed, span.ip-local { padding: 1px 6px; border-radius: 4px; }
             .ban-menu button span { display: inline-block; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; font-family: ui-monospace, monospace; font-size: 13px; }
             .ban-menu { position: fixed; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .2); padding: 4px 0; display: flex; flex-direction: column; }
             .ban-menu button { background: none; border: 0; text-align: left; padding: 7px 14px; font: inherit; color: var(--text); cursor: pointer; }

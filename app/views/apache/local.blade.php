@@ -49,6 +49,8 @@
                     <h2>Sites</h2>
                     <div class="row-actions">
                         <a class="button" href="/admin/apache/local/new">New site</a>
+                        <a class="button secondary-link" href="/admin/apache/local/rewrite">Rewrite rules</a>
+                        <a class="button secondary-link" href="/admin/apache/local/simulate">URL simulator</a>
                         <a class="button secondary-link" href="/admin/apache/local/edit?kind=main">Edit apache2.conf</a>
                         <a class="button secondary-link" href="/admin/apache/local/edit?kind=ports">Edit ports.conf</a>
                     </div>

@@ -20,3 +20,11 @@ app()->get('/admin/apache/local/new', $localAdmin + ['LocalApacheController@crea
 app()->post('/admin/apache/local/edit', $localAdminHashing + ['LocalApacheController@save']);
 app()->post('/admin/apache/local/new', $localAdminHashing + ['LocalApacheController@store']);
 app()->post('/admin/apache/local/change', $localAdminHashing + ['LocalApacheController@change']);
+
+// mod_rewrite rules and the URL simulator.
+app()->get('/admin/apache/local/rewrite', $localAdmin + ['RewriteController@index']);
+app()->get('/admin/apache/local/rewrite/scope', $localAdmin + ['RewriteController@scope']);
+app()->get('/admin/apache/local/rewrite/rule', $localAdmin + ['RewriteController@rule']);
+app()->post('/admin/apache/local/rewrite/rule', $localAdminHashing + ['RewriteController@saveRule']);
+app()->post('/admin/apache/local/rewrite/change', $localAdminHashing + ['RewriteController@change']);
+app()->get('/admin/apache/local/simulate', $localAdmin + ['RewriteController@simulate']);

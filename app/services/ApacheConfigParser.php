@@ -84,7 +84,7 @@ class ApacheConfigParser
     {
         preg_match_all('/"((?:[^"\\\\]|\\\\.)*)"|\'([^\']*)\'|(\S+)/', $line, $matches, PREG_SET_ORDER);
 
-        return array_map(fn (array $m) => isset($m[3]) ? $m[3] : (isset($m[2]) && $m[2] !== '' ? $m[2] : stripcslashes($m[1])), $matches);
+        return array_map(fn (array $m) => isset($m[3]) ? $m[3] : (isset($m[2]) && $m[2] !== '' ? $m[2] : str_replace('\\"', '"', $m[1])), $matches);
     }
 
     /**

@@ -3,12 +3,7 @@
 namespace App\Controllers;
 
 use App\DTOs\AuthContext;
-use App\Enums\LoginStatus;
-use App\Middleware\LimitConcurrentLogins;
-use App\Services\AuthService;
-use App\Services\AuthSessionService;
 use App\Services\LocalApacheService;
-use App\Services\LoginMethodService;
 use DomainException;
 
 /**
@@ -18,6 +13,8 @@ use DomainException;
  */
 class LocalApacheController extends Controller
 {
+    use ConfirmsIdentity;
+
     private readonly LocalApacheService $apache;
 
     public function __construct()
@@ -76,7 +73,7 @@ class LocalApacheController extends Controller
         $kind = (string) $this->request->get('kind');
         $name = (string) $this->request->get('name');
         $content = (string) $this->request->get('content', false);
-        $refused = $this->confirm();
+        $refused = $this->confirmIdentity();
 
         if ($refused !== null) {
             $this->renderEdit($kind, $name, $content, $refused, 422);
@@ -108,7 +105,7 @@ class LocalApacheController extends Controller
             $input[$field] = trim((string) $this->request->get($field, false));
         }
 
-        $refused = $this->confirm();
+        $refused = $this->confirmIdentity();
 
         if ($refused !== null) {
             $this->renderNew($input, $refused);
@@ -136,7 +133,7 @@ class LocalApacheController extends Controller
         $action = $parts[0];
 
         if ($action !== 'test') {
-            $refused = $this->confirm();
+            $refused = $this->confirmIdentity();
 
             if ($refused !== null) {
                 $this->response->withFlash('error', $refused)->redirect('/admin/apache/local');
@@ -164,38 +161,13 @@ class LocalApacheController extends Controller
     }
 
     /**
-     * A fresh check with one of the admin's sign-in methods: null if it passed, else why not.
-     */
-    private function confirm(): ?string
-    {
-        if ($this->request->get('passkey_confirmed') && (new AuthSessionService())->takePasskeyConfirmation()) {
-            return null;
-        }
-
-        $result = (new AuthService())->confirm($this->authContext()->user, [
-            'password' => (string) $this->request->get('password', false),
-            'code' => (string) $this->request->get('code', false),
-        ], $this->clientIp());
-        LimitConcurrentLogins::release();
-
-        return match ($result->status) {
-            LoginStatus::Success => null,
-            LoginStatus::TooManyAttempts => 'Too many attempts. Try again in ' . $this->retryMinutes($result->retryAfter) . ' minute(s).',
-            default => "Confirm it's you with your password, a new authenticator code or a passkey; nothing was changed.",
-        };
-    }
-
-    /**
      * @return array<string, mixed>
      */
     private function common(): array
     {
         return [
             'auth' => $this->authContext(),
-            'usable' => (new LoginMethodService())->usable($this->authContext()->user),
-            'passkeysHere' => $this->site() !== null,
-            'passkeyReady' => (new AuthSessionService())->hasPasskeyConfirmation(),
-        ];
+        ] + $this->confirmFields();
     }
 
     private function renderEdit(string $kind, string $name, string $content, ?string $error = null, int $status = 200): void

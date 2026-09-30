@@ -24,7 +24,7 @@ class LocalApacheService
     /**
      * The helper version this code expects (bin/sys-apache-helper HELPER_VERSION).
      */
-    public const HELPER_VERSION = 1;
+    public const HELPER_VERSION = 2;
 
     public const KINDS = ['site' => 'Site', 'conf' => 'Configuration snippet', 'main' => 'apache2.conf', 'ports' => 'ports.conf'];
 
@@ -85,6 +85,16 @@ class LocalApacheService
     public function write(User $admin, string $kind, string $name, string $content): array
     {
         return $this->change($admin, 'write', trim("$kind $name"), ['write', $kind, $name], $content);
+    }
+
+    /**
+     * Write (or create) the .htaccess file of a served directory.
+     *
+     * @return array<string, mixed>
+     */
+    public function writeHtaccess(User $admin, string $dir, string $content, bool $create = false): array
+    {
+        return $this->change($admin, $create ? 'create' : 'write', "htaccess $dir", [$create ? 'create' : 'write', 'htaccess', $dir], $content);
     }
 
     /**

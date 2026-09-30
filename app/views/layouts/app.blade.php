@@ -135,7 +135,7 @@
                     'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/admin/settings/mariadb' => 'Settings'],
                     'Apache' => ['/apache/reports' => 'Reports', '/apache' => 'Test', '/admin/apache/new' => 'Add', '/admin/settings/apache' => 'Settings']
                         // This machine's own Apache: only where the root helper is installed, for admins on this machine.
-                        + (\App\Services\LocalApacheService::installed() && \App\Middleware\RequireLocalAdmin::fromThisMachine() ? ['/admin/apache/local' => 'This server'] : []),
+                        + (\App\Services\LocalApacheService::installed() && \App\Middleware\RequireLocalAdmin::fromThisMachine() ? ['/admin/apache/local' => 'This server', '/admin/apache/local/rewrite' => 'Rewrite rules', '/admin/apache/local/simulate' => 'URL simulator'] : []),
                     'Vhosts' => ['/vhosts/reports' => 'Reports', '/vhosts' => 'List'],
                 ])
                 @foreach ($menus as $menu => $items)

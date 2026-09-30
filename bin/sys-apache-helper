@@ -18,6 +18,10 @@
  *   read site|conf|main|ports NAME  a file's contents (NAME ignored for main/ports)
  *   write site|conf|main|ports NAME  replace a file with stdin; backed up, then `apache2ctl configtest`;
  *                                    put back if the test fails
+ *   read|write|create htaccess DIR  the .htaccess file in DIR, which must be (inside) a DocumentRoot or
+ *                                    Alias target of the enabled configuration, with no symlinks on the
+ *                                    way; backed up, owner and mode kept (a new one gets the directory's
+ *                                    owner). Apache reads these per request, so there's no configtest.
  *   create site|conf NAME           write a new file from stdin (refuses an existing one), same checks
  *   enable|disable site|conf|mod NAME  a2ensite, a2dismod and so on; undone if the test then fails
  *   test                            apache2ctl configtest
@@ -30,7 +34,7 @@
  * (sudo resets the environment anyway).
  */
 
-const HELPER_VERSION = 1;
+const HELPER_VERSION = 2;
 const MAX_CONTENT = 524288;
 
 $root = posix_geteuid() === 0;
@@ -122,6 +126,69 @@ function file_for(string $confdir, string $kind, ?string $name): string
     }
 
     return $path;
+}
+
+/**
+ * The directories .htaccess files may be written in: DocumentRoot and Alias targets of the enabled
+ * configuration (read here, not taken from the caller).
+ *
+ * @return list<string>
+ */
+function served_directories(string $confdir): array
+{
+    $files = ["$confdir/apache2.conf", ...(glob("$confdir/sites-enabled/*.conf") ?: []), ...(glob("$confdir/conf-enabled/*.conf") ?: [])];
+    $dirs = [];
+
+    foreach ($files as $file) {
+        foreach (preg_split('/\R/', (string) @file_get_contents($file)) ?: [] as $line) {
+            if (preg_match('/^\s*DocumentRoot\s+"?([^"\s]+)"?/i', $line, $m) === 1
+                || preg_match('/^\s*(?:Script)?Alias\s+\S+\s+"?([^"\s]+)"?/i', $line, $m) === 1) {
+                $real = realpath(rtrim($m[1], '/'));
+
+                if ($real !== false && is_dir($real) && $real !== '/') {
+                    $dirs[] = $real;
+                }
+            }
+        }
+    }
+
+    return array_values(array_unique($dirs));
+}
+
+function htaccess_for(string $confdir, ?string $dir): string
+{
+    $dir = rtrim((string) $dir, '/');
+
+    if ($dir === '' || $dir[0] !== '/' || str_contains($dir, "\0") || str_contains($dir, '/../') || str_ends_with($dir, '/..')) {
+        fail('Give the directory as a full path.');
+    }
+
+    // No symlinks anywhere on the way: the real path must be the path itself.
+    if (!is_dir($dir) || realpath($dir) !== $dir) {
+        fail('That is not a real directory (symlinks are not followed).');
+    }
+
+    $allowed = false;
+
+    foreach (served_directories($confdir) as $root) {
+        if ($dir === $root || str_starts_with($dir, "$root/")) {
+            $allowed = true;
+
+            break;
+        }
+    }
+
+    if (!$allowed) {
+        fail('That directory is not a DocumentRoot or Alias target (or inside one) of the enabled sites.');
+    }
+
+    $file = "$dir/.htaccess";
+
+    if (is_link($file) || (file_exists($file) && !is_file($file))) {
+        fail('That .htaccess is not a plain file.');
+    }
+
+    return $file;
 }
 
 function configtest(string $bin): array
@@ -220,7 +287,7 @@ switch ($action) {
         ]);
 
     case 'read':
-        $path = file_for($confdir, $kind, $target);
+        $path = $kind === 'htaccess' ? htaccess_for($confdir, $target) : file_for($confdir, $kind, $target);
 
         if (!is_file($path)) {
             fail('No such file.');
@@ -230,6 +297,32 @@ switch ($action) {
 
     case 'write':
     case 'create':
+        if ($kind === 'htaccess') {
+            $path = htaccess_for($confdir, $target);
+            $exists = is_file($path);
+
+            if ($action === 'create' && $exists) {
+                fail('That file exists already.');
+            }
+
+            if ($action === 'write' && !$exists) {
+                fail('No such file.');
+            }
+
+            $new = content();
+            $stat = $exists ? stat($path) : stat(dirname($path));
+            $saved = backup($backups, $path);
+            put($path, $new);
+
+            if ($root) {
+                chown($path, $stat['uid']);
+                chgrp($path, $stat['gid']);
+            }
+
+            chmod($path, $exists ? ($stat['mode'] & 0777) : 0644);
+            reply(['ok' => true, 'path' => $path, 'backup' => $saved, 'output' => 'Saved. Apache reads .htaccess files on each request: it applies right away.']);
+        }
+
         $path = file_for($confdir, $kind, $target);
         $exists = is_file($path);
 

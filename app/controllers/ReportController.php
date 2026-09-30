@@ -133,7 +133,7 @@ class ReportController extends Controller
         ];
         $page = $access ? $reports->accessPage(...$args, filters: $filters) : $reports->errorPage(...$args);
         $html = $access
-            ? $this->view('reports.access-rows', ['rows' => $page['rows'], 'errors' => $page['errors'] ?? [], 'listed' => (new \App\Services\BlocklistService())->listed(array_values(array_filter(array_map(fn ($r) => $r->client, $page['rows'])))), 'banServer' => $server, 'canBan' => $this->authContext()->isAdmin() && $server->sshReady(), 'protected' => \App\Models\Fail2banProtection::ipsFor($server)])
+            ? $this->view('reports.access-rows', ['rows' => $page['rows'], 'errors' => $page['errors'] ?? [], 'errorEntries' => $page['error_entries'] ?? [], 'listed' => (new \App\Services\BlocklistService())->listed(array_values(array_filter(array_map(fn ($r) => $r->client, $page['rows'])))), 'banServer' => $server, 'canBan' => $this->authContext()->isAdmin() && $server->sshReady(), 'protected' => \App\Models\Fail2banProtection::ipsFor($server)])
             : $this->view('reports.error-rows', ['rows' => $page['rows']]);
 
         $this->response->json(['html' => $html, 'total' => $page['total'], 'page' => $page['page'], 'pages' => $page['pages']]);

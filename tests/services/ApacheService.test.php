@@ -633,6 +633,8 @@ test('requests and their error log lines are linked by mod_unique_id\'s request 
         ->and(ApacheLogEntry::query()->orderBy('logged_at')->value('message'))->toBe('AH01630: client denied by server configuration: /srv/x')
         // The page knows which requests have errors; each log finds the other's ID.
         ->and($requests['errors'])->toBe(['aryaaq1F4K9U-StYXZTaqgAAAEA' => 1])
+        // ... and hands over those entries for the row's fold-out.
+        ->and(array_map(fn ($entries) => array_map(fn ($e) => $e->message, $entries), $requests['error_entries']))->toBe(['aryaaq1F4K9U-StYXZTaqgAAAEA' => ['AH01630: client denied by server configuration: /srv/x']])
         ->and(collect($reports->accessPage($this->server->fresh(), '24h', null, 1, 'aryaaq1F4K9U-StYXZTaqgAAAEA')['rows'])->pluck('status')->all())->toBe([403])
         ->and(collect($reports->errorPage($this->server->fresh(), '24h', null, 1, 'aryaaq1F4K9U-StYXZTaqgAAAEA')['rows'])->pluck('message')->all())->toBe(['AH01630: client denied by server configuration: /srv/x']);
 });

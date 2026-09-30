@@ -23,6 +23,11 @@ class ApacheReportService extends HistoryReport
     /**
      * Sortable columns of those tables => database column.
      */
+    /**
+     * The most error log entries an access log row folds out.
+     */
+    public const ERRORS_PER_REQUEST = 20;
+
     private const ACCESS_SORTS = ['time' => 'requested_at', 'client' => 'client', 'host' => 'vhost', 'request' => 'path', 'status' => 'status', 'size' => 'bytes', 'took' => 'duration_ms'];
 
     private const ERROR_SORTS = ['time' => 'logged_at', 'level' => 'level', 'log' => 'source'];
@@ -130,7 +135,7 @@ class ApacheReportService extends HistoryReport
      * and client: a whole address exactly, else from its start. Different filters all apply.
      *
      * @param array{statuses?: array<int, string>, client?: string, banned?: string, protected?: string, listed?: string, local?: string} $filters
-     * @return array{rows: list<ApacheAccessEntry>, errors: array<string, int>, total: int, page: int, pages: int} errors: per request ID on the page, its error log entries
+     * @return array{rows: list<ApacheAccessEntry>, errors: array<string, int>, error_entries: array<string, list<ApacheLogEntry>>, total: int, page: int, pages: int} errors: per request ID on the page, how many error log entries it has; error_entries: those entries (see errorEntries())
      */
     public function accessPage(Server $server, string $range, ?ApacheVhost $vhost = null, int $page = 1, string $search = '', string $sort = 'time', string $direction = 'desc', array $filters = []): array
     {
@@ -214,7 +219,7 @@ class ApacheReportService extends HistoryReport
         /** @var list<ApacheAccessEntry> $rows */
         $rows = $result['rows'];
 
-        return ['rows' => $rows, 'errors' => $this->errorCounts($server, $rows)] + $result;
+        return ['rows' => $rows, 'errors' => $this->errorCounts($server, $rows), 'error_entries' => $this->errorEntries($server, $rows)] + $result;
     }
 
     /**
@@ -273,6 +278,34 @@ class ApacheReportService extends HistoryReport
                 }
             }));
         }
+    }
+
+    /**
+     * The error log entries of each request on a page (by mod_unique_id's request ID), oldest first, at
+     * most ERRORS_PER_REQUEST each (errorCounts() has how many there are), for the access log's fold-outs.
+     *
+     * @param list<ApacheAccessEntry> $rows
+     * @return array<string, list<ApacheLogEntry>>
+     */
+    private function errorEntries(Server $server, array $rows): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map(fn (ApacheAccessEntry $r) => $r->request_id, $rows))));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $entries = [];
+        /** @var list<ApacheLogEntry> $found */
+        $found = ApacheLogEntry::query()->where('server_id', $server->id)->whereIn('request_id', $ids)->orderBy('logged_at')->orderBy('id')->get()->all();
+
+        foreach ($found as $entry) {
+            if (count($entries[$entry->request_id] ?? []) < self::ERRORS_PER_REQUEST) {
+                $entries[$entry->request_id][] = $entry;
+            }
+        }
+
+        return $entries;
     }
 
     /**

@@ -140,6 +140,12 @@
             td.access-request { min-width: 16em; }
             button.log-link { font-size: 12px; margin-left: 6px; white-space: nowrap; border: 0; background: none; padding: 0; }
             button.log-link.log-errors { color: var(--error); }
+            tr.error-fold > td { background: var(--error-bg); padding: 8px 12px; }
+            table.error-fold-table { width: 100%; border-collapse: collapse; }
+            table.error-fold-table td { border: 0; padding: 3px 8px 3px 0; vertical-align: top; }
+            table.error-fold-table td:not(:last-child) { width: 1%; white-space: nowrap; padding-right: 14px; }
+            .error-fold-more { margin-top: 4px; font-size: 12px; }
+            .error-fold-more button.log-link { margin-left: 0; }
             td.access-agent { font-size: 12px; min-width: 14em; max-width: 28em; }
         </style>
 

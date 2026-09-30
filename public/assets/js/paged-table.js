@@ -17,6 +17,18 @@
         target.dispatchEvent(new CustomEvent('paged-find', { detail: link.getAttribute('data-value') }));
     });
 
+    // Fold-outs: <button data-fold-toggle> opens or closes the tr.fold-row right after its row (e.g. an
+    // access log request's error log entries). The arrow in the label follows.
+    document.addEventListener('click', function (event) {
+        var button = event.target.closest('[data-fold-toggle]');
+        if (!button) { return; }
+        var fold = button.closest('tr').nextElementSibling;
+        if (!fold || !fold.classList.contains('fold-row')) { return; }
+        fold.hidden = !fold.hidden;
+        button.setAttribute('aria-expanded', fold.hidden ? 'false' : 'true');
+        button.textContent = button.textContent.replace(/^[▸▾]/, fold.hidden ? '▸' : '▾');
+    });
+
     document.querySelectorAll('.paged[data-paged]').forEach(function (box) {
         var url = box.getAttribute('data-paged');
         var body = box.querySelector('tbody');

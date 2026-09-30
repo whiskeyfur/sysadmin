@@ -48,6 +48,8 @@ class MariadbQueryService
 
     public const AUTH_WINDOW_MINUTES = 15;
 
+    public const THROTTLED = 'Too many refused database logins: wait ' . self::AUTH_WINDOW_MINUTES . ' minutes and try again.';
+
     /**
      * MySQL/MariaDB errors that mean the login itself was refused.
      */
@@ -189,7 +191,8 @@ class MariadbQueryService
                 // An account refused by the first server it meets in this run isn't tried on the others.
                 if ($result['auth'] && !isset($triedAccounts[$account->id])) {
                     $refusedAccounts[$account->id] = $server->name;
-                    $authFailed = true;
+                    // Only a wrong password counts toward the refused-login limit (see QueryAccountService).
+                    $authFailed = $authFailed || !empty($result['guess']);
                 }
 
                 $triedAccounts[$account->id] = true;
@@ -224,32 +227,72 @@ class MariadbQueryService
      */
     public function requireNotThrottled(User $user): void
     {
-        $since = Carbon::instance($this->clock->now())->subMinutes(self::AUTH_WINDOW_MINUTES);
-
-        if (MariadbQuery::query()->where('user_id', $user->id)->where('auth_failed', true)->where('created_at', '>=', $since)->count() >= self::AUTH_FAILURES) {
-            throw new DomainException('Too many refused database logins: wait ' . self::AUTH_WINDOW_MINUTES . ' minutes and try again.');
+        if ($this->throttled($user)) {
+            throw new DomainException(self::THROTTLED);
         }
     }
 
     /**
-     * @return array{server: Server, ok: bool, auth: bool, message: string, columns: list<string>, rows: list<list<?string>>, affected: ?int, ms: int, truncated: bool}
+     * Whether the user has had too many refused logins lately (see requireNotThrottled()).
+     */
+    public function throttled(User $user): bool
+    {
+        return $this->recentRefusals($user)->count() >= self::AUTH_FAILURES;
+    }
+
+    /**
+     * Lift an admin's own refused-login wait: their recent refusals stop counting (the log rows stay,
+     * no longer marked as refused), and the clearing is logged.
+     *
+     * @return int how many refusals were cleared
+     *
+     * @throws AuthorizationException for anyone but an admin
+     */
+    public function clearThrottle(User $admin): int
+    {
+        if (!$admin->isAdmin()) {
+            throw new AuthorizationException('Only admins can clear the wait.');
+        }
+
+        $cleared = $this->recentRefusals($admin)->update(['auth_failed' => false]);
+        MariadbQuery::query()->create([
+            'user_id' => $admin->id, 'db_user' => '', 'servers' => [], 'statement' => '(refused-login wait cleared)',
+            'writes' => false, 'outcome' => "$cleared refused " . ($cleared === 1 ? 'login' : 'logins') . ' cleared',
+            'auth_failed' => false, 'created_at' => Carbon::instance($this->clock->now()),
+        ]);
+
+        return $cleared;
+    }
+
+    /**
+     * @return \Illuminate\Database\Eloquent\Builder<MariadbQuery>
+     */
+    private function recentRefusals(User $user): \Illuminate\Database\Eloquent\Builder
+    {
+        $since = Carbon::instance($this->clock->now())->subMinutes(self::AUTH_WINDOW_MINUTES);
+
+        return MariadbQuery::query()->where('user_id', $user->id)->where('auth_failed', true)->where('created_at', '>=', $since);
+    }
+
+    /**
+     * @return array{server: Server, ok: bool, auth: bool, guess: bool, message: string, columns: list<string>, rows: list<list<?string>>, affected: ?int, ms: int, truncated: bool}
      */
     /**
      * @param array{0: string, 1: string}|null $login username and password; null: the server's stored account
      */
     private function runOn(Server $server, ?array $login, ?string $database, string $sql, int $limit): array
     {
-        $result = ['server' => $server, 'ok' => false, 'auth' => false, 'message' => '', 'columns' => [], 'rows' => [], 'affected' => null, 'ms' => 0, 'truncated' => false];
+        $result = ['server' => $server, 'ok' => false, 'auth' => false, 'guess' => false, 'message' => '', 'columns' => [], 'rows' => [], 'affected' => null, 'ms' => 0, 'truncated' => false];
         // Timed from the login: a slow or unreachable server spends its time there.
         $start = hrtime(true);
 
         try {
             $pdo = $login === null ? $this->mysql->connect($server, $database) : $this->mysql->connectAs($server, $login[0], $login[1], $database);
         } catch (ServerConnectionException $e) {
-            $previous = $e->getPrevious();
-            $code = $previous instanceof PDOException ? (int) ($previous->errorInfo[1] ?? 0) : 0;
+            $code = QueryAccountService::loginError($e);
             $result['auth'] = in_array($code, self::AUTH_ERRORS, true);
-            $result['message'] = $e->getMessage();
+            $result['guess'] = $code === 1045;
+            $result['message'] = $e->getMessage() . ($code === 1698 ? QueryAccountService::NO_PASSWORD_HINT : '');
             $result['ms'] = (int) round((hrtime(true) - $start) / 1e6);
 
             return $result;

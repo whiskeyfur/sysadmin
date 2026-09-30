@@ -137,6 +137,22 @@ class MariadbQueryController extends Controller
         $this->response->withFlash('notice', "Deleted {$account->label} from your accounts.")->redirect('/mariadb/query#accounts');
     }
 
+    /**
+     * POST /mariadb/query/unthrottle: an admin lifts their own refused-login wait.
+     */
+    public function clearThrottle()
+    {
+        try {
+            $cleared = (new MariadbQueryService())->clearThrottle($this->authContext()->user);
+        } catch (AuthorizationException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect('/mariadb/query');
+
+            return;
+        }
+
+        $this->response->withFlash('notice', "The wait is cleared ($cleared refused " . ($cleared === 1 ? 'login' : 'logins') . ' no longer counted).')->redirect('/mariadb/query');
+    }
+
     private function saveAccount(?\App\Models\QueryAccount $account): void
     {
         $input = [
@@ -179,6 +195,7 @@ class MariadbQueryController extends Controller
             'input' => $input,
             'tested' => $tested,
             'error' => $error,
+            'throttled' => (new MariadbQueryService())->throttled($this->authContext()->user),
         ]);
     }
 
@@ -205,6 +222,7 @@ class MariadbQueryController extends Controller
             'recent' => MariadbQuery::query()->where('user_id', $user->id)->orderByDesc('id')->limit(20)->get()->all(),
             'notice' => $this->request->flash('notice'),
             'error' => $error ?? $this->request->flash('error'),
+            'throttled' => (new MariadbQueryService())->throttled($user),
         ]);
     }
 

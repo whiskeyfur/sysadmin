@@ -22,10 +22,8 @@
         </div>
         <div>
             <label for="account_password">Password</label>
-            <input type="password" id="account_password" name="password" autocomplete="new-password" @if ($passwordHint === null) required @endif>
-            @if ($passwordHint)
-                <p class="hint">{{ $passwordHint }}</p>
-            @endif
+            <input type="password" id="account_password" name="password" autocomplete="new-password">
+            <p class="hint">{{ $passwordHint ?? 'Leave blank for an account without a password.' }}</p>
         </div>
     </div>
     <fieldset class="account-servers">

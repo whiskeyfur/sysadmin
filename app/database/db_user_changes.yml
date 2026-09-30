@@ -1,0 +1,23 @@
+# Changes the database account manager made on MariaDB/MySQL servers (DbUserManagerService): one row per
+# server and action. action: create, password, grant, revoke or drop. account: 'user'@'host'. detail: e.g.
+# "read only on shop". message: what the server said (never a password).
+timestamps: false
+columns:
+  user_id:
+    type: integer
+    index: true
+  server_id:
+    type: integer
+    index: true
+  action: string
+  account: string
+  detail:
+    type: string
+    nullable: true
+  ok: boolean
+  message:
+    type: text
+    nullable: true
+  created_at:
+    type: timestamp
+    index: true

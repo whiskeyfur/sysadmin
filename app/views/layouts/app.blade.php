@@ -169,6 +169,8 @@
         .alert.error { background: var(--error-bg); color: var(--error); }
         .alert.notice { background: var(--notice-bg); color: var(--notice); }
         .alert.warn { background: var(--warn-bg); color: var(--warn); }
+        .alert-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        .alert-action form { margin: 0; }
         a { color: var(--accent); }
         code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 13px; word-break: break-all; }
         .qr { display: block; width: 200px; height: 200px; margin: 12px 0; background: #fff; padding: 8px; border-radius: 6px; }
@@ -194,7 +196,7 @@
                 @php($menus = [
                     'SSL' => ['/ssl/reports' => 'Reports', '/ssl' => 'Test', '/admin/ssl/new' => 'Add', '/admin/settings/ssl' => 'Settings'],
                     'SSH' => ['/ssh/reports' => 'Reports', '/ssh' => 'Test', '/admin/ssh/new' => 'Add', '/admin/accounts/ssh' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
-                    'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/mariadb/query' => 'Query', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/admin/settings/mariadb' => 'Settings'],
+                    'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/mariadb/query' => 'Query', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/mariadb/users' => 'Database users', '/admin/settings/mariadb' => 'Settings'],
                     'Apache' => ['/apache/reports' => 'Reports', '/apache' => 'Test', '/admin/apache/new' => 'Add', '/admin/settings/apache' => 'Settings']
                         // This machine's own Apache: only where the root helper is installed, for admins on this machine.
                         + (\App\Services\LocalApacheService::installed() && \App\Middleware\RequireLocalAdmin::fromThisMachine() ? ['/admin/apache/local' => 'This server', '/admin/apache/local/rewrite' => 'Rewrite rules', '/admin/apache/local/simulate' => 'URL simulator'] : []),
@@ -556,6 +558,18 @@
             var message = (button && button.getAttribute('data-confirm')) || event.target.getAttribute('data-confirm');
             if (message && !window.confirm(message)) { event.preventDefault(); }
         });
+
+        // A link or redirect to #something inside a closed <details> opens it (and every <details> around it).
+        var openTarget = function () {
+            var target = window.location.hash.length > 1 ? document.getElementById(decodeURIComponent(window.location.hash.slice(1))) : null;
+            if (!target) { return; }
+            for (var node = target; node; node = node.parentElement) {
+                if (node.tagName === 'DETAILS') { node.open = true; }
+            }
+            target.scrollIntoView();
+        };
+        openTarget();
+        window.addEventListener('hashchange', openTarget);
     </script>
     <main class="@yield('width')">
         @yield('content')

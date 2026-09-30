@@ -171,3 +171,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — SSL report table: the latest check per certificate (per place served) only.
 * 2026-09-29 — SSL checks record the host contacted and the address reached; the report table is one row per certificate and origin (load balancers).
 * 2026-09-29 — Query tool logins: each user's private list of accounts (validated on every server chosen before saving, encrypted), chosen per server; the session login is gone.
+* 2026-09-29 — Database users (admins): create/grant/revoke/password/drop MariaDB accounts across servers whose monitoring login has CREATE USER/ALL WITH GRANT OPTION; per-database presets, fresh sign-in check, logged in db_user_changes, optionally tracked in Accounts. Query tool: blank passwords allowed, 1698 (unix_socket) not counted as a wrong password, accounts listed under the Query form; admins can clear their own refused-login wait from the alert.

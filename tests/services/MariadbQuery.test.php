@@ -35,6 +35,13 @@ class QueryToolFakeMysql extends MysqlService
     {
         $this->connections[] = "{$server->name} as $username";
 
+        if ($username === 'sockonly') {
+            $e = new PDOException("SQLSTATE[HY000] [1698] Access denied for user 'sockonly'@'localhost'");
+            $e->errorInfo = ['HY000', 1698, 'Access denied'];
+
+            throw new ServerConnectionException("MySQL connection to {$server->name} failed: {$e->getMessage()}", 0, $e);
+        }
+
         if (($this->users[$username] ?? null) !== $password || in_array($username, $this->refuse[$server->name] ?? [], true)) {
             $e = new PDOException("SQLSTATE[HY000] [1045] Access denied for user '$username'@'sys' (using password: YES)");
             $e->errorInfo = ['HY000', 1045, 'Access denied'];
@@ -189,6 +196,23 @@ test('repeated refusals, from queries and account checks alike, make the user wa
     expect(($this->account)($this->dev, 'Dev', 'dev', 'secret', ['alpha']))->toBeInstanceOf(QueryAccount::class);
 });
 
+test('an admin can clear their own refused-login wait; others can\'t', function () {
+    foreach ([$this->dev, $this->admin] as $user) {
+        for ($i = 0; $i < MariadbQueryService::AUTH_FAILURES; $i++) {
+            $this->accounts->save($user, null, ['label' => 'Typo', 'username' => 'dev', 'password' => 'wrong', 'servers' => [$this->ids['alpha']]]);
+        }
+    }
+
+    expect($this->query->throttled($this->admin))->toBeTrue()
+        ->and(fn () => $this->query->clearThrottle($this->dev))->toThrow(AuthorizationException::class)
+        ->and($this->query->throttled($this->dev))->toBeTrue()
+        ->and($this->query->clearThrottle($this->admin))->toBe(MariadbQueryService::AUTH_FAILURES)
+        ->and($this->query->throttled($this->admin))->toBeFalse()
+        ->and($this->query->throttled($this->dev))->toBeTrue()
+        ->and(MariadbQuery::query()->where('user_id', $this->admin->id)->latest('id')->value('statement'))->toBe('(refused-login wait cleared)');
+    expect(($this->account)($this->admin, 'Dev', 'dev', 'secret', ['alpha']))->toBeInstanceOf(QueryAccount::class);
+});
+
 test('only admins can use a server\'s stored account', function () {
     expect(fn () => $this->query->run($this->dev, [$this->ids['alpha'] => 'stored'], null, 'SELECT 1'))->toThrow(AuthorizationException::class);
 
@@ -232,7 +256,28 @@ test('account input is checked', function (array $input, string $message) {
 })->with([
     [['label' => ''], 'Give the account a name'],
     [['username' => ''], 'Type the database username'],
-    [['password' => ''], 'Type the password'],
     [['servers' => []], 'Choose the servers'],
     [['servers' => [999]], 'Choose the servers'],
 ]);
+
+test('an account that signs in without a password (unix_socket) is explained, and doesn\'t count as a guess', function () {
+    for ($i = 0; $i < MariadbQueryService::AUTH_FAILURES + 1; $i++) {
+        $saved = $this->accounts->save($this->dev, null, ['label' => 'Me', 'username' => 'sockonly', 'password' => 'anything', 'servers' => array_values($this->ids)]);
+    }
+
+    expect($saved['account'])->toBeNull()
+        ->and($saved['results'][0]['message'])->toContain('[1698]')->toContain("doesn't sign in with a password")->toContain('IDENTIFIED VIA unix_socket OR mysql_native_password')
+        ->and($saved['results'][1]['message'])->toBe('Not tried: the first server refused the login.')
+        // Six refusals, none counted: a real account can still be added.
+        ->and(MariadbQuery::query()->where('auth_failed', true)->count())->toBe(0)
+        ->and(($this->account)($this->dev, 'Dev', 'dev', 'secret', ['alpha']))->toBeInstanceOf(QueryAccount::class);
+});
+
+test('an account without a password can be added when the servers accept that', function () {
+    $this->mysql->users['nopass'] = '';
+    $saved = $this->accounts->save($this->dev, null, ['label' => 'No password', 'username' => 'nopass', 'password' => '', 'servers' => [$this->ids['alpha']]]);
+
+    expect($saved['account'])->toBeInstanceOf(QueryAccount::class)
+        ->and($this->accounts->password($saved['account']->fresh()))->toBe('')
+        ->and($this->query->run($this->dev, [$this->ids['alpha'] => $saved['account']->id], null, 'SELECT 1 AS one')['servers'][0]['ok'])->toBeTrue();
+});

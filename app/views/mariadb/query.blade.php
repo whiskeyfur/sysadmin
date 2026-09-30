@@ -8,63 +8,12 @@
         <div class="alert notice" role="status">{{ $notice }}</div>
     @endif
     @if ($error)
-        <div class="alert error" role="alert">{{ $error }}</div>
+        @include('mariadb.error-alert', ['message' => $error])
     @endif
 
     <div class="card">
         <h1>MariaDB query</h1>
         <p class="muted">Run one statement on several MariaDB/MySQL servers at once and see the results side by side, with the server each row came from. It logs in with your own database logins, kept in your private list below (only you see or use them; passwords are stored encrypted and never shown again), so the database's own privileges decide what you may do. Any statement is allowed, but one that isn't a plain read (SELECT, SHOW, DESCRIBE, EXPLAIN) has to be confirmed. Each statement may run {{ \App\Services\MariadbQueryService::TIMEOUT_SECONDS }} seconds on each server. When a server refuses one of your logins, that login isn't tried on the rest of the servers in that run.</p>
-    </div>
-
-    <div class="card" id="accounts">
-        <h2>Your MariaDB accounts</h2>
-        <p class="muted">Your own logins, private to you, each for the servers it works on. Before an account is saved (added or changed) its login is tried on every server chosen, and it's only kept if all of them accept it. Test checks it again, e.g. after a password change on the servers.</p>
-        @if ($accounts)
-            <div class="table-wrap">
-            <table class="top">
-                <thead><tr><th>Name</th><th>Username</th><th>Servers</th><th>Checked</th><th>Last used</th><th data-nosort></th></tr></thead>
-                <tbody>
-                    @foreach ($accounts as $account)
-                        <tr>
-                            <td><strong>{{ $account->label }}</strong></td>
-                            <td><code>{{ $account->username }}</code></td>
-                            <td>
-                                @foreach ($servers as $server)
-                                    @if ($account->isFor($server))
-                                        @php($why = $account->refusedBy($server))
-                                        <span class="badge {{ $why === null ? 'ok' : 'critical' }}" title="{{ $why ?? 'Works' }}">{{ $server->name }}</span>
-                                    @endif
-                                @endforeach
-                            </td>
-                            <td data-sort="{{ $account->tested_at?->getTimestamp() ?? 0 }}" class="muted">{{ \App\Utils\LocalTime::format($account->tested_at) ?: '—' }}</td>
-                            <td data-sort="{{ $account->last_used_at?->getTimestamp() ?? 0 }}" class="muted">{{ \App\Utils\LocalTime::format($account->last_used_at) ?: 'never' }}</td>
-                            <td class="row-actions">
-                                <a href="/mariadb/query/accounts/{{ $account->id }}">Edit</a>
-                                <form method="post" action="/mariadb/query/accounts/{{ $account->id }}/test">
-                                    @csrf
-                                    <button type="submit" class="link">Test</button>
-                                </form>
-                                <form method="post" action="/mariadb/query/accounts/{{ $account->id }}/delete" data-confirm="Delete {{ $account->label }} from your accounts?">
-                                    @csrf
-                                    <button type="submit" class="link danger">Delete</button>
-                                </form>
-                            </td>
-                        </tr>
-                    @endforeach
-                </tbody>
-            </table>
-            </div>
-        @else
-            <p class="muted">None yet: add the database logins you use below.</p>
-        @endif
-
-        <details class="add-account" @if ($accountError || !$accounts) open @endif>
-            <summary><strong>Add an account</strong></summary>
-            @if ($accountError)
-                <div class="alert error" role="alert">{{ $accountError }}</div>
-            @endif
-            @include('mariadb.account-fields', ['values' => $accountInput, 'chosen' => $accountInput['servers'] ?? [], 'action' => '/mariadb/query/accounts', 'button' => 'Check and save', 'passwordHint' => null, 'tested' => $tested])
-        </details>
     </div>
 
     @php($choices = collect($servers)->mapWithKeys(fn ($server) => [$server->id => array_values(array_filter($accounts, fn ($a) => $a->isFor($server)))])->all())
@@ -126,25 +75,6 @@
     @endif
 
     @if ($result)
-        <div class="card">
-            <h2>Servers</h2>
-            <div class="table-wrap">
-            <table>
-                <thead><tr><th>Server</th><th>Login</th><th>Outcome</th><th>Time</th></tr></thead>
-                <tbody>
-                    @foreach ($result['servers'] as $server)
-                        <tr>
-                            <td>{{ $server['name'] }}</td>
-                            <td class="muted">{{ $server['login'] }}</td>
-                            <td><span class="badge {{ $server['ok'] ? 'ok' : 'critical' }}">{{ $server['ok'] ? 'OK' : 'Failed' }}</span> {{ $server['message'] }}</td>
-                            <td data-sort="{{ $server['ms'] }}">{{ $server['ms'] }} ms</td>
-                        </tr>
-                    @endforeach
-                </tbody>
-            </table>
-            </div>
-        </div>
-
         @if ($result['columns'])
             <div class="card">
                 <div class="actions" style="margin-top: 0; justify-content: space-between">
@@ -174,6 +104,25 @@
                 </div>
             </div>
         @endif
+
+        <details class="card" @if (collect($result['servers'])->contains(fn ($s) => !$s['ok'])) open @endif>
+            <summary><h2 style="display: inline">Servers</h2></summary>
+            <div class="table-wrap">
+            <table>
+                <thead><tr><th>Server</th><th>Login</th><th>Outcome</th><th>Time</th></tr></thead>
+                <tbody>
+                    @foreach ($result['servers'] as $server)
+                        <tr>
+                            <td>{{ $server['name'] }}</td>
+                            <td class="muted">{{ $server['login'] }}</td>
+                            <td><span class="badge {{ $server['ok'] ? 'ok' : 'critical' }}">{{ $server['ok'] ? 'OK' : 'Failed' }}</span> {{ $server['message'] }}</td>
+                            <td data-sort="{{ $server['ms'] }}">{{ $server['ms'] }} ms</td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+            </div>
+        </details>
     @endif
 
     @if ($recent)
@@ -198,6 +147,57 @@
             </div>
         </details>
     @endif
+
+    <details class="card" id="accounts" @if ($accountError || !$accounts) open @endif>
+        <summary><h2 style="display: inline">Your MariaDB accounts</h2></summary>
+        <p class="muted">Your own logins, private to you, each for the servers it works on. Before an account is saved (added or changed) its login is tried on every server chosen, and it's only kept if all of them accept it. Test checks it again, e.g. after a password change on the servers.</p>
+        @if ($accounts)
+            <div class="table-wrap">
+            <table class="top">
+                <thead><tr><th>Name</th><th>Username</th><th>Servers</th><th>Checked</th><th>Last used</th><th data-nosort></th></tr></thead>
+                <tbody>
+                    @foreach ($accounts as $account)
+                        <tr>
+                            <td><strong>{{ $account->label }}</strong></td>
+                            <td><code>{{ $account->username }}</code></td>
+                            <td>
+                                @foreach ($servers as $server)
+                                    @if ($account->isFor($server))
+                                        @php($why = $account->refusedBy($server))
+                                        <span class="badge {{ $why === null ? 'ok' : 'critical' }}" title="{{ $why ?? 'Works' }}">{{ $server->name }}</span>
+                                    @endif
+                                @endforeach
+                            </td>
+                            <td data-sort="{{ $account->tested_at?->getTimestamp() ?? 0 }}" class="muted">{{ \App\Utils\LocalTime::format($account->tested_at) ?: '—' }}</td>
+                            <td data-sort="{{ $account->last_used_at?->getTimestamp() ?? 0 }}" class="muted">{{ \App\Utils\LocalTime::format($account->last_used_at) ?: 'never' }}</td>
+                            <td class="row-actions">
+                                <a href="/mariadb/query/accounts/{{ $account->id }}">Edit</a>
+                                <form method="post" action="/mariadb/query/accounts/{{ $account->id }}/test">
+                                    @csrf
+                                    <button type="submit" class="link">Test</button>
+                                </form>
+                                <form method="post" action="/mariadb/query/accounts/{{ $account->id }}/delete" data-confirm="Delete {{ $account->label }} from your accounts?">
+                                    @csrf
+                                    <button type="submit" class="link danger">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+            </div>
+        @else
+            <p class="muted">None yet: add the database logins you use below.</p>
+        @endif
+
+        <details class="add-account" @if ($accountError || !$accounts) open @endif>
+            <summary><strong>Add an account</strong></summary>
+            @if ($accountError)
+                @include('mariadb.error-alert', ['message' => $accountError])
+            @endif
+            @include('mariadb.account-fields', ['values' => $accountInput, 'chosen' => $accountInput['servers'] ?? [], 'action' => '/mariadb/query/accounts', 'button' => 'Check and save', 'passwordHint' => null, 'tested' => $tested])
+        </details>
+    </details>
 
     <style>
         .add-account { margin-top: 12px; }

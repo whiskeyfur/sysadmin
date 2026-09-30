@@ -4,7 +4,7 @@
 
 @section('content')
     @if ($error)
-        <div class="alert error" role="alert">{{ $error }}</div>
+        @include('mariadb.error-alert', ['message' => $error])
     @endif
     <div class="card">
         <h1>{{ $account->label }}</h1>

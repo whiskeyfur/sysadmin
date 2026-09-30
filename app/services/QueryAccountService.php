@@ -26,9 +26,25 @@ class QueryAccountService
     public const MAX_USERNAME = 128;
 
     /**
-     * MySQL/MariaDB errors that mean the login itself was refused.
+     * MySQL/MariaDB errors that mean the login itself was refused: 1045 a wrong username or password, 1698
+     * an account that doesn't sign in with a password at all (unix_socket and the like).
      */
     public const AUTH_ERRORS = [1045, 1698];
+
+    /**
+     * Why an account refused with 1698 can't be used, and how to allow it.
+     */
+    public const NO_PASSWORD_HINT = ' This account doesn\'t sign in with a password (e.g. it uses unix_socket, which only lets the matching system user in over the local socket), so no password works for it here. To use it, allow a password too on the server, e.g. ALTER USER \'name\'@\'host\' IDENTIFIED VIA unix_socket OR mysql_native_password USING PASSWORD(\'…\').';
+
+    /**
+     * The MySQL error code behind a failed login, or 0.
+     */
+    public static function loginError(ServerConnectionException $e): int
+    {
+        $previous = $e->getPrevious();
+
+        return $previous instanceof PDOException ? (int) ($previous->errorInfo[1] ?? 0) : 0;
+    }
 
     public function __construct(
         private readonly MysqlService $mysql = new MysqlService(),
@@ -65,7 +81,7 @@ class QueryAccountService
     }
 
     /**
-     * Add an account, or change one ($account; a blank password keeps the stored one), once its login
+     * Add an account (a blank password: none), or change one ($account; a blank password keeps the stored one), once its login
      * works on every server chosen: it's tried on them first (see login()), and nothing is saved when
      * any refuses it. The results come back either way.
      *
@@ -95,10 +111,6 @@ class QueryAccountService
             throw new DomainException('Type the database username.');
         }
 
-        if ($account === null && $password === '') {
-            throw new DomainException('Type the password.');
-        }
-
         if ($ids === []) {
             throw new DomainException('Choose the servers this account is for.');
         }
@@ -119,8 +131,9 @@ class QueryAccountService
         $account->tested_at = Carbon::instance($this->clock->now());
         $account->save();
 
-        // Encrypted once it has an id: bound to the owner and this account.
-        if ($password !== '') {
+        // Encrypted once it has an id: bound to the owner and this account. A new account may have no
+        // password at all (the login check above said it works without one).
+        if ($password !== '' || $account->password === null) {
             $account->password = $this->cipher->encrypt($password, $this->context($account));
             $account->save();
         }
@@ -194,6 +207,7 @@ class QueryAccountService
         (new MariadbQueryService($this->mysql, $this->clock))->requireNotThrottled($user);
         $results = [];
         $stop = false;
+        $guess = false;
 
         foreach ($servers as $i => $server) {
             if ($stop) {
@@ -206,10 +220,11 @@ class QueryAccountService
                 $this->mysql->connectAs($server, $username, $password);
                 $results[] = ['server' => $server, 'ok' => true, 'message' => 'The login works.'];
             } catch (ServerConnectionException $e) {
-                $previous = $e->getPrevious();
-                $auth = $previous instanceof PDOException && in_array((int) ($previous->errorInfo[1] ?? 0), self::AUTH_ERRORS, true);
-                $results[] = ['server' => $server, 'ok' => false, 'message' => $e->getMessage()];
-                $stop = $auth && $i === 0;
+                $code = self::loginError($e);
+                $results[] = ['server' => $server, 'ok' => false, 'message' => $e->getMessage() . ($code === 1698 ? self::NO_PASSWORD_HINT : '')];
+                $stop = in_array($code, self::AUTH_ERRORS, true) && $i === 0;
+                // Only a wrong password counts toward the refused-login limit: no password works for 1698.
+                $guess = $stop && $code === 1045;
             }
         }
 
@@ -217,7 +232,7 @@ class QueryAccountService
         MariadbQuery::query()->create([
             'user_id' => $user->id, 'db_user' => "$label ($username)", 'servers' => array_map(fn (Server $s) => $s->id, $servers),
             'statement' => '(login check)', 'writes' => false, 'outcome' => "$ok ok, " . (count($results) - $ok) . ' failed',
-            'auth_failed' => $stop, 'created_at' => Carbon::instance($this->clock->now()),
+            'auth_failed' => $guess, 'created_at' => Carbon::instance($this->clock->now()),
         ]);
 
         return $results;

@@ -104,6 +104,11 @@ test('real TLS handshakes against a local openssl server', function () {
         expect($good->summary)->toStartWith('Valid')
             ->and($good->status)->toBe(HealthStatus::Ok)
             ->and($good->details['protocol'])->toStartWith('TLSv1')
+            // Where it came from: the host contacted and the address the connection reached.
+            ->and($good->details['contacted'])->toBe('localhost')
+            ->and($good->details['address'])->toBeIn(['127.0.0.1', '::1'])
+            ->and($ssl->check('shop.test', $multiPort, '127.0.0.1')->details)->toMatchArray(['contacted' => '127.0.0.1', 'address' => '127.0.0.1'])
+            ->and($ssl->check('localhost', 1)->details['address'] ?? null)->toBeNull()
             ->and($wrong->summary)->toContain('issued for other.test, not localhost')
             ->and($untrusted->summary)->toContain('not trusted')
             // SAN names are read from any certificate (untrusted here), connecting to the address and sending the name as SNI.

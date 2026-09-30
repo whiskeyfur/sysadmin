@@ -169,3 +169,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — MariaDB query tool: one statement on many servers, collated; own login kept encrypted in the session (admins may use stored accounts).
 * 2026-09-29 — Brand renamed SysAdmin, links to /servers: every server with colour-coded report buttons (SSH, MariaDB, Apache, Vhosts).
 * 2026-09-29 — SSL report table: the latest check per certificate (per place served) only.
+* 2026-09-29 — SSL checks record the host contacted and the address reached; the report table is one row per certificate and origin (load balancers).

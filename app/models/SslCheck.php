@@ -55,4 +55,37 @@ class SslCheck extends Model
     {
         return $this->port === 443 ? $this->host : "{$this->host}:{$this->port}";
     }
+
+    /**
+     * The host that was contacted: the server's hostname, or (served directly) the certificate's hostname
+     * via DNS. Checks from before this was recorded fall back to what the binding says.
+     */
+    public function contacted(): string
+    {
+        $recorded = $this->details['contacted'] ?? null;
+
+        return is_string($recorded) && $recorded !== '' ? $recorded : ($this->binding?->server->hostname ?? $this->host);
+    }
+
+    /**
+     * The address the connection reached (e.g. one of several behind round-robin DNS), when recorded.
+     */
+    public function address(): ?string
+    {
+        $address = $this->details['address'] ?? null;
+
+        return is_string($address) && $address !== '' ? $address : null;
+    }
+
+    /**
+     * Where the certificate came from, for people: "shop.example.com (203.0.113.7):8443".
+     */
+    public function origin(): string
+    {
+        $contacted = $this->contacted();
+        $address = $this->address();
+        $where = $address === null || $address === $contacted ? $contacted : "$contacted ($address)";
+
+        return $this->port === 443 ? $where : "$where:{$this->port}";
+    }
 }

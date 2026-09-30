@@ -77,7 +77,7 @@ class SslCheckService
             ? $this->completeChain($unverified['pem'], $unverified['leaf'])
             : null;
 
-        return $this->evaluate(
+        $result = $this->evaluate(
             $host,
             $port,
             $verified !== null,
@@ -89,6 +89,13 @@ class SslCheckService
             $expectedNames,
             $chain,
         );
+
+        // Where the certificate came from: the host contacted, and the address the connection reached (behind
+        // a load balancer or round-robin DNS, one name can be several servers serving their own copies).
+        return new CheckResult($result->key, $result->label, $result->status, $result->summary, $result->value, $result->unit, $result->details + [
+            'contacted' => $connectTo,
+            'address' => $info['address'] ?? null,
+        ]);
     }
 
     /**
@@ -249,6 +256,9 @@ class SslCheckService
 
         $certificate = stream_context_get_params($stream)['options']['ssl']['peer_certificate'] ?? null;
         $protocol = stream_get_meta_data($stream)['crypto']['protocol'] ?? null;
+        // The address actually reached ("1.2.3.4:443", "[2001:db8::1]:443"), without the port.
+        $peer = stream_socket_get_name($stream, true);
+        $reached = $peer === false ? null : (string) preg_replace('/^\[?(.*?)\]?:\d+$/', '$1', $peer);
         fclose($stream);
         $leaf = $certificate === null ? false : openssl_x509_parse($certificate);
         $pem = '';
@@ -257,7 +267,7 @@ class SslCheckService
             openssl_x509_export($certificate, $pem);
         }
 
-        return $leaf === false ? [null, 'no certificate received'] : [['leaf' => $leaf, 'protocol' => $protocol, 'pem' => $pem], null];
+        return $leaf === false ? [null, 'no certificate received'] : [['leaf' => $leaf, 'protocol' => $protocol, 'pem' => $pem, 'address' => $reached], null];
     }
 
     /**

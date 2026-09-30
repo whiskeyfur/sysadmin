@@ -54,7 +54,7 @@
 
         <div class="card">
             <h2>Latest checks</h2>
-            <p class="hint">Each certificate's most recent check in this period, one row per place it's served, soonest to expire first ({{ number_format($report['row_total']) }} {{ $report['row_total'] === 1 ? 'check' : 'checks' }} in all; the chart above has their history). Click a row for the check's full result.</p>
+            <p class="hint">Each certificate's most recent check in this period from each place it came from (the host contacted, and the address it reached: load-balanced servers can each serve their own copy), soonest to expire first ({{ number_format($report['row_total']) }} {{ $report['row_total'] === 1 ? 'check' : 'checks' }} in all; the chart above has their history). Click a row for the check's full result.</p>
             <div class="table-wrap">
             <table class="top">
                 <thead>
@@ -69,7 +69,7 @@
                                     <a href="/ssl/{{ $check->binding->certificate->id }}">{{ $check->binding->certificate->name }}</a>
                                 @endif
                             </td>
-                            <td class="muted">{{ $check->binding?->label() }}</td>
+                            <td class="muted" title="{{ $check->binding?->server ? 'On ' . $check->binding->server->name : 'Served directly (found through DNS)' }}">{{ $check->origin() }}</td>
                             <td data-sort="{{ $check->status->severity() }}"><span class="badge {{ $check->status->value }}">{{ $check->status->label() }}</span></td>
                             <td data-sort="{{ $check->days_left ?? '' }}">{{ $check->days_left === null ? '—' : floor($check->days_left) }}</td>
                         </tr>

@@ -29,7 +29,8 @@ class SslReportService extends HistoryReport
      *
      * days: series name (certificate, or place) => [unix time, days left];
      * a check that got no certificate leaves a gap. rows: the most recent
-     * check of each place a certificate is served (up to MAX_ROWS, with
+     * check of each certificate from each host and address it came from
+     * (SslCheck::origin(); up to MAX_ROWS, with
      * binding.certificate and binding.server loaded), soonest to expire
      * first; row_total counts every check in the period. bucket_minutes is set when points were
      * reduced to one per bucket, keeping the lowest days left.
@@ -72,14 +73,30 @@ class SslReportService extends HistoryReport
             $days = array_map(fn (array $points) => $this->averageSeries($points, $bucket * 60, 'min'), $days);
         }
 
-        // The table: each certificate's most recent check in the period, one per place it's served (a
-        // server still serving an old copy stands out), soonest to expire first.
+        // The table: each certificate's most recent check in the period from each place it came from: the
+        // host contacted and the address reached (load-balanced servers can each serve their own copy of one
+        // certificate), soonest to expire first.
         $latest = [];
 
         /** @var SslCheck $check */
         foreach ($checks->reverse() as $check) {
-            $latest[$check->binding_id] ??= $check;
+            $key = ($check->binding->certificate_id ?? 0) . "\0" . $check->contacted() . "\0" . ($check->address() ?? '') . "\0" . $check->port;
+            $latest[$key] ??= $check;
         }
+
+        // Checks from before origins were recorded don't know their address: once a newer check from the same
+        // host exists, they'd only repeat it. (A newer check that failed before reaching an address does
+        // record its origin, and stays: an outage mustn't hide behind older good rows.)
+        $recorded = [];
+
+        foreach ($latest as $check) {
+            if (isset($check->details['contacted'])) {
+                $recorded[($check->binding->certificate_id ?? 0) . "\0" . $check->contacted() . "\0" . $check->port] = true;
+            }
+        }
+
+        $latest = array_filter($latest, fn (SslCheck $c) => isset($c->details['contacted'])
+            || !isset($recorded[($c->binding->certificate_id ?? 0) . "\0" . $c->contacted() . "\0" . $c->port]));
 
         usort($latest, fn (SslCheck $a, SslCheck $b) => [$a->days_left ?? -INF, $a->binding->certificate->name ?? ''] <=> [$b->days_left ?? -INF, $b->binding->certificate->name ?? '']);
         $rows = array_slice($latest, 0, self::MAX_ROWS);

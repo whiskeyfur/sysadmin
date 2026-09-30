@@ -66,3 +66,39 @@ test('dense data keeps the lowest days left per interval; the table shows the la
         ->and(count($report['rows']))->toBe(1)
         ->and($report['rows'][0]->checked_at->getTimestamp())->toBe(Carbon::instance($this->clock->now())->startOfSecond()->getTimestamp());
 });
+
+test('load-balanced: one row per certificate and address it came from, labelled with the host contacted', function () {
+    $at = fn (SslBinding $binding, int $minutesAgo, float $days, ?string $address) => SslCheck::query()->create([
+        'binding_id' => $binding->id, 'server_id' => $binding->server_id ?? 0, 'host' => 'blog.example.com', 'port' => $binding->port,
+        'status' => HealthStatus::Ok, 'summary' => 's', 'days_left' => $days, 'checked_at' => Carbon::instance($this->clock->now())->subMinutes($minutesAgo),
+        'details' => ['contacted' => 'blog.example.com', 'address' => $address],
+    ]);
+    // Round-robin DNS: two servers behind one name, one still serving an older copy.
+    $at($this->blogDirect, 30, 80.0, '203.0.113.1');
+    $at($this->blogDirect, 20, 5.0, '203.0.113.2');
+    $at($this->blogDirect, 10, 79.9, '203.0.113.1');
+    ($this->check)($this->shop1, 5, 40.0); // recorded before addresses: the server's hostname
+    // Before addresses were recorded, repeated by the newer checks from the same host: dropped.
+    SslCheck::query()->create(['binding_id' => $this->blogDirect->id, 'server_id' => 0, 'host' => 'blog.example.com', 'port' => 443, 'status' => HealthStatus::Ok, 'summary' => 's',
+        'days_left' => 90.0, 'checked_at' => Carbon::instance($this->clock->now())->subMinutes(50)]);
+
+    $rows = $this->reports->report(null, '24h')['rows'];
+
+    expect(array_map(fn ($c) => [$c->binding->certificate->name, $c->origin(), $c->days_left], $rows))->toBe([
+        ['Blog', 'blog.example.com (203.0.113.2)', 5.0],
+        ['Shop', 'web1.example.com', 40.0],
+        ['Blog', 'blog.example.com (203.0.113.1)', 79.9],
+    ]);
+});
+
+test('a newer check that failed before reaching any address still shows, beside the older good ones', function () {
+    SslCheck::query()->create(['binding_id' => $this->blogDirect->id, 'server_id' => 0, 'host' => 'blog.example.com', 'port' => 443, 'status' => HealthStatus::Ok, 'summary' => 'ok',
+        'days_left' => 80.0, 'checked_at' => Carbon::instance($this->clock->now())->subMinutes(30), 'details' => ['contacted' => 'blog.example.com', 'address' => '203.0.113.1']]);
+    SslCheck::query()->create(['binding_id' => $this->blogDirect->id, 'server_id' => 0, 'host' => 'blog.example.com', 'port' => 443, 'status' => HealthStatus::Critical, 'summary' => 'unreachable',
+        'days_left' => null, 'checked_at' => Carbon::instance($this->clock->now())->subMinutes(5), 'details' => ['contacted' => 'blog.example.com', 'address' => null]]);
+
+    expect(array_map(fn ($c) => [$c->origin(), $c->status->value], $this->reports->report(null, '24h')['rows']))->toBe([
+        ['blog.example.com', 'critical'],
+        ['blog.example.com (203.0.113.1)', 'ok'],
+    ]);
+});

@@ -11,6 +11,7 @@ app()->get('/ssl/reports', ['middleware' => Authenticate::class, 'ReportControll
 app()->get('/ssh/reports', ['middleware' => Authenticate::class, 'ReportController@ssh']);
 app()->get('/mariadb/reports', ['middleware' => Authenticate::class, 'ReportController@mariadb']);
 app()->get('/apache/reports', ['middleware' => Authenticate::class, 'ReportController@apache']);
+app()->get('/apache/reports/entries', ['middleware' => Authenticate::class, 'ReportController@apacheEntries']);
 app()->get('/ssh', ['middleware' => Authenticate::class, 'ServerController@ssh']);
 app()->get('/mariadb', ['middleware' => Authenticate::class, 'ServerController@mariadb']);
 app()->get('/apache', ['middleware' => Authenticate::class, 'ServerController@apache']);

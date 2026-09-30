@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\DTOs\AuthContext;
+use App\Models\ApacheVhost;
 use App\Models\Server;
 use App\Models\SslCertificate;
 use App\Services\ApacheReportService;
@@ -89,6 +90,42 @@ class ReportController extends Controller
             'error' => $this->request->flash('error'),
             'import' => json_decode((string) $this->request->flash('log_import'), true),
         ]);
+    }
+
+    /**
+     * One page of an Apache report's access or error log, as JSON {html (table rows), total, page, pages},
+     * for the paged tables (public/assets/js/paged-table.js):
+     * ?kind=access|errors&server=<id> or &vhost=<id>&range=&page=&q=&sort=&dir=asc|desc
+     */
+    public function apacheEntries()
+    {
+        $vhost = ($vhostId = (int) $this->request->get('vhost')) > 0 ? ApacheVhost::query()->with('server')->find($vhostId) : null;
+        $server = $vhost instanceof ApacheVhost ? $vhost->server : Server::query()->find((int) $this->request->get('server'));
+
+        if (!$server instanceof Server || !$server->apache_enabled) {
+            $this->response->json(['error' => 'That server or virtual host is no longer monitored.'], 404);
+
+            return;
+        }
+
+        $vhost = $vhost instanceof ApacheVhost ? $vhost : null;
+        $args = [
+            $server,
+            $this->period(),
+            $vhost,
+            max(1, (int) $this->request->get('page')),
+            mb_substr((string) $this->request->get('q', false), 0, 200),
+            (string) $this->request->get('sort', false),
+            (string) $this->request->get('dir', false) === 'asc' ? 'asc' : 'desc',
+        ];
+        $reports = new ApacheReportService();
+        $access = $this->request->get('kind') !== 'errors';
+        $page = $access ? $reports->accessPage(...$args) : $reports->errorPage(...$args);
+        $html = $access
+            ? $this->view('reports.access-rows', ['rows' => $page['rows'], 'banServer' => $server, 'canBan' => $this->authContext()->isAdmin() && $server->sshReady()])
+            : $this->view('reports.error-rows', ['rows' => $page['rows']]);
+
+        $this->response->json(['html' => $html, 'total' => $page['total'], 'page' => $page['page'], 'pages' => $page['pages']]);
     }
 
     /**

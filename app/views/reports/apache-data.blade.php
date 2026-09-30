@@ -1,4 +1,5 @@
-{{-- Charts and tables of an ApacheReportService report. Needs $report and $scope (which logs, for the hint). --}}
+{{-- Charts and tables of an ApacheReportService report. Needs $report, $range, $scope (which logs, for the hint),
+     $banServer (the server, for fail2ban) and $pagedParams (server or vhost id, for the paged log tables). --}}
         @php($from = $report['from']->getTimestamp())
         @php($to = $report['to']->getTimestamp())
         @php($per = $report['bucket_minutes'] === 5 ? '5-minute intervals' : ($report['bucket_minutes'] >= 60 ? ($report['bucket_minutes'] / 60) . '-hour intervals' : $report['bucket_minutes'] . '-minute intervals'))
@@ -52,9 +53,12 @@
 
         @php($banServer = $banServer ?? null)
         @php($canBan = $banServer !== null && ($auth ?? null)?->isAdmin() && $banServer->sshReady())
+        {{-- Paged in the browser (public/assets/js/paged-table.js): each page, search and sort is fetched
+             from /apache/reports/entries, since these logs grow large. --}}
+        @php($pagedQuery = http_build_query(['range' => $range] + $pagedParams))
         <div class="card">
-            <h2>Access log</h2>
-            @if ($report['access'] === [])
+            <h2>Access log <span class="muted">({{ number_format($report['access_total']) }})</span></h2>
+            @if ($report['access_total'] === 0)
                 <p class="muted">No requests stored for this period.
                     @if (($keep = (new \App\Services\SettingsService())->integer(\App\Services\SettingsService::APACHE_ACCESS_KEEP_DAYS)) === 0)
                         Storing requests is turned off in the Apache settings.
@@ -63,7 +67,7 @@
                     @endif
                 </p>
             @else
-                <p class="hint">Each request as logged, read in the format its CustomLog names.
+                <p class="hint">Each request as logged, read in the format its CustomLog names; newest first, {{ \App\Services\ApacheReportService::PAGE_SIZE }} a page. Search matches client, host, request, referer, user agent or a status.
                     @if ($banServer?->fail2ban_checked_at)
                         Addresses fail2ban had banned at {{ \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) }} are marked.
                     @elseif ($banServer?->fail2ban_message)
@@ -71,38 +75,18 @@
                     @endif
                     @if ($canBan)
                         Right-click a client address to ban or unban it with fail2ban on {{ $banServer->name }}.
-                    @endif{{ count($report['access']) >= \App\Services\ApacheReportService::MAX_ENTRIES ? ' The newest ' . \App\Services\ApacheReportService::MAX_ENTRIES . '; choose a shorter period for others.' : '' }}</p>
-                <div class="table-wrap">
-                <table class="top">
-                    <thead>
-                        <tr><th>Time</th><th>Client</th><th>Host</th><th>Request</th><th>Status</th><th>Size</th><th>Took</th><th>Referer / user agent</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach ($report['access'] as $request)
-                            @php($badge = $request->status >= 500 ? 'critical' : ($request->status >= 400 ? 'warning' : ($request->status >= 300 ? 'unknown' : 'ok')))
-                            <tr>
-                                <td data-sort="{{ $request->requested_at->getTimestamp() }}" style="white-space: nowrap">{{ \App\Utils\LocalTime::format($request->requested_at, 'Y-m-d H:i:s') }}</td>
-                                @php($jails = $banServer?->bannedIn($request->client) ?? [])
-                                <td style="white-space: nowrap">
-                                    @if ($request->client && $canBan)
-                                        <code class="client-ip" data-ip="{{ $request->client }}" data-jails="{{ implode(',', $jails) }}" title="Right-click to ban or unban with fail2ban">{{ $request->client }}</code>
-                                    @else
-                                        <code>{{ $request->client ?? '—' }}</code>
-                                    @endif
-                                    @if ($jails)
-                                        <span class="badge critical" title="Banned by fail2ban as of {{ \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) }}">banned: {{ implode(', ', $jails) }}</span>
-                                    @endif
-                                </td>
-                                <td class="muted">{{ $request->vhost ?? basename($request->source) }}</td>
-                                <td class="access-request"><code>{{ trim(($request->method ?? '') . ' ' . ($request->path ?? '—')) }}</code>@if ($request->protocol) <span class="muted">{{ $request->protocol }}</span>@endif</td>
-                                <td data-sort="{{ $request->status }}"><span class="badge {{ $badge }}">{{ $request->status ?: '—' }}</span></td>
-                                <td data-sort="{{ $request->bytes }}" style="white-space: nowrap">{{ \App\Services\Checks\FileIoCheck::size($request->bytes) }}</td>
-                                <td data-sort="{{ $request->duration_ms ?? -1 }}" style="white-space: nowrap">{{ $request->duration_ms === null ? '' : $request->duration_ms . ' ms' }}</td>
-                                <td class="access-agent">@if ($request->referer)<div>{{ $request->referer }}</div>@endif<div class="muted">{{ $request->agent }}</div></td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
+                    @endif
+                </p>
+                <div class="paged" data-paged="/apache/reports/entries?kind=access&amp;{{ $pagedQuery }}">
+                    @include('reports.paged-controls', ['label' => 'Search requests'])
+                    <div class="paged-wrap">
+                    <table class="top">
+                        <thead>
+                            <tr><th data-sort-key="time" aria-sort="descending">Time</th><th data-sort-key="client">Client</th><th data-sort-key="host">Host</th><th data-sort-key="request">Request</th><th data-sort-key="status">Status</th><th data-sort-key="size">Size</th><th data-sort-key="took">Took</th><th>Referer / user agent</th></tr>
+                        </thead>
+                        <tbody><tr><td colspan="8" class="muted">Loading…</td></tr></tbody>
+                    </table>
+                    </div>
                 </div>
             @endif
         </div>
@@ -136,31 +120,35 @@
             td.access-request, td.access-agent { overflow-wrap: anywhere; }
             td.access-request { min-width: 16em; }
             td.access-agent { font-size: 12px; min-width: 14em; max-width: 28em; }
+            .paged-wrap { overflow-x: auto; }
+            .paged-wrap table { width: 100%; }
+            .paged th[data-sort-key] { cursor: pointer; user-select: none; white-space: nowrap; }
+            .paged th[data-sort-key]::after { content: ' ↕'; opacity: .35; }
+            .paged th[aria-sort="ascending"]::after { content: ' ▲'; opacity: .8; }
+            .paged th[aria-sort="descending"]::after { content: ' ▼'; opacity: .8; }
+            .paged.loading tbody { opacity: .5; }
+            .paged-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+            .paged-controls input.table-filter { max-width: 320px; margin: 0; }
+            .paged-pager { display: flex; align-items: center; gap: 8px; font-size: 13px; }
         </style>
 
         <div class="card">
-            <h2>Error log</h2>
-            @if ($report['log'] === [])
+            <h2>Error log <span class="muted">({{ number_format($report['log_total']) }})</span></h2>
+            @if ($report['log_total'] === 0)
                 <p class="muted">No error log entries in this period.</p>
             @else
-                <p class="hint">Notices, warnings, errors and crashes (info and debug lines aren't kept).{{ count($report['log']) >= \App\Services\ApacheReportService::MAX_ENTRIES ? ' The newest ' . \App\Services\ApacheReportService::MAX_ENTRIES . '.' : '' }}</p>
-                <div class="table-wrap">
-                <table class="top">
-                    <thead>
-                        <tr><th>Logged</th><th>Level</th><th>Log</th><th>Message</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach ($report['log'] as $entry)
-                            @php($badge = ['crash' => 'critical', 'error' => 'critical', 'warning' => 'warning', 'note' => 'unknown'][$entry->level] ?? 'unknown')
-                            <tr>
-                                <td data-sort="{{ $entry->logged_at->getTimestamp() }}" style="white-space: nowrap">{{ \App\Utils\LocalTime::format($entry->logged_at, 'Y-m-d H:i:s') }}</td>
-                                <td data-sort="{{ ['note' => 0, 'warning' => 1, 'error' => 2, 'crash' => 3][$entry->level] ?? 0 }}"><span class="badge {{ $badge }}">{{ ucfirst($entry->level) }}</span></td>
-                                <td class="muted">{{ basename($entry->source) }}</td>
-                                <td><pre class="log-message">{{ $entry->message }}</pre></td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
+                <p class="hint">Notices, warnings, errors and crashes (info and debug lines aren't kept); newest first, {{ \App\Services\ApacheReportService::PAGE_SIZE }} a page. Search matches the message, level or log file.</p>
+                <div class="paged" data-paged="/apache/reports/entries?kind=errors&amp;{{ $pagedQuery }}">
+                    @include('reports.paged-controls', ['label' => 'Search error log'])
+                    <div class="paged-wrap">
+                    <table class="top">
+                        <thead>
+                            <tr><th data-sort-key="time" aria-sort="descending">Logged</th><th data-sort-key="level">Level</th><th data-sort-key="log">Log</th><th>Message</th></tr>
+                        </thead>
+                        <tbody><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+                    </table>
+                    </div>
                 </div>
             @endif
         </div>
+        <script src="/assets/js/paged-table.js"></script>

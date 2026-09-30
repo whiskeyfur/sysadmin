@@ -34,13 +34,13 @@
             @if ($logs['shared'])
                 <p class="hint">Shared with other hosts, so their requests and errors are counted here too: {{ implode(', ', $logs['shared']) }}. Give the vhost its own CustomLog / ErrorLog for figures of its own.</p>
             @endif
-            @if ($report['rows'] === [] && $report['log'] === [] && $report['access'] === [])
+            @if ($report['rows'] === [] && $report['log_total'] === 0 && $report['access_total'] === 0)
                 <p class="muted">Nothing from these logs in this period yet.</p>
             @endif
         @endif
     </div>
 
-    @if ($vhost !== null && ($report['rows'] !== [] || $report['log'] !== [] || $report['access'] !== []))
-        @include('reports.apache-data', ['scope' => 'its access logs', 'banServer' => $vhost->server])
+    @if ($vhost !== null && ($report['rows'] !== [] || $report['log_total'] > 0 || $report['access_total'] > 0))
+        @include('reports.apache-data', ['scope' => 'its access logs', 'banServer' => $vhost->server, 'pagedParams' => ['vhost' => $vhost->id]])
     @endif
 @endsection

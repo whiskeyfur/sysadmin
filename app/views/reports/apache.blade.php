@@ -13,12 +13,12 @@
 
         @if ($server === null)
             <p class="muted">No server has Apache monitoring turned on.</p>
-        @elseif ($report['rows'] === [] && $report['log'] === [] && $report['access'] === [])
+        @elseif ($report['rows'] === [] && $report['log_total'] === 0 && $report['access_total'] === 0)
             <p class="muted">Nothing from {{ $server->name }}'s Apache logs in this period yet. <a href="/servers/{{ $server->id }}">Run checks</a> to read them.</p>
         @endif
     </div>
 
-    @if ($server !== null && ($report['rows'] !== [] || $report['log'] !== [] || $report['access'] !== []))
-        @include('reports.apache-data', ['scope' => "all of {$server->name}'s access logs", 'banServer' => $server])
+    @if ($server !== null && ($report['rows'] !== [] || $report['log_total'] > 0 || $report['access_total'] > 0))
+        @include('reports.apache-data', ['scope' => "all of {$server->name}'s access logs", 'banServer' => $server, 'pagedParams' => ['server' => $server->id]])
     @endif
 @endsection

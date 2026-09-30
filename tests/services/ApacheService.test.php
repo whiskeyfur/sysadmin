@@ -358,7 +358,8 @@ test('virtual hosts are found in the configuration, kept in step with it, and re
     $logs = $reports->vhostLogs($this->server->fresh(), $vhosts['blog.example.com *:80']);
 
     expect(array_sum(array_column($shop['rows'], 'requests')))->toBe(2)
-        ->and(collect($ssl['log'])->pluck('message')->all())->toBe(['ssl broke'])
+        ->and(collect($reports->errorPage($this->server->fresh(), '24h', $vhosts['shop.example.com *:443'])['rows'])->pluck('message')->all())->toBe(['ssl broke'])
+        ->and($ssl['log_total'])->toBe(1)
         ->and(array_sum(array_column($ssl['rows'], 'requests')))->toBe(1) // the main server's access log
         ->and($logs['access'])->toBe(['/var/log/apache2/other_vhosts_access.log'])
         ->and($logs['shared'])->toContain('/var/log/apache2/other_vhosts_access.log');
@@ -450,7 +451,8 @@ test('each access log is read in the format its CustomLog names, and every reque
 
     // The report lists them; a host's report only its own from a shared log.
     $reports = new ApacheReportService($this->clock);
-    expect(collect($reports->report($this->server->fresh(), '24h')['access'])->pluck('client')->all())->toBe(['10.0.0.9', '10.0.0.8', '10.0.0.7']);
+    expect(collect($reports->accessPage($this->server->fresh(), '24h')['rows'])->pluck('client')->all())->toBe(['10.0.0.9', '10.0.0.8', '10.0.0.7'])
+        ->and($reports->report($this->server->fresh(), '24h')['access_total'])->toBe(3);
 });
 
 test('requests are kept for the set number of days, and the ones already read are stored once', function () {
@@ -478,4 +480,44 @@ test('requests are kept for the set number of days, and the ones already read ar
     $this->clock->advance(3 * 86400);
     ($this->apache)()->run($this->server->fresh());
     expect(App\Models\ApacheAccessEntry::count())->toBe(0);
+});
+
+test('the access and error logs come a page at a time, searched and sorted in the database', function () {
+    $now = Carbon::instance($this->clock->now());
+    $rows = [];
+
+    for ($i = 0; $i < 250; $i++) {
+        $rows[] = ['server_id' => $this->server->id, 'source' => '/var/log/apache2/shop.log', 'requested_at' => $now->copy()->subSeconds(250 - $i)->format('Y-m-d H:i:s'),
+            'client' => '10.0.' . intdiv($i, 100) . '.' . ($i % 100), 'vhost' => 'shop', 'method' => 'GET', 'path' => "/item/$i", 'status' => $i % 50 === 0 ? 500 : 200, 'bytes' => $i, 'agent' => $i === 7 ? 'EvilBot/1.0' : 'Mozilla'];
+    }
+
+    App\Models\ApacheAccessEntry::query()->insert($rows);
+    $reports = new ApacheReportService($this->clock);
+    $page = fn (...$args) => $reports->accessPage($this->server, '24h', null, ...$args);
+
+    $first = $page();
+    expect($first['total'])->toBe(250)
+        ->and($first['pages'])->toBe(3)
+        ->and(count($first['rows']))->toBe(ApacheReportService::PAGE_SIZE)
+        ->and($first['rows'][0]->path)->toBe('/item/249')
+        ->and(count($page(3)['rows']))->toBe(50)
+        ->and($page(3)['rows'][49]->path)->toBe('/item/0')
+        // Past the end: the last page.
+        ->and($page(99)['page'])->toBe(3)
+        // Search covers every page, not just the one shown: agent, a status, a path.
+        ->and(collect($page(1, 'evilbot')['rows'])->pluck('path')->all())->toBe(['/item/7'])
+        ->and($page(1, '500')['total'])->toBe(5)
+        ->and($page(1, '/item/12')['total'])->toBe(11)
+        // A search with LIKE wildcards means them literally.
+        ->and($page(1, '%')['total'])->toBe(0)
+        // Sorted by size, smallest first; an unknown column sorts by time.
+        ->and($page(1, '', 'size', 'asc')['rows'][0]->bytes)->toBe(0)
+        ->and($page(1, '', 'size; drop table x', 'asc')['rows'][0]->path)->toBe('/item/0');
+
+    foreach (['note', 'crash', 'error', 'warning'] as $i => $level) {
+        ApacheLogEntry::query()->create(['server_id' => $this->server->id, 'source' => '/var/log/apache2/error.log', 'level' => $level, 'logged_at' => $now->copy()->subMinutes(10 - $i), 'message' => "m$i", 'hash' => "h$i"]);
+    }
+
+    expect(collect($reports->errorPage($this->server, '24h', null, 1, '', 'level')['rows'])->pluck('level')->all())->toBe(['crash', 'error', 'warning', 'note'])
+        ->and(collect($reports->errorPage($this->server, '24h', null, 1, 'crash')['rows'])->pluck('message')->all())->toBe(['m1']);
 });

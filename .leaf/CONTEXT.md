@@ -151,3 +151,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Apache access logs: each request stored (apache_access_entries, kept apache_access_keep_days), each log read in its own LogFormat (AccessLogFormat, per-vhost nicknames).
 * 2026-09-29 — fail2ban: banned clients marked in the access log (bans read with each Apache import); admins right-click a client to ban/unban over SSH with sudo -n fail2ban-client.
 * 2026-09-29 — extras/fail2ban: web-abusers and web-abusers-4xx jails (permanent bans) with filters tested on real logs; the ban dialog preselects web-abusers.
+* 2026-09-29 — Apache report access/error logs paged over AJAX (/apache/reports/entries), searched and sorted in SQL.

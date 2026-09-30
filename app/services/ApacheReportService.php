@@ -18,7 +18,17 @@ use Carbon\Carbon;
  */
 class ApacheReportService extends HistoryReport
 {
-    public const MAX_ENTRIES = 500;
+    /**
+     * Rows per page of the access and error log tables (fetched by the page, see accessPage()/errorPage()).
+     */
+    public const PAGE_SIZE = 100;
+
+    /**
+     * Sortable columns of those tables => database column.
+     */
+    private const ACCESS_SORTS = ['time' => 'requested_at', 'client' => 'client', 'host' => 'vhost', 'request' => 'path', 'status' => 'status', 'size' => 'bytes', 'took' => 'duration_ms'];
+
+    private const ERROR_SORTS = ['time' => 'logged_at', 'level' => 'level', 'log' => 'source'];
 
     private const LOG_LEVELS = ['crash' => 'Crashes', 'error' => 'Errors', 'warning' => 'Warnings'];
 
@@ -27,13 +37,13 @@ class ApacheReportService extends HistoryReport
      *     from: Carbon,
      *     to: Carbon,
      *     bucket_minutes: int,
-     *     access: list<ApacheAccessEntry>,
+     *     access_total: int,
+     *     log_total: int,
      *     requests: array<string, list<array{0: int, 1: float}>>,
      *     traffic: array<string, list<array{0: int, 1: float}>>,
      *     workers: array<string, list<array{0: int, 1: float}>>,
      *     log_counts: array<string, list<array{0: int, 1: float}>>,
-     *     rows: list<array{time: Carbon, requests: int, bytes: int, status_2xx: int, status_3xx: int, status_4xx: int, status_5xx: int}>,
-     *     log: list<ApacheLogEntry>
+     *     rows: list<array{time: Carbon, requests: int, bytes: int, status_2xx: int, status_3xx: int, status_4xx: int, status_5xx: int}>
      * }
      *
      * requests and traffic are per minute, averaged over bucket_minutes
@@ -97,36 +107,124 @@ class ApacheReportService extends HistoryReport
             $workers = $this->averageSeries($workers, $this->bucketMinutes($span) * 60, 'max');
         }
 
-        /** @var list<ApacheLogEntry> $log */
-        $log = $this->entries($server, $logs)->whereBetween('logged_at', [$from, $to])
-            ->orderByDesc('logged_at')->orderByDesc('id')->limit(self::MAX_ENTRIES)->get()->all();
-
-        $access = ApacheAccessEntry::query()->where('server_id', $server->id)->whereBetween('requested_at', [$from, $to]);
-
-        if ($logs !== null) {
-            $access->whereIn('source', $logs['access']);
-        }
-
-        // A shared log (e.g. other_vhosts_access.log) holds other hosts' requests too: keep this one's.
-        if ($vhost?->name !== null) {
-            $access->where(fn ($q) => $q->whereNull('vhost')->orWhere('vhost', $vhost->name)->orWhere('vhost', 'like', addcslashes($vhost->name, '%_\\') . ':%'));
-        }
-
-        /** @var list<ApacheAccessEntry> $requestLog */
-        $requestLog = $access->orderByDesc('requested_at')->orderByDesc('id')->limit(self::MAX_ENTRIES)->get()->all();
-
         return [
             'from' => $from,
             'to' => $to,
             'bucket_minutes' => $bucket,
-            'access' => $requestLog,
+            'access_total' => $this->accessQuery($server, $from, $to, $vhost, $logs)->count(),
+            'log_total' => $this->entries($server, $logs)->whereBetween('logged_at', [$from, $to])->count(),
             'requests' => array_filter($requests),
             'traffic' => array_filter($traffic),
             'workers' => $workers === [] ? [] : ['Busy workers' => $workers],
             'log_counts' => $this->logCounts($server, $logs, $from, $to, max(60, $bucket)),
             'rows' => array_reverse($rows),
-            'log' => $log,
         ];
+    }
+
+    /**
+     * One page of the access log in the period, newest first unless sorted otherwise. $search matches
+     * client, host, request, referer or user agent (a 3-digit number: that status too).
+     *
+     * @return array{rows: list<ApacheAccessEntry>, total: int, page: int, pages: int}
+     */
+    public function accessPage(Server $server, string $range, ?ApacheVhost $vhost = null, int $page = 1, string $search = '', string $sort = 'time', string $direction = 'desc'): array
+    {
+        [$from, $to] = $this->window($range);
+        $query = $this->accessQuery($server, $from, $to, $vhost, $vhost === null ? null : $this->vhostLogs($server, $vhost));
+        $search = trim($search);
+
+        if ($search !== '') {
+            $like = '%' . addcslashes($search, '%_\\') . '%';
+            $query->where(function ($q) use ($like, $search) {
+                foreach (['client', 'vhost', 'method', 'path', 'referer', 'agent'] as $column) {
+                    $q->orWhere($column, 'like', $like);
+                }
+
+                if (preg_match('/^\d{3}$/', $search) === 1) {
+                    $q->orWhere('status', (int) $search);
+                }
+            });
+        }
+
+        $result = $this->paginate($query, self::ACCESS_SORTS[$sort] ?? 'requested_at', $direction, $page);
+        /** @var list<ApacheAccessEntry> $rows */
+        $rows = $result['rows'];
+
+        return ['rows' => $rows] + $result;
+    }
+
+    /**
+     * One page of the error log in the period; $search matches the message, level or log file.
+     *
+     * @return array{rows: list<ApacheLogEntry>, total: int, page: int, pages: int}
+     */
+    public function errorPage(Server $server, string $range, ?ApacheVhost $vhost = null, int $page = 1, string $search = '', string $sort = 'time', string $direction = 'desc'): array
+    {
+        [$from, $to] = $this->window($range);
+        $query = $this->entries($server, $vhost === null ? null : $this->vhostLogs($server, $vhost));
+        $query->whereBetween('logged_at', [$from, $to]);
+        $search = trim($search);
+
+        if ($search !== '') {
+            $like = '%' . addcslashes($search, '%_\\') . '%';
+            $query->where(fn ($q) => $q->orWhere('message', 'like', $like)->orWhere('level', 'like', $like)->orWhere('source', 'like', $like));
+        }
+
+        if ($sort === 'level') {
+            // By severity, not alphabetically.
+            $query->orderByRaw("CASE level WHEN 'crash' THEN 3 WHEN 'error' THEN 2 WHEN 'warning' THEN 1 ELSE 0 END " . ($direction === 'asc' ? 'ASC' : 'DESC'));
+        }
+
+        $result = $this->paginate($query, self::ERROR_SORTS[$sort] ?? 'logged_at', $direction, $page, $sort === 'level');
+        /** @var list<ApacheLogEntry> $rows */
+        $rows = $result['rows'];
+
+        return ['rows' => $rows] + $result;
+    }
+
+    /**
+     * @param \Illuminate\Database\Eloquent\Builder<ApacheAccessEntry>|\Illuminate\Database\Eloquent\Builder<ApacheLogEntry> $query
+     * @return array{rows: list<mixed>, total: int, page: int, pages: int}
+     */
+    private function paginate(\Illuminate\Database\Eloquent\Builder $query, string $column, string $direction, int $page, bool $ordered = false): array
+    {
+        $total = (clone $query)->count();
+        $pages = max(1, (int) ceil($total / self::PAGE_SIZE));
+        $page = min(max(1, $page), $pages);
+        $direction = $direction === 'asc' ? 'asc' : 'desc';
+
+        if (!$ordered) {
+            $query->orderBy($column, $direction);
+        }
+
+        // Ties (same second) in a stable order.
+        $rows = $query->orderBy('id', $direction)->offset(($page - 1) * self::PAGE_SIZE)->limit(self::PAGE_SIZE)->get()->all();
+
+        return ['rows' => array_values($rows), 'total' => $total, 'page' => $page, 'pages' => $pages];
+    }
+
+    /**
+     * Stored requests in the period; for a virtual host, those in its logs, and from a shared log (e.g.
+     * other_vhosts_access.log) only its own.
+     *
+     * @param array{access: list<string>, error: list<string>, shared: list<string>}|null $logs
+     * @return \Illuminate\Database\Eloquent\Builder<ApacheAccessEntry>
+     */
+    private function accessQuery(Server $server, Carbon $from, Carbon $to, ?ApacheVhost $vhost, ?array $logs): \Illuminate\Database\Eloquent\Builder
+    {
+        $query = ApacheAccessEntry::query();
+        $query->where('server_id', $server->id)->whereBetween('requested_at', [$from, $to]);
+
+        if ($logs !== null) {
+            $query->whereIn('source', $logs['access']);
+        }
+
+        if ($vhost?->name !== null) {
+            $name = $vhost->name;
+            $query->where(fn ($q) => $q->whereNull('vhost')->orWhere('vhost', $name)->orWhere('vhost', 'like', addcslashes($name, '%_\\') . ':%'));
+        }
+
+        return $query;
     }
 
     /**

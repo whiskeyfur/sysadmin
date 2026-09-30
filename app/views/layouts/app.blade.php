@@ -80,6 +80,18 @@
         details.menu .menu-items a { padding: 6px 14px; text-decoration: none; }
         details.menu .menu-items a:hover { background: var(--code-bg); }
         details.menu .menu-divider { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
+        /* Section navigator (scrollspy), built by the script below on pages with enough sections. */
+        nav.spy { position: fixed; right: 12px; top: 12px; z-index: 40; width: 220px; max-height: calc(100vh - 24px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 18px rgba(0, 0, 0, .12); font-size: 13px; }
+        nav.spy .spy-toggle { display: none; width: 100%; background: none; border: 0; padding: 8px 12px; font: inherit; font-weight: 600; color: var(--text); text-align: left; cursor: pointer; }
+        nav.spy ol { list-style: none; margin: 0; padding: 6px 0; }
+        nav.spy a { display: block; padding: 4px 12px 4px 10px; border-left: 3px solid transparent; color: var(--muted); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        nav.spy a:hover { color: var(--text); background: var(--code-bg); }
+        nav.spy a.active { color: var(--accent); border-left-color: var(--accent); font-weight: 600; background: var(--code-bg); }
+        nav.spy.collapsed { width: auto; }
+        nav.spy.collapsed .spy-toggle { display: block; }
+        nav.spy.collapsed:not(.open) ol { display: none; }
+        nav.spy.collapsed.open { width: 240px; }
+        @media print { nav.spy { display: none; } }
         main { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
         main.narrow { max-width: 440px; }
         main.wide { max-width: 1440px; }
@@ -313,6 +325,86 @@
                 });
                 select.addEventListener('change', function () { form.submit(); });
             });
+
+            // Section navigator: every card (or collapsible section, or chart) with a heading, listed in a
+            // box at the top right that follows the scroll; click to jump (opening a closed section). In the
+            // right margin when it fits, else a small "Sections" button; only on pages with 3 or more.
+            (function () {
+                var main = document.querySelector('main');
+                if (!main) { return; }
+                var sections = [];
+                main.querySelectorAll('.card, figure.chart').forEach(function (el) {
+                    if (el.parentElement.closest('.card') && !el.matches('figure.chart')) { return; } // nested card
+                    if (el.matches('.card') && el.querySelector(':scope > figure.chart') && !el.querySelector(':scope > h1, :scope > h2')) { return; } // its chart stands for it
+                    var heading = el.matches('figure.chart') ? el.querySelector('figcaption') : el.querySelector(':scope > h1, :scope > h2, :scope > summary h2, :scope > .actions h1, :scope > .actions h2, :scope > div > h1, :scope > div > h2');
+                    var label = heading && heading.textContent.replace(/\s+/g, ' ').trim();
+                    if (!label || el.closest('dialog')) { return; }
+                    if (!el.id) { el.id = 'section-' + (sections.length + 1); }
+                    sections.push({ el: el, label: label.length > 48 ? label.slice(0, 47) + '…' : label });
+                });
+                if (sections.length < 3) { return; }
+
+                var nav = document.createElement('nav');
+                nav.className = 'spy';
+                nav.setAttribute('aria-label', 'Sections of this page');
+                var toggle = document.createElement('button');
+                toggle.type = 'button';
+                toggle.className = 'spy-toggle';
+                toggle.textContent = '☰ Sections';
+                toggle.setAttribute('aria-expanded', 'false');
+                toggle.addEventListener('click', function () {
+                    var open = !nav.classList.contains('open');
+                    nav.classList.toggle('open', open);
+                    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                });
+                nav.appendChild(toggle);
+                var list = document.createElement('ol');
+                sections.forEach(function (section) {
+                    var item = document.createElement('li');
+                    var link = document.createElement('a');
+                    link.href = '#' + section.el.id;
+                    link.textContent = section.label;
+                    link.title = section.label;
+                    link.addEventListener('click', function (event) {
+                        event.preventDefault();
+                        if (section.el.tagName === 'DETAILS' && !section.el.open) { section.el.open = true; }
+                        section.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        history.replaceState(null, '', '#' + section.el.id);
+                        nav.classList.remove('open');
+                        toggle.setAttribute('aria-expanded', 'false');
+                    });
+                    section.link = link;
+                    item.appendChild(link);
+                    list.appendChild(item);
+                });
+                nav.appendChild(list);
+                document.body.appendChild(nav);
+
+                var header = document.querySelector('header');
+                var frame = null;
+                function update() {
+                    frame = null;
+                    // Below the header while it's on screen, then in the corner.
+                    var top = Math.max(12, header ? header.getBoundingClientRect().bottom + 12 : 12);
+                    nav.style.top = top + 'px';
+                    nav.style.maxHeight = 'calc(100vh - ' + (top + 12) + 'px)';
+                    // In the right margin if the box fits there, else collapsed.
+                    var room = window.innerWidth - main.getBoundingClientRect().right + parseFloat(getComputedStyle(main).paddingRight);
+                    nav.classList.toggle('collapsed', room < 220 + 24);
+                    // The section being read: the last one whose top has passed a third of the way down.
+                    var current = sections[0];
+                    var line = window.innerHeight / 3;
+                    sections.forEach(function (section) { if (section.el.getBoundingClientRect().top <= line) { current = section; } });
+                    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) { current = sections[sections.length - 1]; }
+                    sections.forEach(function (section) { section.link.classList.toggle('active', section === current); });
+                }
+                var schedule = function () { if (frame === null) { frame = requestAnimationFrame(update); } };
+                window.addEventListener('scroll', schedule, { passive: true });
+                window.addEventListener('resize', schedule);
+                document.addEventListener('toggle', schedule, true); // a section opened or closed
+                document.addEventListener('click', function (event) { if (!nav.contains(event.target)) { nav.classList.remove('open'); toggle.setAttribute('aria-expanded', 'false'); } });
+                update();
+            })();
 
             // Charts: click a legend entry to hide or show its line; the value scale refits to the lines
             // still shown (all shown again: the chart as drawn). LineChart puts each point's value in data-v.

@@ -163,3 +163,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Request IDs stored for Apache requests and errors; Show request / N errors links between the two logs.
 * 2026-09-29 — Access log filters are tri-state (any / only ✓ / not ✗): status, banned, protected, localhost.
 * 2026-09-29 — Blocklists: blocklist.de and Spamhaus DROP downloaded daily, access-log clients checked locally; amber colour and Listed filter.
+* 2026-09-29 — Section navigator (scrollspy) at the top right of every page with 3+ sections.

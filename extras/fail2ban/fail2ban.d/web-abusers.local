@@ -1,0 +1,6 @@
+# Keep ban records in fail2ban's database for a long time, so permanent bans (bantime = -1) are
+# restored after fail2ban restarts. Debian's default purges records after a day.
+# Part of sys (extras/fail2ban); see README.md there.
+
+[Definition]
+dbpurgeage = 3650d

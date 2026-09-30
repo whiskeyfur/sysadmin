@@ -1,0 +1,33 @@
+# Fail2Ban jails for web abusers. Part of sys (extras/fail2ban); see README.md there.
+#
+# web-abusers: manual bans from sys (right-click a client in the access log), plus scanners
+#   probing for exploits (3 probes answered with a 4xx within 10 minutes).
+# web-abusers-4xx: floods of client errors (100 within 5 minutes).
+# Both ban permanently (bantime = -1) on the web ports; unban from sys or with
+#   fail2ban-client set web-abusers unbanip ADDRESS
+
+[web-abusers]
+enabled  = true
+filter   = web-abusers
+port     = http,https
+# Debian/Ubuntu default every jail to the systemd journal; these read files.
+backend  = auto
+# Every Apache access log (Debian/Ubuntu: /var/log/apache2/*access.log). Add others on their own
+# lines, e.g. per-site logs elsewhere.
+logpath  = %(apache_access_log)s
+maxretry = 3
+findtime = 10m
+bantime  = -1
+# Never ban these: loopback plus your own networks, space separated (e.g. 192.168.1.0/24).
+ignoreip = 127.0.0.1/8 ::1
+
+[web-abusers-4xx]
+enabled  = true
+filter   = web-abusers-4xx
+port     = http,https
+backend  = auto
+logpath  = %(apache_access_log)s
+maxretry = 100
+findtime = 5m
+bantime  = -1
+ignoreip = 127.0.0.1/8 ::1

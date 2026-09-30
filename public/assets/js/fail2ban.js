@@ -63,11 +63,15 @@
             .then(function (data) {
                 if (data.error) { throw new Error(data.error); }
                 jail.innerHTML = '';
-                (data.jails || []).forEach(function (name) {
+                var jails = data.jails || [];
+                // Unban: a jail it's banned in. Ban: web-abusers (extras/fail2ban) when it isn't in it yet, else one it isn't in.
+                var pick = action === 'unban'
+                    ? jails.filter(function (name) { return current.jails.indexOf(name) !== -1; })[0]
+                    : (jails.indexOf('web-abusers') !== -1 && current.jails.indexOf('web-abusers') === -1 ? 'web-abusers' : jails.filter(function (name) { return current.jails.indexOf(name) === -1; })[0]);
+                jails.forEach(function (name) {
                     var option = document.createElement('option');
                     option.value = name; option.textContent = name;
-                    // Unban: preselect a jail it's banned in; ban: one it isn't banned in yet.
-                    if ((action === 'unban') === (current.jails.indexOf(name) !== -1) && !jail.querySelector('[selected]')) { option.selected = true; option.setAttribute('selected', ''); }
+                    option.selected = name === pick;
                     jail.appendChild(option);
                 });
                 if (!data.jails || !data.jails.length) { throw new Error('fail2ban has no jails on this server.'); }

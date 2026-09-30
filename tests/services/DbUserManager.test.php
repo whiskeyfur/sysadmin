@@ -17,6 +17,8 @@ class DbUserFakePdo extends PDO
     /** @var list<string> */
     public array $statements = [];
 
+    public string $version = '10.11.14-MariaDB-0ubuntu0.24.04.1';
+
     /** @var list<string> the monitoring account's grants */
     public array $grants = ["GRANT ALL PRIVILEGES ON *.* TO `monitor`@`%` WITH GRANT OPTION"];
 
@@ -59,6 +61,10 @@ class DbUserFakePdo extends PDO
 
     public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): PDOStatement|false
     {
+        if ($query === 'SELECT VERSION()') {
+            return parent::query('SELECT ' . $this->quote($this->version));
+        }
+
         if (str_starts_with($query, 'SHOW GRANTS FOR CURRENT_USER()')) {
             return parent::query('SELECT ' . implode(' UNION ALL SELECT ', array_map(fn ($g) => $this->quote($g), $this->grants)));
         }
@@ -190,6 +196,21 @@ test('access can be given on one table as database.table, and on everything as *
 
 test('the database fields\' suggestions are for admins only', function () {
     expect(fn () => $this->manager->names($this->dev, [$this->ids['alpha']]))->toThrow(AuthorizationException::class);
+});
+
+test('a blank password makes a socket login (unix_socket on MariaDB, auth_socket on MySQL), only for localhost or %', function () {
+    $this->mysql->servers['beta']->version = '8.0.36';
+    $results = $this->manager->create($this->admin, [$this->ids['alpha'], $this->ids['beta']], 'backup', 'localhost', '', 'shop', 'read', true);
+    $tracked = Account::query()->where('username', 'backup')->get();
+
+    expect(array_column($results, 'ok'))->toBe([true, true])
+        ->and($results[0]['message'])->toContain('signs in by socket')
+        ->and($this->mysql->servers['alpha']->statements[0])->toBe("CREATE USER 'backup'@'localhost' IDENTIFIED VIA unix_socket")
+        ->and($this->mysql->servers['beta']->statements[0])->toBe("CREATE USER 'backup'@'localhost' IDENTIFIED WITH auth_socket")
+        ->and($tracked)->toHaveCount(2)
+        ->and($tracked->every(fn (Account $a) => $a->password === null && str_contains((string) $a->notes, 'socket')))->toBeTrue()
+        ->and(fn () => $this->manager->create($this->admin, [$this->ids['alpha']], 'remote', '10.0.0.%', '', 'shop', 'read', false))->toThrow(DomainException::class, 'localhost')
+        ->and(fn () => $this->manager->create($this->admin, [$this->ids['alpha']], 'short', '%', 'too short', 'shop', 'read', false))->toThrow(DomainException::class, 'at least');
 });
 
 test('dropping removes the tracked account once no account of that name is left on the server', function () {

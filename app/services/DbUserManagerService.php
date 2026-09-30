@@ -251,7 +251,8 @@ class DbUserManagerService
 
     /**
      * Create an account on each server, give it an access level, and (when $track) record it with its
-     * password in Accounts.
+     * password in Accounts. A blank password makes a socket login (MariaDB unix_socket, MySQL
+     * auth_socket: the system user of the same name, over the local socket), for host localhost or %.
      *
      * @param list<int> $serverIds
      * @return list<array{server: Server, ok: bool, message: string}>
@@ -261,11 +262,22 @@ class DbUserManagerService
     public function create(User $admin, array $serverIds, string $user, string $host, string $password, string $database, string $level, bool $track): array
     {
         [$user, $host] = [trim($user), trim($host)];
-        $this->checkPassword($password, $user);
+        // No password: the account signs in by socket (the system user of the same name, over the local
+        // socket), which only ever arrives as localhost.
+        $socket = $password === '';
+
+        if ($socket && !in_array($host, ['localhost', '%'], true)) {
+            throw new DomainException('Without a password the account signs in over the local socket (as the system user of the same name), which always comes from localhost: use the host localhost (or %), or give it a password.');
+        }
+
+        if (!$socket) {
+            $this->checkPassword($password, $user);
+        }
+
         $target = self::target($database);
         $privileges = $this->privileges($level);
 
-        return $this->onEach($admin, $serverIds, 'create', $user, $host, self::LEVELS[$level][0] . ' on ' . $this->databaseLabel($database), function (PDO $pdo, Server $server) use ($user, $host, $password, $target, $privileges, $track, $admin) {
+        return $this->onEach($admin, $serverIds, 'create', $user, $host, self::LEVELS[$level][0] . ' on ' . $this->databaseLabel($database) . ($socket ? ', socket login' : ''), function (PDO $pdo, Server $server) use ($user, $host, $password, $socket, $target, $privileges, $track, $admin) {
             $exists = $pdo->prepare('SELECT COUNT(*) FROM mysql.user WHERE User = ? AND Host = ?');
             $exists->execute([$user, $host]);
 
@@ -274,14 +286,16 @@ class DbUserManagerService
             }
 
             $account = $this->quoted($pdo, $user, $host);
-            $pdo->exec("CREATE USER $account IDENTIFIED BY " . $pdo->quote($password));
+            // MariaDB's socket plugin is unix_socket, MySQL's auth_socket.
+            $plugin = $socket ? (stripos((string) $pdo->query('SELECT VERSION()')?->fetchColumn(), 'mariadb') !== false ? 'VIA unix_socket' : 'WITH auth_socket') : null;
+            $pdo->exec("CREATE USER $account IDENTIFIED " . ($plugin ?? 'BY ' . $pdo->quote($password)));
             $pdo->exec("GRANT $privileges ON $target TO $account");
 
             if ($track) {
-                $this->track($admin, $server, $user, $host, $password);
+                $this->track($admin, $server, $user, $host, $socket ? null : $password);
             }
 
-            return 'Created, with ' . strtolower($this->levelLabelFor($privileges)) . ' access' . ($track ? '; tracked in Accounts.' : '.');
+            return 'Created' . ($socket ? ' (signs in by socket: the system user ' . $user . ' on ' . $server->name . ', no password)' : '') . ', with ' . strtolower($this->levelLabelFor($privileges)) . ' access' . ($track ? '; tracked in Accounts.' : '.');
         });
     }
 
@@ -556,9 +570,9 @@ class DbUserManagerService
     }
 
     /**
-     * Record the login and its password in Accounts: the server's local database account of that name.
+     * Record the login in Accounts (the server's local database account of that name) with its password, or none for a socket login.
      */
-    private function track(User $admin, Server $server, string $user, string $host, string $password): void
+    private function track(User $admin, Server $server, string $user, string $host, ?string $password): void
     {
         $accounts = $this->accounts ??= new AccountService();
         $account = Account::query()->where('type', Account::TYPE_LOCAL)->where('server_id', $server->id)->where('username', $user)
@@ -570,6 +584,14 @@ class DbUserManagerService
                 'origin' => Account::ORIGIN_MANUAL, 'origin_user_id' => $admin->id, 'origin_server_id' => $server->id,
                 'origin_detail' => self::name($user, $host) . ', created by the database account manager',
             ]);
+        }
+
+        if ($password === null) {
+            // A socket login: nothing to store; say how it signs in.
+            $account->notes ??= 'Signs in by socket (unix_socket / auth_socket): the system user of the same name, over the local socket; no password.';
+            $account->save();
+
+            return;
         }
 
         $accounts->storePassword($account, $password, Carbon::instance($this->clock->now()));

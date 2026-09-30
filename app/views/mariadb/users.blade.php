@@ -71,7 +71,7 @@
                     <p class="hint">% for anywhere, localhost, an address or pattern (10.0.0.%), or a hostname.</p>
                 </div>
             </div>
-            @include('mariadb.user-password', ['id' => 'new_password'])
+            @include('mariadb.user-password', ['id' => 'new_password', 'socketIfBlank' => true])
             <div class="field-row">
                 <div>
                     <label for="new_database">Database</label>

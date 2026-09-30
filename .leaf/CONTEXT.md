@@ -177,3 +177,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-30 — Access log rows with errors (by request ID) fold out their error log entries (up to 20) under the row; access log filters on one line at one height.
 * 2026-09-30 — App settings shows the app's own database connection (read only, no password).
 * 2026-09-30 — Apache report's Requests table: a paged row per day, clicking a day folds out its hours. X-Request-ID response header added to enable-unique-id.sh. Link-style buttons no longer fill in on hover.
+* 2026-09-30 — Database users: a blank password on create makes a socket login (unix_socket / auth_socket), host localhost or % only.

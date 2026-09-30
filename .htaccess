@@ -16,12 +16,21 @@
 
     RewriteEngine On
 
+    # The URL this folder is reached at (e.g. /sysadmin/), from the request itself: rewriting to that
+    # absolute URL works under an Alias and on Windows, where a relative target (public/...) can come back
+    # from mod_rewrite as a file path that Apache answers with 400 Bad Request. No RewriteBase to keep up.
+    RewriteCond %{REQUEST_URI}::$1 ^(.*?/)(.*)::\2$
+    RewriteRule ^(.*)$ - [E=SYSADMIN_BASE:%1]
+
     # A trailing slash on a page (/sysadmin/ssh/) redirects to the page, as public/.htaccess does for a
     # site of its own; real folders keep theirs (Apache adds it to them).
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_URI} (.+)/$
     RewriteRule ^ %1 [L,R=301]
 
-    # Everything into public/, whose own .htaccess routes it (a file there, else index.php).
+    # Everything into public/, whose own .htaccess routes it (a file there, else index.php); the relative
+    # form only if the URL above couldn't be worked out.
+    RewriteCond %{ENV:SYSADMIN_BASE} .
+    RewriteRule ^(.*)$ %{ENV:SYSADMIN_BASE}public/$1 [L]
     RewriteRule ^(.*)$ public/$1 [L]
 </IfModule>

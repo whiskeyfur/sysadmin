@@ -5,6 +5,11 @@
 
     RewriteEngine On
 
+    # The URL this folder is reached at (/ for a site of its own, /sysadmin/public/ in a subdirectory):
+    # rewriting to that absolute URL works under an Alias and on Windows (see the top-level .htaccess).
+    RewriteCond %{REQUEST_URI}::$1 ^(.*?/)(.*)::\2$
+    RewriteRule ^(.*)$ - [E=SYSADMIN_PUBLIC:%1]
+
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
@@ -16,7 +21,11 @@
     RewriteCond %{REQUEST_URI} (.+)/$
     RewriteRule ^ %1 [L,R=301]
 
-    # Handle Front Controller...
+    # Handle Front Controller... (the relative form only if the URL above couldn't be worked out)
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{ENV:SYSADMIN_PUBLIC} .
+    RewriteRule ^ %{ENV:SYSADMIN_PUBLIC}index.php [L]
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]

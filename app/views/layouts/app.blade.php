@@ -51,6 +51,7 @@
         .paged-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
         .paged-filters input.table-filter { max-width: 260px; margin: 0; }
         .paged-filters select, .paged-filters input[type=text] { width: auto; margin: 0; }
+        .paged-filters .check-group { display: inline-flex; gap: 10px; align-items: center; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; }
         .paged-filters label.check { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: normal; font-size: 14px; white-space: nowrap; }
         .paged-pager { display: flex; align-items: center; gap: 8px; font-size: 13px; }
         figure.chart .legend .legend-item { background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; }

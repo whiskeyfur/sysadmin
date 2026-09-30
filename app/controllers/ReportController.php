@@ -96,7 +96,7 @@ class ReportController extends Controller
      * One page of an Apache report's access or error log, as JSON {html (table rows), total, page, pages},
      * for the paged tables (public/assets/js/paged-table.js):
      * ?kind=access|errors&server=<id> or &vhost=<id>&range=&page=&q=&sort=&dir=asc|desc; for the access
-     * log also &status=4xx|errors|404&client=<start of address>&hide_local=1&banned=yes|no|protected|unprotected
+     * log also &s2xx=1..&s5xx=1 (status classes)&client=<start of address>&hide_local=1&banned=1&protected=1
      */
     public function apacheEntries()
     {
@@ -121,12 +121,12 @@ class ReportController extends Controller
         ];
         $reports = new ApacheReportService();
         $access = $this->request->get('kind') !== 'errors';
-        $status = (string) $this->request->get('status', false);
         $filters = [
-            'status' => preg_match('/^(?:[1-5]xx|errors|\d{3})$/', $status) === 1 ? $status : '',
+            'statuses' => array_values(array_filter([2, 3, 4, 5], fn (int $class) => (string) $this->request->get("s{$class}xx", false) === '1')),
             'client' => mb_substr(trim((string) $this->request->get('client', false)), 0, 64),
             'hide_local' => (string) $this->request->get('hide_local', false) === '1',
-            'banned' => in_array($banned = (string) $this->request->get('banned', false), ['yes', 'no', 'protected', 'unprotected'], true) ? $banned : '',
+            'banned' => (string) $this->request->get('banned', false) === '1',
+            'protected' => (string) $this->request->get('protected', false) === '1',
         ];
         $page = $access ? $reports->accessPage(...$args, filters: $filters) : $reports->errorPage(...$args);
         $html = $access

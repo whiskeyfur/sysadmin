@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Exceptions\AuthorizationException;
 use App\Exceptions\ServerConnectionException;
 use App\Models\MariadbQuery;
+use App\Models\QueryAccount;
 use App\Models\Server;
 use App\Models\User;
 use App\Utils\SystemClock;
@@ -15,10 +16,10 @@ use PDOException;
 use Psr\Clock\ClockInterface;
 
 /**
- * The MariaDB multi-server query tool: one statement, run on every server chosen, with the user's own
- * database login, and the results collated into one table with a Server column first. Admins may use
- * each server's stored account instead (the monitoring login, often far more privileged than a
- * developer should have); other users never can. Any statement is allowed (the database's own privileges decide); one that isn't a
+ * The MariaDB multi-server query tool: one statement, run on every server chosen, each with a login
+ * from the user's own private list (QueryAccountService), and the results collated into one table with a
+ * Server column first. Admins may use a server's stored account instead (the monitoring login, often far
+ * more privileged than a developer should have); other users never can. Any statement is allowed (the database's own privileges decide); one that isn't a
  * plain read must be confirmed. Each run is logged (MariadbQuery), without the password.
  *
  * Guarding against password guessing and fail2ban: when the first server refuses the login, the others
@@ -55,6 +56,7 @@ class MariadbQueryService
     public function __construct(
         private readonly MysqlService $mysql = new MysqlService(),
         private readonly ClockInterface $clock = new SystemClock(),
+        private ?QueryAccountService $accounts = null,
     ) {
     }
 
@@ -83,26 +85,25 @@ class MariadbQueryService
     }
 
     /**
-     * Run a statement on the chosen servers, as $username/$password, or (admins, $stored) as each
-     * server's stored account.
+     * Run a statement on the chosen servers, each with the login chosen for it: one of the user's own
+     * accounts that's for that server (QueryAccountService), or (admins only) "stored", the server's
+     * stored account. When an account's login is refused by the first server it's tried on in this run,
+     * it isn't tried on the rest.
      *
-     * @param list<int> $serverIds
+     * @param array<int, int|string> $plan server id => account id, or "stored"
      * @return array{
      *     columns: list<string>,
      *     rows: list<array{server: string, values: array<string, ?string>}>,
-     *     servers: list<array{name: string, ok: bool, message: string, rows: int, affected: ?int, ms: int, truncated: bool}>,
+     *     servers: list<array{name: string, ok: bool, message: string, rows: int, affected: ?int, ms: int, truncated: bool, login: string}>,
      *     auth_failed: bool,
      *     writes: bool
      * }
      *
      * @throws DomainException with a user-facing message when nothing was run
+     * @throws AuthorizationException when a non-admin asks for stored accounts
      */
-    public function run(User $user, array $serverIds, string $username, string $password, ?string $database, string $sql, int $limit = self::DEFAULT_LIMIT, bool $confirmedWrites = false, bool $stored = false): array
+    public function run(User $user, array $plan, ?string $database, string $sql, int $limit = self::DEFAULT_LIMIT, bool $confirmedWrites = false): array
     {
-        if ($stored && !$user->isAdmin()) {
-            throw new AuthorizationException('Only admins can query with the servers\' stored accounts.');
-        }
-
         $sql = trim($sql);
         $sql = rtrim($sql, "; \t\r\n");
         $database = trim((string) $database) ?: null;
@@ -117,61 +118,117 @@ class MariadbQueryService
             throw new DomainException('The statement is too long (' . number_format(self::MAX_STATEMENT) . ' characters at most).');
         }
 
-        if (!$stored && trim($username) === '') {
-            throw new DomainException('Log in with your database username and password first.');
-        }
-
         if ($database !== null && preg_match('/^[\w$-]{1,64}$/u', $database) !== 1) {
             throw new DomainException('That isn\'t a database name.');
         }
 
-        $servers = array_values(array_filter($this->servers(), fn (Server $s) => in_array($s->id, $serverIds, true)));
+        $accounts = $this->accounts ??= new QueryAccountService($this->mysql, clock: $this->clock);
+        $own = [];
 
-        if ($servers === []) {
+        foreach ($accounts->forUser($user) as $account) {
+            $own[$account->id] = $account;
+        }
+
+        // Each server with its login, checked: the user's own account for that server, or stored (admins).
+        $steps = [];
+
+        foreach ($this->servers() as $server) {
+            $choice = $plan[$server->id] ?? null;
+
+            if ($choice === null || $choice === '') {
+                continue;
+            }
+
+            if ($choice === 'stored') {
+                if (!$user->isAdmin()) {
+                    throw new AuthorizationException('Only admins can query with the servers\' stored accounts.');
+                }
+
+                $steps[] = ['server' => $server, 'account' => null];
+
+                continue;
+            }
+
+            $account = $own[(int) $choice] ?? null;
+
+            if (!$account instanceof QueryAccount || !$account->isFor($server)) {
+                throw new DomainException("Choose one of your accounts for {$server->name}.");
+            }
+
+            $steps[] = ['server' => $server, 'account' => $account];
+        }
+
+        if ($steps === []) {
             throw new DomainException('Choose at least one server.');
         }
 
         if ($writes && !$confirmedWrites) {
-            throw new DomainException('This statement isn\'t a plain read, so it may change data on ' . count($servers) . ' ' . (count($servers) === 1 ? 'server' : 'servers') . ': tick the box to confirm.');
+            throw new DomainException('This statement isn\'t a plain read, so it may change data on ' . count($steps) . ' ' . (count($steps) === 1 ? 'server' : 'servers') . ': tick the box to confirm.');
         }
 
+        $this->requireNotThrottled($user);
+        $results = [];
+        $refusedAccounts = [];
+        $triedAccounts = [];
+        $authFailed = false;
+
+        foreach ($steps as ['server' => $server, 'account' => $account]) {
+            $login = $account === null ? 'stored account' : $account->label;
+
+            if ($account !== null && isset($refusedAccounts[$account->id])) {
+                $results[] = ['server' => $server, 'ok' => false, 'message' => "Not tried: {$refusedAccounts[$account->id]} refused this login first.", 'rows' => [], 'columns' => [], 'affected' => null, 'ms' => 0, 'truncated' => false, 'login' => $login];
+
+                continue;
+            }
+
+            $result = $this->runOn($server, $account === null ? null : [$account->username, $accounts->password($account)], $database, $sql, $limit);
+            $result['login'] = $login;
+            $results[] = $result;
+
+            if ($account !== null) {
+                // An account refused by the first server it meets in this run isn't tried on the others.
+                if ($result['auth'] && !isset($triedAccounts[$account->id])) {
+                    $refusedAccounts[$account->id] = $server->name;
+                    $authFailed = true;
+                }
+
+                $triedAccounts[$account->id] = true;
+                $account->last_used_at = Carbon::instance($this->clock->now());
+                $account->save();
+            }
+        }
+
+        $collated = $this->collate($results);
+        $ok = count(array_filter($results, fn ($r) => $r['ok']));
+        $logins = array_values(array_unique(array_map(fn ($r) => $r['login'], $results)));
+        MariadbQuery::query()->create([
+            'user_id' => $user->id,
+            'db_user' => mb_substr(implode(', ', $logins), 0, 255),
+            'servers' => array_map(fn ($step) => $step['server']->id, $steps),
+            'statement' => $sql,
+            'writes' => $writes,
+            'outcome' => "$ok ok, " . (count($results) - $ok) . ' failed',
+            'auth_failed' => $authFailed,
+            // The service's clock (the throttle counts by it).
+            'created_at' => Carbon::instance($this->clock->now()),
+        ]);
+
+        return $collated + ['auth_failed' => $authFailed, 'writes' => $writes];
+    }
+
+    /**
+     * Refuses when the user has had AUTH_FAILURES refused database logins within AUTH_WINDOW_MINUTES
+     * (queries and account checks alike): guessing passwords through the tool stays slow.
+     *
+     * @throws DomainException
+     */
+    public function requireNotThrottled(User $user): void
+    {
         $since = Carbon::instance($this->clock->now())->subMinutes(self::AUTH_WINDOW_MINUTES);
 
         if (MariadbQuery::query()->where('user_id', $user->id)->where('auth_failed', true)->where('created_at', '>=', $since)->count() >= self::AUTH_FAILURES) {
             throw new DomainException('Too many refused database logins: wait ' . self::AUTH_WINDOW_MINUTES . ' minutes and try again.');
         }
-
-        $results = [];
-        $authFailed = false;
-
-        foreach ($servers as $i => $server) {
-            if ($authFailed) {
-                $results[] = ['server' => $server, 'ok' => false, 'message' => 'Not tried: the first server refused the login.', 'rows' => [], 'columns' => [], 'affected' => null, 'ms' => 0, 'truncated' => false];
-
-                continue;
-            }
-
-            $result = $this->runOn($server, $stored ? null : [$username, $password], $database, $sql, $limit);
-            // Each stored account is different: one refusing doesn't say anything about the others.
-            $authFailed = !$stored && $i === 0 && $result['auth'];
-            $results[] = $result;
-        }
-
-        $collated = $this->collate($results);
-        $ok = count(array_filter($results, fn ($r) => $r['ok']));
-        MariadbQuery::query()->create([
-            'user_id' => $user->id,
-            'db_user' => $stored ? 'stored accounts' : mb_substr($username, 0, 255),
-            'servers' => array_map(fn (Server $s) => $s->id, $servers),
-            'statement' => $sql,
-            'writes' => $writes,
-            'outcome' => "$ok ok, " . (count($results) - $ok) . ' failed',
-            'auth_failed' => $authFailed,
-            // The service's clock (the throttle above counts by it).
-            'created_at' => Carbon::instance($this->clock->now()),
-        ]);
-
-        return $collated + ['auth_failed' => $authFailed, 'writes' => $writes];
     }
 
     /**
@@ -255,7 +312,7 @@ class MariadbQueryService
      * appear (a name repeated within one result gets " (2)" and so on).
      *
      * @param list<array{server: Server, ok: bool, message: string, columns: list<string>, rows: list<list<?string>>, affected: ?int, ms: int, truncated: bool, ...}> $results
-     * @return array{columns: list<string>, rows: list<array{server: string, values: array<string, ?string>}>, servers: list<array{name: string, ok: bool, message: string, rows: int, affected: ?int, ms: int, truncated: bool}>}
+     * @return array{columns: list<string>, rows: list<array{server: string, values: array<string, ?string>}>, servers: list<array{name: string, ok: bool, message: string, rows: int, affected: ?int, ms: int, truncated: bool, login: string}>}
      */
     private function collate(array $results): array
     {
@@ -286,7 +343,7 @@ class MariadbQueryService
 
             $servers[] = [
                 'name' => $result['server']->name, 'ok' => $result['ok'], 'message' => $result['message'], 'rows' => count($result['rows']),
-                'affected' => $result['affected'], 'ms' => $result['ms'], 'truncated' => $result['truncated'],
+                'affected' => $result['affected'], 'ms' => $result['ms'], 'truncated' => $result['truncated'], 'login' => (string) ($result['login'] ?? ''),
             ];
         }
 

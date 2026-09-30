@@ -16,11 +16,15 @@ app()->get('/apache/reports', ['middleware' => Authenticate::class, 'ReportContr
 app()->get('/apache/reports/entries', ['middleware' => Authenticate::class, 'ReportController@apacheEntries']);
 app()->get('/ssh', ['middleware' => Authenticate::class, 'ServerController@ssh']);
 app()->get('/mariadb', ['middleware' => Authenticate::class, 'ServerController@mariadb']);
-// The multi-server query tool: everyone signed in, with their own database login.
+// The multi-server query tool: everyone signed in, with their own database logins.
 app()->get('/mariadb/query', ['middleware' => Authenticate::class, 'MariadbQueryController@index']);
 app()->post('/mariadb/query', ['middleware' => Authenticate::class, 'MariadbQueryController@run']);
-app()->post('/mariadb/query/login', ['middleware' => Authenticate::class, 'MariadbQueryController@login']);
-app()->post('/mariadb/query/logout', ['middleware' => Authenticate::class, 'MariadbQueryController@logout']);
+// Each user's private list of database logins for it.
+app()->post('/mariadb/query/accounts', ['middleware' => Authenticate::class, 'MariadbQueryController@addAccount']);
+app()->get('/mariadb/query/accounts/{id}', ['middleware' => Authenticate::class, 'MariadbQueryController@editAccount']);
+app()->post('/mariadb/query/accounts/{id}', ['middleware' => Authenticate::class, 'MariadbQueryController@updateAccount']);
+app()->post('/mariadb/query/accounts/{id}/test', ['middleware' => Authenticate::class, 'MariadbQueryController@testAccount']);
+app()->post('/mariadb/query/accounts/{id}/delete', ['middleware' => Authenticate::class, 'MariadbQueryController@deleteAccount']);
 app()->get('/apache', ['middleware' => Authenticate::class, 'ServerController@apache']);
 app()->get('/servers/{id}', ['middleware' => Authenticate::class, 'ServerController@show']);
 app()->get('/ssl', ['middleware' => Authenticate::class, 'SslController@index']);

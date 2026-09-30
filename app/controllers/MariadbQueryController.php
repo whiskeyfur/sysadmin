@@ -3,15 +3,17 @@
 namespace App\Controllers;
 
 use App\DTOs\AuthContext;
+use App\Exceptions\AuthorizationException;
 use App\Models\MariadbQuery;
-use App\Services\AuthSessionService;
 use App\Services\MariadbQueryService;
+use App\Services\QueryAccountService;
 use DomainException;
 
 /**
- * The MariaDB multi-server query tool (/mariadb/query, everyone signed in): log in with your own
- * database credentials (kept encrypted in the session until you log out of it, or of sys), pick servers,
- * run one statement, see the results collated. See MariadbQueryService.
+ * The MariaDB multi-server query tool (/mariadb/query, everyone signed in): each user keeps a private
+ * list of database logins (validated on entry, each for the servers it works on), picks servers and a
+ * login for each, runs one statement, and sees the results collated. See MariadbQueryService and
+ * QueryAccountService.
  */
 class MariadbQueryController extends Controller
 {
@@ -21,102 +23,185 @@ class MariadbQueryController extends Controller
     }
 
     /**
-     * POST /mariadb/query/login {username, password} or, admins, {stored: 1}
-     */
-    public function login()
-    {
-        if ((string) $this->request->get('stored', false) === '1') {
-            if (!$this->authContext()->isAdmin()) {
-                $this->show(error: 'Only admins can use the servers\' stored accounts.');
-
-                return;
-            }
-
-            (new AuthSessionService())->rememberDatabaseLogin($this->authContext()->user, '', '', stored: true);
-            $this->response->withFlash('notice', 'Queries use each server\'s stored account for this session, until you log out of it.')->redirect('/mariadb/query');
-
-            return;
-        }
-
-        $username = trim((string) $this->request->get('username', false));
-        $password = (string) $this->request->get('password', false);
-
-        if ($username === '' || mb_strlen($username) > 128) {
-            $this->show(error: 'Type your database username.');
-
-            return;
-        }
-
-        (new AuthSessionService())->rememberDatabaseLogin($this->authContext()->user, $username, $password);
-        $this->response->withFlash('notice', "Logged in to MariaDB as $username for this session: queries use this login until you log out of it.")->redirect('/mariadb/query');
-    }
-
-    /**
-     * POST /mariadb/query/logout
-     */
-    public function logout()
-    {
-        (new AuthSessionService())->forgetDatabaseLogin();
-        $this->response->withFlash('notice', 'Logged out of MariaDB: the login is gone from this session.')->redirect('/mariadb/query');
-    }
-
-    /**
-     * POST /mariadb/query {servers[], database, sql, limit, confirm}
+     * POST /mariadb/query {servers[], account[server id], database, sql, limit, confirm}
      */
     public function run()
     {
         $user = $this->authContext()->user;
-        $sessions = new AuthSessionService();
-        $login = $sessions->databaseLogin($user);
+        $ticked = array_map('intval', (array) ($this->request->get('servers', false) ?? []));
+        $choices = (array) ($this->request->get('account', false) ?? []);
+        $plan = [];
+
+        foreach ($ticked as $id) {
+            $plan[$id] = (string) ($choices[$id] ?? '');
+        }
+
         $input = [
-            'servers' => array_values(array_map('intval', (array) ($this->request->get('servers', false) ?? []))),
+            'plan' => $plan,
             'database' => trim((string) $this->request->get('database', false)),
             'sql' => (string) $this->request->get('sql', false),
             'limit' => (int) ($this->request->get('limit', false) ?: MariadbQueryService::DEFAULT_LIMIT),
         ];
 
-        if ($login === null) {
-            $this->show(error: 'Log in to MariaDB first.', input: $input);
-
-            return;
-        }
-
         try {
-            $result = (new MariadbQueryService())->run($user, $input['servers'], $login['username'], $login['password'], $input['database'], $input['sql'], $input['limit'], (string) $this->request->get('confirm', false) === '1', $login['stored']);
-        } catch (DomainException|\App\Exceptions\AuthorizationException $e) {
+            $result = (new MariadbQueryService())->run($user, $plan, $input['database'], $input['sql'], $input['limit'], (string) $this->request->get('confirm', false) === '1');
+        } catch (DomainException|AuthorizationException $e) {
             $this->show(error: $e->getMessage(), input: $input);
 
             return;
         }
 
-        $error = null;
-
-        // A refused login isn't kept: the next try asks for it again.
-        if ($result['auth_failed']) {
-            $sessions->forgetDatabaseLogin();
-            $error = "The first server refused the login as {$login['username']}, so the others weren't tried. Log in again.";
-        }
-
-        $this->show(error: $error, input: $input, result: $result);
+        $this->show(error: $result['auth_failed'] ? 'A server refused one of your logins; see the outcome below (the other servers for that login weren\'t tried). Check the account, or test it again.' : null, input: $input, result: $result);
     }
 
     /**
-     * @param array{servers?: list<int>, database?: string, sql?: string, limit?: int} $input
-     * @param array<string, mixed>|null $result
+     * POST /mariadb/query/accounts {label, username, password, servers[]}: add an account, if its login
+     * works on every server chosen.
      */
-    private function show(?string $error = null, array $input = [], ?array $result = null): void
+    public function addAccount()
+    {
+        $this->saveAccount(null);
+    }
+
+    /**
+     * GET /mariadb/query/accounts/{id}
+     */
+    public function editAccount($id)
+    {
+        try {
+            $account = (new QueryAccountService())->find($this->authContext()->user, (int) $id);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect('/mariadb/query');
+
+            return;
+        }
+
+        $this->showAccount($account);
+    }
+
+    /**
+     * POST /mariadb/query/accounts/{id} (a blank password keeps the stored one)
+     */
+    public function updateAccount($id)
+    {
+        try {
+            $account = (new QueryAccountService())->find($this->authContext()->user, (int) $id);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect('/mariadb/query');
+
+            return;
+        }
+
+        $this->saveAccount($account);
+    }
+
+    /**
+     * POST /mariadb/query/accounts/{id}/test
+     */
+    public function testAccount($id)
+    {
+        $service = new QueryAccountService();
+
+        try {
+            $account = $service->find($this->authContext()->user, (int) $id);
+            $results = $service->test($this->authContext()->user, $account);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect('/mariadb/query');
+
+            return;
+        }
+
+        $refused = array_filter($results, fn ($r) => !$r['ok']);
+        $this->response->withFlash($refused === [] ? 'notice' : 'error', $refused === []
+            ? "{$account->label}: the login works on all " . count($results) . ' of its servers.'
+            : "{$account->label}: refused by " . implode(', ', array_map(fn ($r) => $r['server']->name, $refused)) . '. Those servers are left out of the query form until it works; edit the account to fix it.')
+            ->redirect('/mariadb/query#accounts');
+    }
+
+    /**
+     * POST /mariadb/query/accounts/{id}/delete
+     */
+    public function deleteAccount($id)
+    {
+        $service = new QueryAccountService();
+
+        try {
+            $account = $service->find($this->authContext()->user, (int) $id);
+            $service->delete($this->authContext()->user, $account);
+        } catch (DomainException $e) {
+            $this->response->withFlash('error', $e->getMessage())->redirect('/mariadb/query');
+
+            return;
+        }
+
+        $this->response->withFlash('notice', "Deleted {$account->label} from your accounts.")->redirect('/mariadb/query#accounts');
+    }
+
+    private function saveAccount(?\App\Models\QueryAccount $account): void
+    {
+        $input = [
+            'label' => (string) $this->request->get('label', false),
+            'username' => (string) $this->request->get('username', false),
+            'password' => (string) $this->request->get('password', false),
+            'servers' => array_map('intval', (array) ($this->request->get('servers', false) ?? [])),
+        ];
+
+        try {
+            $saved = (new QueryAccountService())->save($this->authContext()->user, $account, $input);
+        } catch (DomainException $e) {
+            $account === null ? $this->show(accountError: $e->getMessage(), accountInput: $input) : $this->showAccount($account, $e->getMessage(), $input);
+
+            return;
+        }
+
+        if ($saved['account'] === null) {
+            // Not saved: which servers refused it (the password is never sent back to the form).
+            $refused = array_filter($saved['results'], fn ($r) => !$r['ok']);
+            $error = 'Not saved: the login has to work on every server chosen, and ' . implode(', ', array_map(fn ($r) => $r['server']->name, $refused)) . ' refused it or couldn\'t be reached. Untick them, or check the username and password.';
+            $account === null ? $this->show(accountError: $error, accountInput: $input, tested: $saved['results']) : $this->showAccount($account, $error, $input, $saved['results']);
+
+            return;
+        }
+
+        $this->response->withFlash('notice', "Saved {$saved['account']->label}: the login works on all " . count($saved['results']) . ' of its servers.')->redirect('/mariadb/query#accounts');
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     * @param list<array{server: \App\Models\Server, ok: bool, message: string}>|null $tested
+     */
+    private function showAccount(\App\Models\QueryAccount $account, ?string $error = null, array $input = [], ?array $tested = null): void
+    {
+        $this->response->view('mariadb.account', [
+            'auth' => $this->authContext(),
+            'account' => $account,
+            'servers' => (new MariadbQueryService())->servers(),
+            'input' => $input,
+            'tested' => $tested,
+            'error' => $error,
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     * @param array<string, mixed>|null $result
+     * @param array<string, mixed> $accountInput
+     * @param list<array{server: \App\Models\Server, ok: bool, message: string}>|null $tested
+     */
+    private function show(?string $error = null, array $input = [], ?array $result = null, ?string $accountError = null, array $accountInput = [], ?array $tested = null): void
     {
         $user = $this->authContext()->user;
-        $login = (new AuthSessionService())->databaseLogin($user);
-        $service = new MariadbQueryService();
 
         $this->response->view('mariadb.query', [
             'auth' => $this->authContext(),
-            'servers' => $service->servers(),
-            // Only the username goes to the page, never the password.
-            'login' => $login === null ? null : ['stored' => $login['stored'], 'username' => $login['username'], 'since' => $login['since']],
+            'servers' => (new MariadbQueryService())->servers(),
+            'accounts' => (new QueryAccountService())->forUser($user),
             'input' => $input,
             'result' => $result,
+            'accountError' => $accountError,
+            // Never the password.
+            'accountInput' => array_diff_key($accountInput, ['password' => true]),
+            'tested' => $tested,
             'recent' => MariadbQuery::query()->where('user_id', $user->id)->orderByDesc('id')->limit(20)->get()->all(),
             'notice' => $this->request->flash('notice'),
             'error' => $error ?? $this->request->flash('error'),

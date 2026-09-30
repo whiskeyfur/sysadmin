@@ -170,3 +170,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Brand renamed SysAdmin, links to /servers: every server with colour-coded report buttons (SSH, MariaDB, Apache, Vhosts).
 * 2026-09-29 — SSL report table: the latest check per certificate (per place served) only.
 * 2026-09-29 — SSL checks record the host contacted and the address reached; the report table is one row per certificate and origin (load balancers).
+* 2026-09-29 — Query tool logins: each user's private list of accounts (validated on every server chosen before saving, encrypted), chosen per server; the session login is gone.

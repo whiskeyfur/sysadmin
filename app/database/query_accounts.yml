@@ -1,0 +1,25 @@
+# Each user's private MariaDB/MySQL logins for the query tool (QueryAccountService): only the owner sees or
+# uses them. password: encrypted with SecretCipher (context "query-account:<user id>:<id>"), never shown.
+# servers: JSON list of the server ids it's for. refused: JSON server id => why, from the last test (the
+# servers that didn't accept it); tested_at: when that was.
+columns:
+  user_id:
+    type: integer
+    index: true
+  label:
+    type: string
+  username:
+    type: string
+  password:
+    type: text
+    nullable: true
+  servers: text
+  refused:
+    type: text
+    nullable: true
+  tested_at:
+    type: timestamp
+    nullable: true
+  last_used_at:
+    type: timestamp
+    nullable: true

@@ -77,10 +77,12 @@ class RewriteRules
 
     /**
      * @param list<ApacheNode> $directives the scope's own directives, conditional sections looked through
+     * @param bool $raw values as written in the file (for editing), not with ${VARIABLES} filled in (for simulating)
      */
-    public static function fromNodes(array $directives): self
+    public static function fromNodes(array $directives, bool $raw = false): self
     {
         $set = new self();
+        $arg = fn (ApacheNode $node, int $i = 0) => $raw ? $node->rawArg($i) : $node->arg($i);
         $pending = [];
 
         foreach ($directives as $node) {
@@ -98,7 +100,7 @@ class RewriteRules
                     break;
 
                 case 'rewritebase':
-                    $set->base = $node->arg();
+                    $set->base = $arg($node);
                     $set->baseNode = $node;
 
                     break;
@@ -115,7 +117,7 @@ class RewriteRules
                         break;
                     }
 
-                    $pending[] = ['test' => $node->arg(0), 'pattern' => $node->arg(1), 'flags' => self::condFlags($node->arg(2)), 'node' => $node];
+                    $pending[] = ['test' => $arg($node, 0), 'pattern' => $arg($node, 1), 'flags' => self::condFlags($arg($node, 2)), 'node' => $node];
 
                     break;
 
@@ -129,9 +131,9 @@ class RewriteRules
 
                     $set->rules[] = [
                         'conds' => $pending,
-                        'pattern' => $node->arg(0),
-                        'substitution' => $node->arg(1),
-                        'flags' => self::ruleFlags($node->arg(2)),
+                        'pattern' => $arg($node, 0),
+                        'substitution' => $arg($node, 1),
+                        'flags' => self::ruleFlags($arg($node, 2)),
                         'node' => $node,
                         'start' => $pending === [] ? $node->line : $pending[0]['node']->line,
                         'end' => $node->endLine,

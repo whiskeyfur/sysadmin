@@ -30,6 +30,9 @@ class SettingsService
 
     public const SSL_CHECK_HOURS = 'ssl_check_hours';
 
+    // A server that doesn't send its intermediate certificate: 0 note (OK), 1 warning, 2 critical.
+    public const SSL_MISSING_INTERMEDIATE = 'ssl_missing_intermediate';
+
     public const ACCOUNT_WARNING_DAYS = 'account_warning_days';
 
     public const DISK_WARNING_PERCENT = 'disk_warning_percent';
@@ -73,6 +76,7 @@ class SettingsService
         self::LOGIN_PASSKEY => 0,
         self::SSL_IMPORT_NAMES => 1,
         self::SSL_CHECK_HOURS => 24,
+        self::SSL_MISSING_INTERMEDIATE => 0,
         self::ACCOUNT_WARNING_DAYS => 7,
         self::DISK_WARNING_PERCENT => 85,
         self::DISK_CRITICAL_PERCENT => 95,
@@ -98,7 +102,7 @@ class SettingsService
      */
     public const SECTIONS = [
         'app' => [self::SESSION_TIMEOUT_MINUTES, self::LOGIN_PASSWORD, self::LOGIN_AUTHENTICATOR, self::LOGIN_PASSKEY],
-        'ssl' => [self::SSL_WARNING_DAYS, self::SSL_IMPORT_NAMES, self::SSL_CHECK_HOURS],
+        'ssl' => [self::SSL_WARNING_DAYS, self::SSL_IMPORT_NAMES, self::SSL_CHECK_HOURS, self::SSL_MISSING_INTERMEDIATE],
         'ssh' => [self::DISK_WARNING_PERCENT, self::DISK_CRITICAL_PERCENT, self::ACCOUNT_WARNING_DAYS],
         'mariadb' => [
             self::MYSQL_CONNECTIONS_WARNING_PERCENT,
@@ -130,6 +134,7 @@ class SettingsService
         self::LOGIN_PASSKEY => ['min' => 0, 'max' => 2],
         self::SSL_IMPORT_NAMES => ['min' => 0, 'max' => 1],
         self::SSL_CHECK_HOURS => ['min' => 1, 'max' => 168],
+        self::SSL_MISSING_INTERMEDIATE => ['min' => 0, 'max' => 2],
         self::ACCOUNT_WARNING_DAYS => ['min' => 1, 'max' => 365],
         self::DISK_WARNING_PERCENT => ['min' => 1, 'max' => 100],
         self::DISK_CRITICAL_PERCENT => ['min' => 1, 'max' => 100],
@@ -262,6 +267,7 @@ class SettingsService
             self::LOGIN_PASSKEY => 'Passkey or security key',
             self::SSL_IMPORT_NAMES => 'Adding hostnames from certificates',
             self::SSL_CHECK_HOURS => 'Certificate check interval',
+            self::SSL_MISSING_INTERMEDIATE => 'Missing intermediate certificate',
             self::ACCOUNT_WARNING_DAYS => 'Account rotation warning period',
             self::DISK_WARNING_PERCENT => 'disk warning level',
             self::DISK_CRITICAL_PERCENT => 'disk critical level',

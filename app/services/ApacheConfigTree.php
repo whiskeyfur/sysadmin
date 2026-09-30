@@ -173,7 +173,7 @@ class ApacheConfigTree
             if (preg_match('#^<([A-Za-z]+)(?:\s+(.*?))?\s*>$#', $line, $m) === 1) {
                 $name = strtolower($m[1]);
                 $args = $this->arguments($m[2] ?? '');
-                $node = new ApacheNode('block', $name, $args, $file, $start, $start, $parent->active && $this->condition($name, $args), $parent);
+                $node = new ApacheNode('block', $name, $args, $file, $start, $start, $parent->active && $this->condition($name, $args), $parent, $this->arguments($m[2] ?? '', false));
                 $parent->children[] = $node;
                 $stack[] = $node;
 
@@ -181,9 +181,11 @@ class ApacheConfigTree
             }
 
             $words = $this->arguments($line);
+            $raw = $this->arguments($line, false);
             $name = strtolower((string) array_shift($words));
+            array_shift($raw);
             $on = $parent->active;
-            $node = new ApacheNode('directive', $name, $words, $file, $start, $i + 1, $on, $parent);
+            $node = new ApacheNode('directive', $name, $words, $file, $start, $i + 1, $on, $parent, $raw);
             $parent->children[] = $node;
 
             if (!$on) {
@@ -310,12 +312,16 @@ class ApacheConfigTree
      *
      * @return list<string>
      */
-    private function arguments(string $text): array
+    private function arguments(string $text, bool $resolve = true): array
     {
         preg_match_all('/"((?:[^"\\\\]|\\\\.)*)"|\'([^\']*)\'|(\S+)/', $text, $matches, PREG_SET_ORDER);
 
-        return array_map(function (array $m) {
+        return array_map(function (array $m) use ($resolve) {
             $word = isset($m[3]) ? $m[3] : (isset($m[2]) && $m[2] !== '' ? $m[2] : str_replace('\\"', '"', $m[1]));
+
+            if (!$resolve) {
+                return $word;
+            }
 
             return (string) preg_replace_callback('/\$\{(\w+)\}/', fn ($v) => $this->variables[$v[1]] ?? (getenv($v[1]) ?: $v[0]), $word);
         }, $matches);

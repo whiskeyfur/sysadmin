@@ -134,3 +134,69 @@ test('a valid certificate that misses a listed hostname is a warning', function 
         ->and($result->summary)->toContain("Doesn't cover shop.example.com")
         ->and($result->details['uncovered'])->toBe(['shop.example.com']);
 });
+
+test('a server that leaves out its intermediate: completed from the certificate\'s CA Issuers address, noted, and as severe as the setting says', function () {
+    $dir = sys_get_temp_dir() . '/sys-aia-' . bin2hex(random_bytes(4));
+    mkdir($dir);
+    $key = fn () => openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
+    file_put_contents("$dir/ca.cnf", "[req]\ndistinguished_name=dn\n[dn]\n[ca]\nbasicConstraints=critical,CA:true\nkeyUsage=critical,keyCertSign,cRLSign\n[leaf]\nsubjectAltName=DNS:localhost\nauthorityInfoAccess=caIssuers;URI:http://aia.test/int.crt\n");
+    $rootKey = $key();
+    $root = openssl_csr_sign(openssl_csr_new(['commonName' => 'Test Root'], $rootKey), null, $rootKey, 30, ['config' => "$dir/ca.cnf", 'x509_extensions' => 'ca', 'digest_alg' => 'sha256']);
+    $intKey = $key();
+    $int = openssl_csr_sign(openssl_csr_new(['commonName' => 'Test Intermediate'], $intKey), $root, $rootKey, 30, ['config' => "$dir/ca.cnf", 'x509_extensions' => 'ca', 'digest_alg' => 'sha256']);
+    $leafKey = $key();
+    $leaf = openssl_csr_sign(openssl_csr_new(['commonName' => 'localhost'], $leafKey), $int, $intKey, 30, ['config' => "$dir/ca.cnf", 'x509_extensions' => 'leaf', 'digest_alg' => 'sha256']);
+    openssl_x509_export_to_file($root, "$dir/root.pem");
+    openssl_x509_export_to_file($int, "$dir/int.pem");
+    openssl_x509_export_to_file($leaf, "$dir/leaf.pem");
+    openssl_pkey_export_to_file($leafKey, "$dir/leaf.key");
+    $otherKey = $key();
+    openssl_x509_export(openssl_csr_sign(openssl_csr_new(['commonName' => 'Stranger'], $otherKey), null, $otherKey, 30, ['config' => "$dir/ca.cnf", 'x509_extensions' => 'ca', 'digest_alg' => 'sha256']), $stranger);
+    openssl_x509_export($int, $intPem);
+    $der = base64_decode(preg_replace('/-----[^-]+-----|\s/', '', $intPem));
+
+    $servers = [];
+    $serve = function (array $extra) use ($dir, &$servers) {
+        $probe = stream_socket_server('tcp://127.0.0.1:0');
+        $port = (int) substr(strrchr(stream_socket_get_name($probe, false), ':'), 1);
+        fclose($probe);
+        $servers[] = proc_open(['openssl', 's_server', '-accept', "127.0.0.1:$port", '-cert', "$dir/leaf.pem", '-key', "$dir/leaf.key", ...$extra, '-www', '-quiet'], [1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
+
+        for ($i = 0; $i < 50 && @fsockopen('127.0.0.1', $port) === false; $i++) {
+            usleep(100000);
+        }
+
+        return $port;
+    };
+    $checker = fn (?string $answer, HealthStatus $level = HealthStatus::Ok) => new SslCheckService("$dir/root.pem", fetch: function (string $url) use ($answer) {
+        return $url === 'http://aia.test/int.crt' ? $answer : null;
+    }, missingIntermediate: $level);
+
+    try {
+        $leafOnly = $serve([]);
+        $fullChain = $serve(['-cert_chain', "$dir/int.pem"]);
+
+        $noted = $checker($der)->check('localhost', $leafOnly);
+        expect($noted->status)->toBe(HealthStatus::Ok)
+            ->and($noted->summary)->toContain("doesn't send its intermediate certificate (Test Intermediate)")->toContain('downloaded it from http://aia.test/int.crt')
+            ->and($noted->details['missing_intermediate'])->toBe(['issuer' => 'Test Intermediate', 'url' => 'http://aia.test/int.crt'])
+            ->and($checker($intPem, HealthStatus::Warning)->check('localhost', $leafOnly)->status)->toBe(HealthStatus::Warning)
+            ->and($checker($der, HealthStatus::Critical)->check('localhost', $leafOnly)->status)->toBe(HealthStatus::Critical)
+            // Nothing to fetch, or something that doesn't complete the chain: still not trusted.
+            ->and($checker(null)->check('localhost', $leafOnly)->summary)->toContain('not trusted')
+            ->and($checker($stranger)->check('localhost', $leafOnly)->summary)->toContain('not trusted')
+            // A server that sends the whole chain: plain OK, nothing fetched.
+            ->and($checker(null)->check('localhost', $fullChain)->summary)->not->toContain('intermediate')
+            ->and($checker(null)->check('localhost', $fullChain)->status)->toBe(HealthStatus::Ok);
+    } finally {
+        array_map('proc_terminate', $servers);
+        array_map('unlink', glob("$dir/*") ?: []);
+        rmdir($dir);
+    }
+});
+
+test('an intermediate is only downloaded over plain http from a public address', function (string $url) {
+    $download = new ReflectionMethod(SslCheckService::class, 'download');
+
+    expect($download->invoke(new SslCheckService(), $url))->toBeNull();
+})->with(['http://127.0.0.1/int.crt', 'http://localhost/int.crt', 'http://10.1.2.3/int.crt', 'http://192.168.1.1/x', 'http://169.254.169.254/latest', 'https://crt.sectigo.com/x.crt', 'http://user@crt.sectigo.com/x', 'file:///etc/passwd']);

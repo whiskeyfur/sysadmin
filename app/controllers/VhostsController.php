@@ -22,6 +22,7 @@ class VhostsController extends Controller
             'auth' => $this->authContext(),
             'vhosts' => $vhosts,
             'certificates' => $service->certificates($vhosts),
+            'error' => $this->request->flash('error'),
         ]);
     }
 

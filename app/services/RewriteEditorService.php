@@ -137,7 +137,7 @@ class RewriteEditorService
 
                 return [
                     'id' => $id, 'kind' => $block->name, 'title' => $this->title($block), 'file' => $block->file, 'text' => $text,
-                    'hash' => hash('sha256', $text), 'rules' => RewriteRules::fromNodes($block->effective()), 'block' => $block,
+                    'hash' => hash('sha256', $text), 'rules' => RewriteRules::fromNodes($this->ownDirectives($block), true), 'block' => $block,
                     'exists' => true, 'editable' => $this->fileKind($block->file) !== null,
                 ];
             }
@@ -422,7 +422,17 @@ class RewriteEditorService
         $block = new ApacheNode('block', 'htaccess', [], "$dir/.htaccess", 0, 0);
         $this->tree()->parseText($text ?? (string) $this->tree()->contents("$dir/.htaccess"), "$dir/.htaccess", $block);
 
-        return RewriteRules::fromNodes($block->effective());
+        return RewriteRules::fromNodes($block->effective(), true);
+    }
+
+    /**
+     * A section's directives from its own file only (an Include's lines belong to the included file).
+     *
+     * @return list<ApacheNode>
+     */
+    private function ownDirectives(ApacheNode $block): array
+    {
+        return array_values(array_filter($block->effective(), fn (ApacheNode $n) => $n->file === $block->file));
     }
 
     /**

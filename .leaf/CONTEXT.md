@@ -101,6 +101,7 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Sign-in methods set by admins (App settings): password, authenticator, passkey/security key, each Off/Optional/Required; required = must set up, any one signs in. Profile page (/profile) for setup and changes; WebAuthn via lbuchs/webauthn parsing with the app's own ceremony checks (`LoginMethodService`, `PasskeyService`, `ProfileService`, `passkeys` table, `users.login_password`).
 * 2026-09-29 — Managing this machine's Apache (/admin/apache/local): through a small standalone root helper (bin/sys-apache-helper, installed with sudo, one sudoers rule), not by running the app as root — the user's choice; admins from this machine only, fresh check per change, configtest-and-undo, audit log (`LocalApacheService`, `apache_admin_log`).
 * 2026-09-29 — Rewrite rule editor (config sections and .htaccess, line-precise edits, helper v2 for .htaccess) and URL simulator (`ApacheConfigTree`, `ApacheSimulator`), verified against a real apache2 in the tests.
+* 2026-09-29 — Virtual host editor (fields or the block's text, values as written) for this machine and monitored servers; remote changes rely on the SSH user's sudo rules (checked with `sudo -n -l`, configtest then undo) — the user's choice over installing anything there. Simulator applies server/vhost-level DirectoryIndex etc. SSL checks complete a missing intermediate from AIA like browsers (public http only) and note it; severity is an SSL setting (Info/Warning/Danger).
 
 ---
 

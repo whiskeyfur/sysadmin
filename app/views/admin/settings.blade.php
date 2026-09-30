@@ -54,6 +54,14 @@
                     </select>
                     <p class="hint">Every check reads the hostnames a certificate covers (SAN); new ones, e.g. from a renewal, are added. Only from certificates that check out as valid.</p>
 
+                    <label for="ssl_missing_intermediate">Server doesn't send its intermediate certificate</label>
+                    <select id="ssl_missing_intermediate" name="ssl_missing_intermediate">
+                        @foreach ([0 => 'Info (noted; the certificate stays OK)', 1 => 'Warning', 2 => 'Danger (critical)'] as $level => $name)
+                            <option value="{{ $level }}" {{ $value('ssl_missing_intermediate') === $level ? 'selected' : '' }}>{{ $name }}</option>
+                        @endforeach
+                    </select>
+                    <p class="hint">Browsers fetch a missing intermediate from the address in the certificate and show the site fine; curl, PHP, Java and some phones don't, and reject it. The check does what browsers do (from a public address only) and notes it in the result as info; choose whether that should instead be a warning or danger (critical).</p>
+
                     <label for="ssl_check_hours">Check certificates every (hours)</label>
                     <input type="text" id="ssl_check_hours" name="ssl_check_hours" value="{{ $value('ssl_check_hours') }}" inputmode="numeric" required>
                     <p class="hint">Scheduled checks of every certificate, on servers and served directly (1–168, default {{ $default('ssl_check_hours') }}: once a day). Check now and Check all now still work any time.</p>

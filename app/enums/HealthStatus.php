@@ -32,6 +32,16 @@ enum HealthStatus: string
     /**
      * @param iterable<self> $statuses
      */
+    /**
+     * An admin setting's level: 0 note (OK), 1 warning, 2 critical.
+     */
+    public static function fromLevel(int $level): self
+    {
+        return match ($level) {
+            1 => self::Warning, 2 => self::Critical, default => self::Ok
+        };
+    }
+
     public static function worst(iterable $statuses): self
     {
         $worst = self::Ok;

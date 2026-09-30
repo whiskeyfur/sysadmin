@@ -10,10 +10,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * @property int $id
  * @property int $user_id
+ * @property int|null $server_id null: this machine
  * @property string $action
  * @property string|null $target
  * @property bool $ok
  * @property string|null $output
+ * @property string|null $previous a remote file's text before the change
  * @property Carbon $created_at
  * @property-read User|null $user
  */
@@ -26,12 +28,12 @@ class ApacheAdminLog extends Model
     /**
      * @var list<string>
      */
-    protected $fillable = ['user_id', 'action', 'target', 'ok', 'output', 'created_at'];
+    protected $fillable = ['user_id', 'server_id', 'action', 'target', 'ok', 'output', 'previous', 'created_at'];
 
     /**
      * @var array<string, string>
      */
-    protected $casts = ['user_id' => 'integer', 'ok' => 'boolean', 'created_at' => 'datetime'];
+    protected $casts = ['user_id' => 'integer', 'server_id' => 'integer', 'ok' => 'boolean', 'created_at' => 'datetime'];
 
     /**
      * @return BelongsTo<User, $this>

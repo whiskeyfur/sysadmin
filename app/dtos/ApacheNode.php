@@ -26,6 +26,7 @@ class ApacheNode
      * @param list<string> $args with ${VARIABLES} filled in
      * @param int $line first line (a section's opening line), 1-based
      * @param int $endLine last line (continued lines; a section's closing line)
+     * @param list<string> $rawArgs as written, ${VARIABLES} not filled in
      */
     public function __construct(
         public readonly string $kind,
@@ -36,7 +37,16 @@ class ApacheNode
         public int $endLine,
         public readonly bool $active = true,
         public readonly ?ApacheNode $parent = null,
+        public readonly array $rawArgs = [],
     ) {
+    }
+
+    /**
+     * An argument as written in the file (${VARIABLES} not filled in): what an editor shows and writes back.
+     */
+    public function rawArg(int $i = 0): string
+    {
+        return $this->rawArgs[$i] ?? $this->args[$i] ?? '';
     }
 
     public function isBlock(string ...$names): bool

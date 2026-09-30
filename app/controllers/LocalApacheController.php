@@ -42,6 +42,7 @@ class LocalApacheController extends Controller
 
         $this->response->withHeader('Cache-Control', 'no-store');
         $this->response->view('apache.local', $this->common() + [
+            'vhosts' => $status['ready'] ? (new \App\Services\VhostEditorService())->localVhosts() : [],
             'status' => $status,
             'overview' => $overview,
             'errorLog' => $log,

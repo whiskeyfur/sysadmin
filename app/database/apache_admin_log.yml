@@ -1,9 +1,15 @@
-# Changes made to this machine's Apache through sys-apache-helper (LocalApacheService): who, what, and how it went.
+# Changes made to Apache through the app: this machine's through sys-apache-helper (LocalApacheService,
+# server_id null), a monitored server's through the SSH user's sudo rules (RemoteApacheService, server_id set).
 # action: e.g. "write", "enable", "reload"; target: e.g. "site 002-sys"; output: what Apache and the tools said.
+# previous: a remote file's text before the change (the backup; this machine's helper keeps its own).
 timestamps: false
 columns:
   user_id:
     type: integer
+    index: true
+  server_id:
+    type: integer
+    nullable: true
     index: true
   action: string
   target:
@@ -11,6 +17,9 @@ columns:
     nullable: true
   ok: boolean
   output:
+    type: mediumText
+    nullable: true
+  previous:
     type: mediumText
     nullable: true
   created_at:

@@ -28,3 +28,8 @@ app()->get('/admin/apache/local/rewrite/rule', $localAdmin + ['RewriteController
 app()->post('/admin/apache/local/rewrite/rule', $localAdminHashing + ['RewriteController@saveRule']);
 app()->post('/admin/apache/local/rewrite/change', $localAdminHashing + ['RewriteController@change']);
 app()->get('/admin/apache/local/simulate', $localAdmin + ['RewriteController@simulate']);
+
+// One <VirtualHost> definition, this machine's or a monitored server's (through its SSH user's sudo rules).
+app()->get('/admin/vhost', $localAdmin + ['VhostEditorController@edit']);
+app()->post('/admin/vhost', $localAdminHashing + ['VhostEditorController@save']);
+app()->post('/admin/vhost/service', $localAdminHashing + ['VhostEditorController@service']);

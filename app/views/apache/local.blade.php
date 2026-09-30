@@ -59,6 +59,24 @@
             </div>
 
             <div class="card">
+                <h2>Virtual hosts</h2>
+                @if ($vhosts)
+                    <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Names</th><th>Where</th><th data-nosort></th></tr></thead>
+                        <tbody>
+                            @foreach ($vhosts as $vhost)
+                                <tr><td>{{ $vhost['title'] }}</td><td class="muted"><code>{{ $vhost['where'] }}</code></td><td><a class="button secondary-link" href="/admin/vhost?id={{ urlencode($vhost['id']) }}">Edit</a></td></tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                    </div>
+                @else
+                    <p class="muted">None.</p>
+                @endif
+            </div>
+
+            <div class="card">
                 <h2>Configuration snippets</h2>
                 @include('apache.local-items', ['items' => $overview['confs'] ?? [], 'kind' => 'conf', 'editable' => true])
             </div>

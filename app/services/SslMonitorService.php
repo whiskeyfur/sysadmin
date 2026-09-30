@@ -39,7 +39,8 @@ class SslMonitorService
         ?SslCheckService $checker = null,
         private readonly ClockInterface $clock = new SystemClock(),
     ) {
-        $this->checker = $checker ?? new SslCheckService(warningDays: (new SettingsService())->sslWarningDays());
+        $settings = new SettingsService();
+        $this->checker = $checker ?? new SslCheckService(warningDays: $settings->sslWarningDays(), missingIntermediate: \App\Enums\HealthStatus::fromLevel($settings->integer(SettingsService::SSL_MISSING_INTERMEDIATE)));
     }
 
     /**

@@ -27,7 +27,7 @@ function simulatorWorld(): array
     $files = [
         'a/index.html', 'a/target.html', 'a/new/x.html', 'a/items/7.html', 'a/blog/index.html', 'a/blog/real.html', 'a/shop/product.html',
         'a/sub/index.html', 'a/empty/nothing.txt', 'a/deny/f.html', 'a/noov/f.html', 'a/badov/f.html', 'static/s.css', 'b/index.html', 'b/landing',
-        'b/app/index.html', 'a/loop/start', 'a/end/b', 'a/end/c', 'static/app/page.html', 'a/script.html', 'a/front/router.html', 'a/front/real.html', 'a/front/.env', 'a/inh/x.html', 'a/inh/target2.html', 'a/inh/keep/x.html', 'a/inh/drop/x.html', 'a/inh/own/x.html', 'a/inh/own/y.html',
+        'b/app/index.html', 'a/loop/start', 'a/end/b', 'a/end/c', 'static/app/page.html', 'a/script.html', 'a/phpidx/index.php', 'a/front/router.html', 'a/front/real.html', 'a/front/.env', 'a/inh/x.html', 'a/inh/target2.html', 'a/inh/keep/x.html', 'a/inh/drop/x.html', 'a/inh/own/x.html', 'a/inh/own/y.html',
         'a/inh/both/x.html', 'a/inh/both/y.html', 'a/listing/one.txt', 'a/ci/Page.html', 'a/or/ok.html',
     ];
 
@@ -76,7 +76,9 @@ function simulatorWorld(): array
         $modules
         TypesConfig /etc/mime.types
         DocumentRoot $t/a
-        DirectoryIndex index.html
+        <IfModule mod_dir.c>
+            DirectoryIndex index.html index.cgi index.php
+        </IfModule>
         <Directory />
             AllowOverride None
             Require all denied
@@ -224,6 +226,8 @@ test('the simulator agrees with a real apache2', function (string $host, string 
     ['a.test', '/end/b', 200],
     ['a.test', '/static/app/go', 200],
     ['a.test', '/script.html/extra', 404],
+    ['a.test', '/phpidx/', 200],
+    ['127.0.0.1', '/phpidx/', 200],
     ['a.test', '/front/', 302],
     ['a.test', '/front/some/route', 200],
     ['a.test', '/front/real.html', 200],

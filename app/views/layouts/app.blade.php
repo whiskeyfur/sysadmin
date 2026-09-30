@@ -83,6 +83,7 @@
         td.row-actions { display: table-cell; }
         td.row-actions > * { display: inline-block; margin: 3px 6px 3px 0; vertical-align: middle; }
         .table-wrap { overflow-x: auto; }
+        button:disabled, button:disabled:hover { opacity: .45; cursor: not-allowed; }
         .inline-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
         .inline-form label { margin-top: 0; }
         .badge.user { background: var(--code-bg); }

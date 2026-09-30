@@ -18,6 +18,17 @@ use Psr\Clock\ClockInterface;
  *
  * An invalid certificate is critical. A valid one is a warning once it
  * expires within the warning period (an admin setting, default 7 days).
+ *
+ * A server that doesn't send its intermediate certificate fails
+ * verification here (and in curl, PHP, Java, some phones), though browsers
+ * fetch the missing intermediate from the address in the certificate (AIA
+ * "CA Issuers") and show the site fine. So when verification fails, the
+ * intermediate is fetched the same way (plain HTTP to a public address,
+ * 5 seconds, 20 KB; never a private or local one) and the chain verified
+ * with it as an untrusted link (openssl_x509_checkpurpose): if that works,
+ * it's noted in the result (what to fix, and that the check had to
+ * download the intermediate), not "not trusted"; the admin setting
+ * ssl_missing_intermediate makes it a warning or critical.
  */
 class SslCheckService
 {
@@ -32,8 +43,17 @@ class SslCheckService
         private readonly ClockInterface $clock = new SystemClock(),
         private readonly CaCertificateService $certificates = new CaCertificateService(),
         private readonly int $warningDays = SettingsService::DEFAULTS[SettingsService::SSL_WARNING_DAYS],
+        private readonly ?\Closure $fetch = null,
+        private readonly HealthStatus $missingIntermediate = HealthStatus::Ok,
     ) {
     }
+
+    /**
+     * Intermediates fetched by this checker (one monitoring run), by URL.
+     *
+     * @var array<string, ?string>
+     */
+    private array $fetched = [];
 
     public function warningDays(): int
     {
@@ -53,6 +73,9 @@ class SslCheckService
         [$unverified, $connectError] = $verified === null ? $this->connect($connectTo, $host, $port, false) : [null, null];
 
         $info = $verified ?? $unverified;
+        $chain = $verified === null && $unverified !== null && ($verifyError === null || !str_contains($verifyError, 'did not match'))
+            ? $this->completeChain($unverified['pem'], $unverified['leaf'])
+            : null;
 
         return $this->evaluate(
             $host,
@@ -64,6 +87,7 @@ class SslCheckService
             $connectError,
             $this->clock->now()->getTimestamp(),
             $expectedNames,
+            $chain,
         );
     }
 
@@ -110,11 +134,11 @@ class SslCheckService
      * Judge the outcome. Pure, for tests.
      *
      * @param array<string, mixed>|null $leaf openssl_x509_parse() of the site's certificate
-     */
-    /**
      * @param list<string> $expectedNames
+     * @param array{issuer: string, url: string}|null $chain the intermediate the server should have sent, when fetching it
+     *                                                    made the chain verify
      */
-    public function evaluate(string $host, int $port, bool $verified, ?string $verifyError, ?array $leaf, ?string $protocol, ?string $connectError, int $now, array $expectedNames = []): CheckResult
+    public function evaluate(string $host, int $port, bool $verified, ?string $verifyError, ?array $leaf, ?string $protocol, ?string $connectError, int $now, array $expectedNames = [], ?array $chain = null): CheckResult
     {
         $key = 'ssl:' . $host . ':' . $port;
         $label = $port === 443 ? $host : "$host:$port";
@@ -139,6 +163,15 @@ class SslCheckService
             'verify_error' => $verifyError,
         ];
         $expiry = 'expires ' . gmdate('Y-m-d', $validTo);
+        $incomplete = false;
+
+        // The chain verified once the missing intermediate was fetched: valid (as browsers see it), if the name fits.
+        if (!$verified && $chain !== null && $validTo >= $now && $validFrom <= $now
+            && array_filter($names ?: [$subject], fn (string $pattern) => self::covers($pattern, $host)) !== []) {
+            $verified = true;
+            $incomplete = true;
+            $details['missing_intermediate'] = $chain;
+        }
 
         if (!$verified) {
             $reason = match (true) {
@@ -155,9 +188,15 @@ class SslCheckService
         $summary = "Valid, $expiry (" . ($daysLeft >= 1 ? floor($daysLeft) . ' days' : 'less than a day') . "), issued by $issuer.";
         $status = $daysLeft <= $this->warningDays ? HealthStatus::Warning : HealthStatus::Ok;
 
-        if ($status !== HealthStatus::Ok) {
+        if ($daysLeft <= $this->warningDays) {
             $summary .= " Expires within {$this->warningDays} days: renew it soon.";
         }
+
+        if ($incomplete && $chain !== null) {
+            $status = HealthStatus::worst([$status, $this->missingIntermediate]);
+            $summary .= " Note: the server doesn't send its intermediate certificate ({$chain['issuer']}); this check downloaded it from {$chain['url']}, as browsers do. curl, PHP, Java and some phones reject the site: send the full chain (in Apache, SSLCertificateFile pointing at the fullchain file).";
+        }
+
 
         $uncovered = array_values(array_filter(
             $expectedNames,
@@ -174,7 +213,7 @@ class SslCheckService
     }
 
     /**
-     * @return array{0: array{leaf: array<string, mixed>, protocol: ?string}|null, 1: ?string}
+     * @return array{0: array{leaf: array<string, mixed>, protocol: ?string, pem: string}|null, 1: ?string}
      */
     private function connect(string $address, string $host, int $port, bool $verify): array
     {
@@ -212,8 +251,100 @@ class SslCheckService
         $protocol = stream_get_meta_data($stream)['crypto']['protocol'] ?? null;
         fclose($stream);
         $leaf = $certificate === null ? false : openssl_x509_parse($certificate);
+        $pem = '';
 
-        return $leaf === false ? [null, 'no certificate received'] : [['leaf' => $leaf, 'protocol' => $protocol], null];
+        if ($certificate !== null) {
+            openssl_x509_export($certificate, $pem);
+        }
+
+        return $leaf === false ? [null, 'no certificate received'] : [['leaf' => $leaf, 'protocol' => $protocol, 'pem' => $pem], null];
+    }
+
+    /**
+     * Fetch the intermediate named in the certificate (AIA "CA Issuers") and verify the chain with it as an
+     * untrusted link: the intermediate that was missing, or null if that doesn't make a trusted chain.
+     *
+     * @param array<string, mixed> $leaf
+     * @return array{issuer: string, url: string}|null
+     */
+    private function completeChain(string $leafPem, array $leaf): ?array
+    {
+        if ($leafPem === '' || preg_match('#CA Issuers - URI:(\S+)#', (string) ($leaf['extensions']['authorityInfoAccess'] ?? ''), $m) !== 1) {
+            return null;
+        }
+
+        $url = $m[1];
+        $body = array_key_exists($url, $this->fetched) ? $this->fetched[$url] : ($this->fetched[$url] = $this->fetch !== null ? ($this->fetch)($url) : $this->download($url));
+
+        if ($body === null || $body === '') {
+            return null;
+        }
+
+        $pem = str_contains($body, '-----BEGIN CERTIFICATE-----') ? $body : "-----BEGIN CERTIFICATE-----\n" . chunk_split(base64_encode($body), 64, "\n") . "-----END CERTIFICATE-----\n";
+        $intermediate = @openssl_x509_parse($pem);
+
+        if ($intermediate === false) {
+            return null;
+        }
+
+        $file = tempnam(sys_get_temp_dir(), 'sys-aia-');
+
+        if ($file === false) {
+            return null;
+        }
+
+        try {
+            file_put_contents($file, $pem);
+            $ok = @openssl_x509_checkpurpose($leafPem, X509_PURPOSE_SSL_SERVER, [$this->caFile ?? $this->certificates->systemBundle()], $file);
+        } finally {
+            @unlink($file);
+        }
+
+        return $ok === true ? ['issuer' => (string) ($intermediate['subject']['CN'] ?? $intermediate['subject']['O'] ?? 'intermediate'), 'url' => $url] : null;
+    }
+
+    /**
+     * GET a CA Issuers URL: plain http, a public address only (a certificate mustn't make the app reach inside the
+     * network), connecting to the address checked, 5 seconds, 20 KB.
+     */
+    private function download(string $url): ?string
+    {
+        $parts = parse_url($url);
+
+        if ($parts === false || strtolower($parts['scheme'] ?? '') !== 'http' || empty($parts['host']) || isset($parts['user'])) {
+            return null;
+        }
+
+        $ips = gethostbynamel($parts['host']) ?: [];
+
+        foreach ($ips as $ip) {
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
+                return null;
+            }
+        }
+
+        if ($ips === []) {
+            return null;
+        }
+
+        $port = (int) ($parts['port'] ?? 80);
+        $path = ($parts['path'] ?? '/') . (isset($parts['query']) ? '?' . $parts['query'] : '');
+        $context = stream_context_create(['http' => ['timeout' => 5, 'follow_location' => 0, 'ignore_errors' => true, 'header' => 'Host: ' . $parts['host'] . "\r\nUser-Agent: sys-ssl-check\r\n"]]);
+
+        set_error_handler(fn () => true);
+
+        try {
+            // The address checked above, so a DNS answer changing in between can't point it elsewhere.
+            $body = file_get_contents("http://{$ips[0]}:$port$path", false, $context, 0, 20000);
+        } finally {
+            restore_error_handler();
+        }
+
+        if (!is_string($body)) {
+            return null;
+        }
+
+        return str_contains(implode("\n", $http_response_header), ' 200 ') ? $body : null;
     }
 
     /**

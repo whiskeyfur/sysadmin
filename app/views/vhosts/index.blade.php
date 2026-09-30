@@ -6,6 +6,9 @@
 @section('content')
     <div class="card">
         <h1>Virtual hosts</h1>
+        @if ($error)
+            <div class="alert error" role="alert">{{ $error }}</div>
+        @endif
         <p class="muted">The &lt;VirtualHost&gt; blocks in each server's Apache configuration, found when Apache is scanned (hourly with its checks, or Rescan on the <a href="/apache">Apache</a> page) and removed when they leave the configuration. SSL shows whether a certificate in <a href="/ssl">SSL monitoring</a> covers the name.</p>
 
         @if (count($vhosts) === 0)
@@ -65,7 +68,12 @@
                                 @endif
                             </td>
                             <td data-sort="{{ $vhost->first_seen_at->getTimestamp() }}" style="white-space: nowrap">{{ \App\Utils\LocalTime::format($vhost->first_seen_at, 'Y-m-d') }}</td>
-                            <td><a href="/vhosts/reports?vhost={{ $vhost->id }}">Report</a></td>
+                            <td class="row-actions">
+                                <a href="/vhosts/reports?vhost={{ $vhost->id }}">Report</a>
+                                @if ($auth->isAdmin() && \App\Middleware\RequireLocalAdmin::fromThisMachine() && $vhost->config_file && $vhost->server?->sshReady())
+                                    <a href="/admin/vhost?id=vhost:{{ $vhost->id }}&amp;back=vhosts">Edit</a>
+                                @endif
+                            </td>
                         </tr>
                     @endforeach
                 </tbody>

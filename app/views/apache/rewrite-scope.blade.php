@@ -8,6 +8,9 @@
     <div class="card">
         <p class="muted"><a href="/admin/apache/local/rewrite">Rewrite rules</a> ›</p>
         <h1>{{ $scope['title'] }}</h1>
+        @if ($scope['kind'] === 'virtualhost' && $scope['block'])
+            <p><a href="/admin/vhost?id={{ urlencode('local:' . $scope['block']->file . ':' . $scope['block']->line) }}">Edit this virtual host's definition</a></p>
+        @endif
         <p class="muted"><code>{{ $scope['file'] }}</code>{{ $scope['exists'] ? '' : ' (doesn\'t exist yet: adding a rule creates it)' }}. {{ $scope['kind'] === 'htaccess' ? 'Changes apply right away (Apache reads .htaccess on every request), if AllowOverride allows FileInfo here.' : 'Changes are checked with apache2ctl configtest and apply when Apache reloads.' }}</p>
 
         @if ($notice)

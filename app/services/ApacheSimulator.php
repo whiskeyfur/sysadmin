@@ -971,6 +971,16 @@ class ApacheSimulator
         $regex = array_values(array_filter($sections, fn ($n) => $n->name === 'directorymatch' || ($n->name === 'directory' && $n->arg() === '~')));
         $accessName = $this->first($main, 'accessfilename') ?? '.htaccess';
 
+        // Settings outside any section (main server, then the virtual host) are every directory's starting point:
+        // DirectoryIndex, Options, FallbackResource... (mod_rewrite and mod_alias there are server-level, handled before).
+        $serverLevel = fn (array $nodes) => array_values(array_filter($nodes, fn (ApacheNode $n) => $n->kind === 'directive'
+            && !str_starts_with($n->name, 'rewrite') && !str_starts_with($n->name, 'redirect')));
+        $this->merge($config, $serverLevel($main), null, 'server config', $context, false);
+
+        if ($vhost !== null) {
+            $this->merge($config, $serverLevel($vhost->effective()), null, $vhost->where(), $context, false);
+        }
+
         $dir = is_dir($file) ? rtrim($file, '/') : dirname($file);
         $levels = ['/'];
         $path = '';

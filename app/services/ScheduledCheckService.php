@@ -42,6 +42,7 @@ class ScheduledCheckService
         private readonly ClockInterface $clock = new SystemClock(),
         private ?MariadbLogService $logs = null,
         private readonly SettingsService $settings = new SettingsService(),
+        private ?BlocklistService $blocklists = null,
     ) {
     }
 
@@ -70,6 +71,15 @@ class ScheduledCheckService
 
         if ($direct > 0) {
             $log[] = "direct: $direct certificate(s)";
+        }
+
+        // The public blocklists, once a day; then every client address is checked again.
+        $blocklists = $this->blocklists ??= new BlocklistService(clock: $this->clock);
+
+        if ($blocklists->due()) {
+            foreach ($blocklists->refresh() as $line) {
+                $log[] = "blocklists: $line";
+            }
         }
 
         return $log;

@@ -20,6 +20,7 @@
                     @include('reports.tri', ['param' => 'protected', 'label' => '<span class="ip-protected">Protected</span>', 'name' => 'Protected'])
                 </span>
             @endif
+            @include('reports.tri', ['param' => 'listed', 'label' => '<span class="ip-listed">Listed</span>', 'name' => 'On a blocklist'])
             @include('reports.tri', ['param' => 'local', 'label' => 'Localhost', 'name' => 'Localhost', 'state' => 'out'])
         @endif
     </div>

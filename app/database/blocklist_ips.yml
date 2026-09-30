@@ -1,0 +1,15 @@
+# Client addresses from the access logs checked against the downloaded blocklists (BlocklistService):
+# which lists name them (sources, comma-separated; null: none). New addresses are checked when they're
+# imported, all of them again after each download of the lists.
+timestamps: false
+columns:
+  ip:
+    type: string
+    length: 64
+    unique: true
+  sources:
+    type: string
+    nullable: true
+  checked_at:
+    type: timestamp
+    nullable: true

@@ -151,6 +151,8 @@ class ApacheService
         $server->apache_import_state = $state;
         $server->save();
         $this->prune();
+        // New client addresses against the downloaded blocklists (local files; nothing is sent anywhere).
+        (new BlocklistService(clock: $this->clock))->checkNew();
 
         return $this->evaluate($server, $config, $status, $problems);
     }

@@ -1,17 +1,19 @@
 {{-- One page of access log rows (ApacheReportService::accessPage()), for the paged table in
      reports/apache-data. Needs $rows, $banServer (or null), $canBan, $protected (addresses protected
-     from banning) and $errors (request ID => its error log entries). --}}
+     from banning), $errors (request ID => its error log entries) and $listed (address => the blocklists
+     that name it). --}}
 @forelse ($rows as $request)
     @php($badge = $request->status >= 500 ? 'critical' : ($request->status >= 400 ? 'warning' : ($request->status >= 300 ? 'unknown' : 'ok')))
     @php($jails = $banServer?->bannedIn($request->client) ?? [])
     <tr>
         <td style="white-space: nowrap">{{ \App\Utils\LocalTime::format($request->requested_at, 'Y-m-d H:i:s') }}</td>
         <td style="white-space: nowrap">
-            {{-- Green: protected from banning; red: banned (which jails, in the tooltip). --}}
+            {{-- Green: protected from banning; red: banned; amber: on a public blocklist (details in the tooltip). --}}
             @php($guarded = $request->client !== null && in_array($request->client, $protected ?? [], true))
+            @php($lists = $request->client !== null ? ($listed[$request->client] ?? null) : null)
             @if ($request->client)
-                <code class="client-ip{{ $jails ? ' ip-banned' : '' }}{{ $guarded ? ' ip-protected' : '' }}" data-ip="{{ $request->client }}" data-jails="{{ implode(',', $jails) }}" data-protected="{{ $guarded ? '1' : '' }}"
-                    title="{{ $jails ? 'Banned by fail2ban in ' . implode(', ', $jails) . ' (as of ' . \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) . '). ' : '' }}{{ $guarded ? 'Protected from banning (in every jail\'s ignoreip). ' : '' }}Right-click to show only this address{{ $canBan ? ', or ban, unban or protect it' : '' }}.">{{ $request->client }}</code>
+                <code class="client-ip{{ $jails ? ' ip-banned' : '' }}{{ $guarded ? ' ip-protected' : '' }}{{ $lists && !$jails && !$guarded ? ' ip-listed' : '' }}" data-ip="{{ $request->client }}" data-jails="{{ implode(',', $jails) }}" data-protected="{{ $guarded ? '1' : '' }}"
+                    title="{{ $jails ? 'Banned by fail2ban in ' . implode(', ', $jails) . ' (as of ' . \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) . '). ' : '' }}{{ $guarded ? 'Protected from banning (in every jail\'s ignoreip). ' : '' }}{{ $lists ? "On $lists. " : '' }}Right-click to show only this address{{ $canBan ? ', or ban, unban or protect it' : '' }}.">{{ $request->client }}</code>
             @else
                 <code>—</code>
             @endif

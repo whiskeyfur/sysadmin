@@ -6,6 +6,7 @@ use App\Models\ApacheAccessEntry;
 use App\Models\ApacheLogEntry;
 use App\Models\ApacheTraffic;
 use App\Models\ApacheVhost;
+use App\Models\BlocklistIp;
 use App\Models\Fail2banProtection;
 use App\Models\HealthCheck as StoredCheck;
 use App\Models\Server;
@@ -124,10 +125,11 @@ class ApacheReportService extends HistoryReport
      *   statuses: class => in/out (2 for 2xx ... 5; the "in" ones any of them),
      *   banned: addresses fail2ban had banned at the last read, in any jail,
      *   protected: addresses protected from banning,
+     *   listed: addresses the downloaded blocklists name,
      *   local: 127.* and ::1;
      * and client: a whole address exactly, else from its start. Different filters all apply.
      *
-     * @param array{statuses?: array<int, string>, client?: string, banned?: string, protected?: string, local?: string} $filters
+     * @param array{statuses?: array<int, string>, client?: string, banned?: string, protected?: string, listed?: string, local?: string} $filters
      * @return array{rows: list<ApacheAccessEntry>, errors: array<string, int>, total: int, page: int, pages: int} errors: per request ID on the page, its error log entries
      */
     public function accessPage(Server $server, string $range, ?ApacheVhost $vhost = null, int $page = 1, string $search = '', string $sort = 'time', string $direction = 'desc', array $filters = []): array
@@ -173,6 +175,15 @@ class ApacheReportService extends HistoryReport
             if ($state === 'in' || $state === 'out') {
                 $this->clientIn($query, $list(), $state === 'in');
             }
+        }
+
+        // Listed: named by one of the downloaded blocklists (BlocklistService).
+        $listed = BlocklistIp::query()->whereNotNull('sources')->select('ip');
+
+        if (($filters['listed'] ?? '') === 'in') {
+            $query->whereIn('client', $listed);
+        } elseif (($filters['listed'] ?? '') === 'out') {
+            $query->where(fn ($q) => $q->whereNull('client')->orWhereNotIn('client', $listed));
         }
 
         // Localhost: 127.* and ::1.

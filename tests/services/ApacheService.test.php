@@ -563,6 +563,13 @@ test('the access and error logs come a page at a time, searched and sorted in th
         ->and($page(1, '', 'time', 'desc', ['banned' => 'out'])['total'])->toBe(250)
         ->and($page(1, '', 'time', 'desc', ['protected' => 'out', 'banned' => 'out'])['total'])->toBe(249)
         ->and($page(1, '', 'time', 'desc', ['local' => 'in'])['total'])->toBe(3)
+        // Listed on a blocklist (as checked into blocklist_ips): only, or not.
+        ->and($page(1, '', 'time', 'desc', ['listed' => 'in'])['total'])->toBe(0)
+        ->and((function () use ($page) {
+            App\Models\BlocklistIp::query()->insert([['ip' => '10.0.1.5', 'sources' => 'blocklist.de'], ['ip' => '10.0.1.6', 'sources' => null]]);
+
+            return [$page(1, '', 'time', 'desc', ['listed' => 'in'])['total'], $page(1, '', 'time', 'desc', ['listed' => 'out', 'local' => 'out'])['total']];
+        })())->toBe([1, 249])
         // Status: 4xx and 5xx out leaves the 2xx; 5xx in and out is none.
         ->and($page(1, '', 'time', 'desc', ['statuses' => [4 => 'out', 5 => 'out']])['total'])->toBe(248)
         ->and($page(1, '', 'time', 'desc', ['statuses' => [5 => 'in', 2 => 'out']])['total'])->toBe(5);

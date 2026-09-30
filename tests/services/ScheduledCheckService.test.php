@@ -1,5 +1,7 @@
 <?php
 
+use App\Services\BlocklistService;
+
 use App\DTOs\CheckResult;
 use App\Enums\HealthStatus;
 use App\Models\HealthCheck as StoredCheck;
@@ -89,10 +91,17 @@ beforeEach(function () {
             return ['configuration' => [], 'sources' => []];
         }
     };
-    $this->scheduler = new ScheduledCheckService($this->health, new SslMonitorService($checker, $this->clock), $this->clock, $this->logs);
+    // Blocklists: a scratch directory and a stand-in download, never the network or the real storage.
+    $this->blocklistDir = sys_get_temp_dir() . '/sys-blocklists-' . bin2hex(random_bytes(4));
+    $this->blocklists = new App\Services\BlocklistService($this->blocklistDir, fn (string $url) => str_contains($url, 'blocklist.de') ? "203.0.113.9\n" : '{"cidr":"198.51.100.0/24","sblid":"SBL1"}', $this->clock);
+    $this->scheduler = new ScheduledCheckService($this->health, new SslMonitorService($checker, $this->clock), $this->clock, $this->logs, blocklists: $this->blocklists);
     $this->db = fn (string $name) => $this->servers->create($this->admin, [
         'name' => $name, 'hostname' => "$name.example.com", 'ssh_enabled' => '', 'mysql_enabled' => '1', 'mysql_username' => 'mon', 'mysql_password' => 'pw!', 'mysql_tls' => 'off',
     ]);
+});
+
+afterEach(function () {
+    exec('rm -rf ' . escapeshellarg($this->blocklistDir));
 });
 
 test('servers are checked when never checked, then every 5 minutes', function () {
@@ -229,4 +238,22 @@ test('with MariaDB down its log is still imported, without logging into it; with
     $this->scheduler->runDue();
 
     expect($this->imported)->toHaveCount(1);
+});
+
+test('the blocklists are downloaded once a day, and every client address is checked against them', function () {
+    App\Models\ApacheAccessEntry::query()->insert([
+        ['server_id' => 1, 'source' => 'x', 'requested_at' => '2026-09-01 00:00:00', 'client' => '203.0.113.9', 'status' => 200, 'bytes' => 0],
+        ['server_id' => 1, 'source' => 'x', 'requested_at' => '2026-09-01 00:00:00', 'client' => '198.51.100.77', 'status' => 200, 'bytes' => 0],
+        ['server_id' => 1, 'source' => 'x', 'requested_at' => '2026-09-01 00:00:00', 'client' => '192.0.2.1', 'status' => 200, 'bytes' => 0],
+    ]);
+
+    $log = $this->scheduler->runDue();
+
+    expect(implode("\n", $log))->toContain('blocklists: blocklist.de: 1 entries')->toContain('Client addresses checked again: 2 listed')
+        ->and(App\Models\BlocklistIp::query()->whereNotNull('sources')->pluck('sources', 'ip')->all())->toBe(['203.0.113.9' => 'blocklist.de', '198.51.100.77' => 'Spamhaus DROP'])
+        ->and($this->blocklists->due())->toBeFalse()
+        ->and(implode("\n", $this->scheduler->runDue()))->not->toContain('blocklists');
+
+    $this->clock->advance(BlocklistService::REFRESH_HOURS * 3600 + 1);
+    expect($this->blocklists->due())->toBeTrue();
 });

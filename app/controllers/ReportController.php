@@ -96,7 +96,7 @@ class ReportController extends Controller
      * One page of an Apache report's access or error log, as JSON {html (table rows), total, page, pages},
      * for the paged tables (public/assets/js/paged-table.js):
      * ?kind=access|errors&server=<id> or &vhost=<id>&range=&page=&q=&sort=&dir=asc|desc; for the access
-     * log also &s2xx=..&s5xx=, &banned=, &protected=, &local= (each in|out)&client=<start of address>
+     * log also &s2xx=..&s5xx=, &banned=, &protected=, &listed=, &local= (each in|out)&client=<start of address>
      */
     public function apacheEntries()
     {
@@ -128,11 +128,12 @@ class ReportController extends Controller
             'client' => mb_substr(trim((string) $this->request->get('client', false)), 0, 64),
             'banned' => $state('banned'),
             'protected' => $state('protected'),
+            'listed' => $state('listed'),
             'local' => $state('local'),
         ];
         $page = $access ? $reports->accessPage(...$args, filters: $filters) : $reports->errorPage(...$args);
         $html = $access
-            ? $this->view('reports.access-rows', ['rows' => $page['rows'], 'errors' => $page['errors'] ?? [], 'banServer' => $server, 'canBan' => $this->authContext()->isAdmin() && $server->sshReady(), 'protected' => \App\Models\Fail2banProtection::ipsFor($server)])
+            ? $this->view('reports.access-rows', ['rows' => $page['rows'], 'errors' => $page['errors'] ?? [], 'listed' => (new \App\Services\BlocklistService())->listed(array_values(array_filter(array_map(fn ($r) => $r->client, $page['rows'])))), 'banServer' => $server, 'canBan' => $this->authContext()->isAdmin() && $server->sshReady(), 'protected' => \App\Models\Fail2banProtection::ipsFor($server)])
             : $this->view('reports.error-rows', ['rows' => $page['rows']]);
 
         $this->response->json(['html' => $html, 'total' => $page['total'], 'page' => $page['page'], 'pages' => $page['pages']]);

@@ -68,6 +68,8 @@
                 </p>
             @else
                 <p class="hint">Each request as logged, read in the format its CustomLog names; newest first, {{ \App\Services\ApacheReportService::PAGE_SIZE }} a page. Search matches client, host, request, referer, user agent or a status; the client box matches a whole address exactly, or a partial one from its start (e.g. 10.0.0.). The status, fail2ban and Localhost boxes each cycle through any, only these (✓) and not these (✗); local requests (127.* and ::1) start excluded.
+                    @php($blocklists = (new \App\Services\BlocklistService())->status())
+                    Addresses on a public blocklist are <code class="ip-listed">amber</code> ({{ collect(\App\Services\BlocklistService::SOURCES)->map(fn ($source, $name) => $source['label'] . (isset($blocklists[$name]['entries']) && $blocklists[$name]['entries'] > 0 ? ', ' . number_format($blocklists[$name]['entries']) . ' entries, ' . \App\Utils\LocalTime::format(\Carbon\Carbon::createFromTimestamp($blocklists[$name]['fetched_at'])) : ': not downloaded yet'))->implode('; ') }}; downloaded daily, checked here, nothing sent).
                     @if ($banServer?->fail2ban_checked_at)
                         Addresses fail2ban had banned at {{ \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) }} are <code class="ip-banned">red</code>, protected ones <code class="ip-protected">green</code> (hover for details).
                     @elseif ($banServer?->fail2ban_message)
@@ -124,6 +126,7 @@
             .client-ip, .request-path { cursor: context-menu; }
             code.ip-banned, span.ip-banned { color: var(--error); background: var(--error-bg); font-weight: 600; }
             code.ip-protected, span.ip-protected { color: var(--notice); background: var(--notice-bg); font-weight: 600; }
+            code.ip-listed, span.ip-listed { color: var(--warn); background: var(--warn-bg); font-weight: 600; }
             span.ip-banned, span.ip-protected { padding: 1px 6px; border-radius: 4px; }
             .ban-menu button span { display: inline-block; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; font-family: ui-monospace, monospace; font-size: 13px; }
             .ban-menu { position: fixed; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .2); padding: 4px 0; display: flex; flex-direction: column; }

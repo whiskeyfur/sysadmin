@@ -2,6 +2,7 @@
 
 namespace App\Middleware;
 
+use App\Utils\BasePath;
 use App\Utils\DatabaseConfig;
 use Leaf\Middleware;
 
@@ -13,7 +14,7 @@ class RequireDatabase extends Middleware
 {
     public function call()
     {
-        $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+        $path = BasePath::path();
         $installing = $path === '/install/database';
 
         if (!DatabaseConfig::isConfigured() && !$installing) {

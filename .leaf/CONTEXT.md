@@ -179,3 +179,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-30 — Apache report's Requests table: a paged row per day, clicking a day folds out its hours. X-Request-ID response header added to enable-unique-id.sh. Link-style buttons no longer fill in on hover.
 * 2026-09-30 — Database users: a blank password on create makes a socket login (unix_socket / auth_socket), host localhost or % only.
 * 2026-09-30 — Query tool and browser: logins let in by socket identity (unix_socket/auth_socket over the local socket, i.e. www-data) are admins only.
+* 2026-09-30 — Runs in a subdirectory of another site (BasePath: router base, output rewriting, top-level .htaccess into public/, own session cookie; local Apache helper off there). XSRF-TOKEN cookie off.

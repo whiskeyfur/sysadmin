@@ -7,6 +7,8 @@
     if (!menu || !dialog || typeof dialog.showModal !== 'function') { return; }
 
     var server = dialog.getAttribute('data-server');
+    // The app's base path ('' at a site's root, e.g. '/sysadmin' in a subdirectory; App\Utils\BasePath).
+    var base = document.documentElement.getAttribute('data-base') || '';
     var jail = document.getElementById('ban-jail');
     var go = document.getElementById('ban-go');
     var error = document.getElementById('ban-error');
@@ -59,7 +61,7 @@
         jail.innerHTML = '<option>Loading jails…</option>';
         dialog.showModal();
 
-        fetch('/admin/servers/' + server + '/fail2ban/jails', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+        fetch(base + '/admin/servers/' + server + '/fail2ban/jails', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
             .then(function (response) { return response.json(); })
             .then(function (data) {
                 if (data.error) { throw new Error(data.error); }
@@ -85,7 +87,7 @@
     go.addEventListener('click', function () {
         go.disabled = true;
         show(error, ''); show(done, '');
-        fetch('/admin/servers/' + server + '/fail2ban', {
+        fetch(base + '/admin/servers/' + server + '/fail2ban', {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-Token': csrf() },

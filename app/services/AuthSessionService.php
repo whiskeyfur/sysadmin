@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Utils\BasePath;
 use App\DTOs\AuthContext;
 use App\Models\User;
 use Leaf\Anchor\CSRF;
@@ -59,6 +60,14 @@ class AuthSessionService
         ini_set('session.cookie_httponly', '1');
         ini_set('session.cookie_secure', '1');
         ini_set('session.cookie_samesite', 'Strict');
+
+        // In a subdirectory of another site: a cookie of its own, only sent to this app's URLs, so the main
+        // site's PHP session (PHPSESSID at /) and this one never overwrite each other.
+        if (BasePath::get() !== '') {
+            ini_set('session.name', 'sysadmin_session');
+            ini_set('session.cookie_path', BasePath::get() . '/');
+        }
+
         self::configureSessionStorage();
     }
 

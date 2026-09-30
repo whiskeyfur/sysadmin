@@ -3,6 +3,9 @@
 (function () {
     'use strict';
 
+    // The app's base path ('' at a site's root, e.g. '/sysadmin' in a subdirectory; App\Utils\BasePath).
+    var base = document.documentElement.getAttribute('data-base') || '';
+
     function toBuffer(base64url) {
         var base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
         var binary = atob(base64 + '==='.slice((base64.length + 3) % 4));
@@ -83,15 +86,15 @@
     // Sign in: optional username (security keys need it; passkeys don't).
     wire('[data-passkey-login]', function () {
         var username = (document.getElementById('username') || {}).value || '';
-        return get('/login/passkey/options', { username: username }).then(function (credential) {
-            return post('/login/passkey', { credential: credential });
-        }).then(function (data) { window.location = data.redirect || '/'; });
+        return get(base + '/login/passkey/options', { username: username }).then(function (credential) {
+            return post(base + '/login/passkey', { credential: credential });
+        }).then(function (data) { window.location = data.redirect || base + '/'; });
     });
 
     // Re-confirm with a passkey; then submit the form it belongs to (e.g. reveal) or reload.
     wire('[data-passkey-confirm]', function (button) {
-        return get('/profile/confirm/passkey/options').then(function (credential) {
-            return post('/profile/confirm/passkey', { credential: credential });
+        return get(base + '/profile/confirm/passkey/options').then(function (credential) {
+            return post(base + '/profile/confirm/passkey', { credential: credential });
         }).then(function () {
             var form = document.getElementById(button.getAttribute('data-passkey-confirm'));
             if (form) {
@@ -109,8 +112,8 @@
     // Add a passkey or security key.
     wire('[data-passkey-register]', function () {
         var name = (document.getElementById('passkey_name') || {}).value || '';
-        return create('/profile/passkeys/options').then(function (credential) {
-            return post('/profile/passkeys', { credential: credential, name: name });
-        }).then(function () { window.location = '/profile#passkeys'; });
+        return create(base + '/profile/passkeys/options').then(function (credential) {
+            return post(base + '/profile/passkeys', { credential: credential, name: name });
+        }).then(function () { window.location = base + '/profile#passkeys'; });
     });
 })();

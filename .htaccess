@@ -1,0 +1,21 @@
+# Only used when the app is installed in a subdirectory of another site (e.g. /var/www/html/sysadmin/),
+# where this folder itself is on the web. Every request goes into public/, so nothing else here (.env,
+# storage/, vendor/, config/...) can be fetched. Needs mod_rewrite and AllowOverride All (or FileInfo and
+# AuthConfig) for this directory; without them Apache would serve the files as they are, .env included.
+# A site whose DocumentRoot is public/ (like sys.localhost) never reads this file.
+
+# Without mod_rewrite, refuse everything rather than serve the app's files.
+<IfModule !mod_rewrite.c>
+    Require all denied
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    <IfModule mod_negotiation.c>
+        Options -MultiViews -Indexes
+    </IfModule>
+
+    RewriteEngine On
+
+    # Everything into public/, whose own .htaccess routes it (a file there, else index.php).
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>

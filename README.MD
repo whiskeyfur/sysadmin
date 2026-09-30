@@ -150,6 +150,21 @@ It resets the account to the one-time password `changeme` and removes its authen
 
 To serve it with Apache instead, point the site's `DocumentRoot` at `public/` with `AllowOverride All`, and make `storage/` writable by the web server user (e.g. `chgrp -R www-data storage && chmod -R g+w storage`).
 
+### In a subdirectory of another site
+
+It can also live inside another site's folder, e.g. `/var/www/html/sysadmin/`, reached at `https://example.com/sysadmin/`. The app works out that it's under `/sysadmin` and adds it to every link, form and script address itself. It needs:
+
+- **`AllowOverride All`** (or at least `FileInfo`) for the app's folder, and **mod_rewrite**. The app's top-level `.htaccess` sends every request into `public/`, so `.env`, `storage/`, `vendor/` and the rest can't be downloaded. **Check it after installing:** `curl -I https://example.com/sysadmin/.env` must give 404. If Apache ignores `.htaccess` there, it would serve `.env` (your app key and database settings) as a plain file.
+- `storage/` writable by the web server user, as above.
+
+Differences from its own site:
+
+- **This machine's Apache pages are off.** The root helper's safeguard (never disabling the site that serves this app) can't work when the main site serves it.
+- The session cookie is `sysadmin_session`, limited to the subdirectory, so it can't clash with the main site's.
+- **It shares an origin with the main site**, so any script that runs on the main site (a compromised plugin, an XSS hole) can act as whoever is signed in here. For an admin tool that manages servers, a site of its own (a separate host name, like `sysadmin.example.com`) is safer. Passkeys also belong to the host name, so they're shared with anything else on that host.
+
+If a proxy strips the prefix before Apache sees it, set the address the browser uses with `SetEnv APP_BASE_PATH /sysadmin`.
+
 ## Scheduled checks
 
 Servers and certificates are checked every 5 minutes by `php leaf app:run-checks`, which runs whatever is due. Start it every minute:

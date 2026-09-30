@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ApacheAdminLog;
 use App\Models\User;
 use Carbon\Carbon;
+use App\Utils\BasePath;
 use DomainException;
 
 /**
@@ -19,6 +20,8 @@ use DomainException;
  */
 class LocalApacheService
 {
+    public const SUBDIRECTORY = 'Managing this machine\'s Apache is off: this app is installed in a subdirectory of another site, where the helper\'s guard against disabling the site that serves this app can\'t work.';
+
     public const HELPER = '/usr/local/sbin/sys-apache-helper';
 
     /**
@@ -43,6 +46,10 @@ class LocalApacheService
      */
     public function status(): array
     {
+        if ($this->command === null && self::inSubdirectory()) {
+            return ['ready' => false, 'problem' => self::SUBDIRECTORY];
+        }
+
         if ($this->command === null && !is_file(self::HELPER)) {
             return ['ready' => false, 'problem' => 'The helper isn\'t installed. As root, from ' . dirname(__DIR__, 2) . ': sudo sh bin/install-apache-helper'];
         }
@@ -63,7 +70,17 @@ class LocalApacheService
      */
     public static function installed(): bool
     {
-        return is_file(self::HELPER);
+        return !self::inSubdirectory() && is_file(self::HELPER);
+    }
+
+    /**
+     * Installed in a subdirectory of another site (BasePath), the helper isn't used: its guard against
+     * disabling the site that serves this app looks for the app's own public directory in the site's
+     * file, which the main site's file doesn't name.
+     */
+    public static function inSubdirectory(): bool
+    {
+        return BasePath::get() !== '';
     }
 
     /**
@@ -284,6 +301,10 @@ class LocalApacheService
      */
     private function call(array $args, ?string $stdin = null, bool $throw = true): array
     {
+        if ($this->command === null && self::inSubdirectory()) {
+            throw new DomainException(self::SUBDIRECTORY);
+        }
+
         $command = [...($this->command ?? ['sudo', '-n', self::HELPER]), ...$args];
         $env = ['PATH' => '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG' => 'C'] + $this->env;
         $process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $env);

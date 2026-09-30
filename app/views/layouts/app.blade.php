@@ -191,7 +191,7 @@
     </style>
 </head>
 <body>
-    @php($path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/')
+    @php($path = \App\Utils\BasePath::path())
     <header>
         <a class="brand" href="/servers" title="All servers">SysAdmin</a>
         @isset($auth)

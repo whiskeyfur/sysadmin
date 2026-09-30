@@ -28,6 +28,18 @@ require "$appPath/vendor/autoload.php";
 
 /*
 |--------------------------------------------------------------------------
+| Where the app lives
+|--------------------------------------------------------------------------
+|
+| '' at a site's root; e.g. '/sysadmin' when installed in a subdirectory of
+| another site (the top-level .htaccess sends requests into public/).
+| APP_BASE_PATH in the server's environment (SetEnv) overrides it.
+|
+*/
+\App\Utils\BasePath::set(\App\Utils\BasePath::detect($_SERVER, getenv('APP_BASE_PATH') ?: null));
+
+/*
+|--------------------------------------------------------------------------
 | Harden the session cookie
 |--------------------------------------------------------------------------
 |
@@ -83,4 +95,11 @@ if (php_sapi_name() === 'cli-server') {
 | This line brings in all your routes and starts your application
 |
 */
+if (\App\Utils\BasePath::get() !== '') {
+    // Routes match without the base, Leaf's redirects add it, and the app's root-relative URLs in its
+    // HTML and JSON get it (App\Utils\BasePath::rewriteOutput()).
+    app()->setBasePath(\App\Utils\BasePath::get() . '/');
+    ob_start(fn (string $body) => \App\Utils\BasePath::rewriteOutput($body, headers_list()));
+}
+
 \Leaf\Core::runApplication();

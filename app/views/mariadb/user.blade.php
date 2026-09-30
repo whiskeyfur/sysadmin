@@ -8,24 +8,25 @@
         <div class="alert error" role="alert">{{ $error }}</div>
     @endif
 
+    {{-- What each change did: green when every server did it, red when any failed or it was refused. --}}
+    @foreach ($outcomes ?? [] as $outcome)
+        @php($ok = $outcome['error'] === null && $outcome['results'] !== [] && collect($outcome['results'])->every(fn ($r) => $r['ok']))
+        <div class="alert {{ $ok ? 'notice' : 'error' }} outcome" role="{{ $ok ? 'status' : 'alert' }}">
+            <strong>{{ $outcome['what'] }}</strong>{{ $outcome['error'] !== null ? ': not done. ' . $outcome['error'] : '' }}
+            @if ($outcome['results'] !== [])
+                <ul class="results">
+                    @foreach ($outcome['results'] as $result)
+                        <li>{{ $result['ok'] ? '✓' : '✗' }} <strong>{{ $result['server']->name }}</strong>: {{ $result['message'] }}</li>
+                    @endforeach
+                </ul>
+            @endif
+        </div>
+    @endforeach
+
     <div class="card">
         <h1><code>{{ "'$user'@'$host'" }}</code></h1>
         <p class="muted"><a href="/mariadb/users">All database users</a>. Changes are made on the servers you tick, each on its own. Removing a grant (its ✕), setting access and changing the password are queued and run together with one confirmation (your password or a passkey); dropping asks on its own.</p>
     </div>
-
-    @foreach ($outcomes ?? [] as $outcome)
-        <div class="card">
-            <h2>{{ $outcome['what'] }}</h2>
-            @if ($outcome['error'] !== null)
-                <p class="alert error" role="alert">Not done: {{ $outcome['error'] }}</p>
-            @endif
-            <ul class="results">
-                @foreach ($outcome['results'] as $result)
-                    <li><span class="badge {{ $result['ok'] ? 'ok' : 'critical' }}">{{ $result['ok'] ? 'Done' : 'Failed' }}</span> <strong>{{ $result['server']->name }}</strong>: {{ $result['message'] }}</li>
-                @endforeach
-            </ul>
-        </div>
-    @endforeach
 
     @php($here = array_values(array_filter($servers, fn ($s) => $grants[$s->id] !== null)))
     <div class="card">
@@ -134,6 +135,8 @@
     @include('partials.confirm-dialog')
     <script src="{{ \App\Utils\Asset::url('/assets/js/passkeys.js') }}"></script>
     <style>
+        .alert.outcome ul.results { margin: 4px 0 0; }
+        .alert.outcome ul.results li { padding: 2px 0; }
         ol.queue { margin: 0 0 8px; padding-left: 22px; }
         ol.queue li { padding: 4px 0; }
         ol.queue li button { margin-left: 8px; }

@@ -124,7 +124,7 @@
     @endif
 
     @if ($info !== null)
-        <details class="card" open>
+        <details class="card">
             <summary><h2 style="display: inline">Definition</h2></summary>
             <pre class="create-statement">{{ $info['create'] }}</pre>
         </details>

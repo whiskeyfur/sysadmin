@@ -37,6 +37,12 @@ class DatabaseBrowserService
      */
     public const SYSTEM_SCHEMAS = ['information_schema', 'mysql', 'performance_schema', 'sys'];
 
+    /**
+     * System schemas the browser neither lists nor opens (information_schema is kept: it's what the
+     * login may see about everything else). mysql holds the accounts' password hashes.
+     */
+    public const HIDDEN_SCHEMAS = ['mysql', 'performance_schema', 'sys'];
+
     public function __construct(
         private readonly MysqlService $mysql = new MysqlService(),
         private readonly ClockInterface $clock = new SystemClock(),
@@ -171,6 +177,11 @@ class DatabaseBrowserService
 
         foreach ($this->select($pdo, 'SELECT SCHEMA_NAME AS name, DEFAULT_COLLATION_NAME AS collation FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME') as $row) {
             $name = (string) $row['name'];
+
+            if (self::hidden($name)) {
+                continue;
+            }
+
             $schemas[] = [
                 'name' => $name, 'tables' => $sizes[$name][0] ?? 0, 'bytes' => $sizes[$name][1] ?? 0,
                 'collation' => (string) $row['collation'], 'system' => in_array(strtolower($name), self::SYSTEM_SCHEMAS, true),
@@ -375,12 +386,17 @@ class DatabaseBrowserService
         return preg_match('/^' . $regex . '$/isu', $schema) === 1;
     }
 
+    private static function hidden(string $schema): bool
+    {
+        return in_array(strtolower($schema), self::HIDDEN_SCHEMAS, true);
+    }
+
     /**
      * @throws DomainException
      */
     private function requireSchema(PDO $pdo, string $schema): void
     {
-        if ($this->select($pdo, 'SELECT 1 AS x FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?', [$schema]) === []) {
+        if (self::hidden($schema) || $this->select($pdo, 'SELECT 1 AS x FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?', [$schema]) === []) {
             throw new DomainException("There's no database called $schema that this login can see.");
         }
     }
@@ -392,7 +408,7 @@ class DatabaseBrowserService
      */
     private function requireTable(PDO $pdo, string $schema, string $table): array
     {
-        $row = $this->select($pdo, 'SELECT TABLE_TYPE AS type, TABLE_ROWS AS row_count FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?', [$schema, $table])[0] ?? null;
+        $row = self::hidden($schema) ? null : $this->select($pdo, 'SELECT TABLE_TYPE AS type, TABLE_ROWS AS row_count FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?', [$schema, $table])[0] ?? null;
 
         if ($row === null) {
             throw new DomainException("There's no table $schema.$table that this login can see.");

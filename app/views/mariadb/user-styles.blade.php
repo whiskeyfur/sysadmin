@@ -31,6 +31,43 @@
                 input.type = 'text';
             });
         });
+        // Database fields suggest the ticked servers' databases, and after "db." that database's tables and
+        // views (GET /mariadb/users/names, through the monitoring accounts), each list fetched once.
+        var names = {};
+        document.querySelectorAll('input[name=database]').forEach(function (input, i) {
+            var form = input.form, list = document.createElement('datalist');
+            list.id = 'database-names-' + i;
+            input.after(list);
+            input.setAttribute('list', list.id);
+            input.setAttribute('autocomplete', 'off');
+            var shown = null;
+            var suggest = function () {
+                var servers = [].map.call(form.querySelectorAll('input[name="servers[]"]:checked'), function (b) { return b.value; });
+                var dot = input.value.indexOf('.'), db = dot > 0 ? input.value.slice(0, dot) : '';
+                var key = servers.join(',') + '|' + db;
+                if (servers.length === 0) { list.textContent = ''; shown = null; return; }
+                if (key === shown) { return; }
+                shown = key;
+                var params = new URLSearchParams(servers.map(function (id) { return ['servers[]', id]; }));
+                if (db) { params.set('db', db); }
+                names[key] = names[key] || fetch('/mariadb/users/names?' + params, { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
+                    .then(function (response) { return response.json(); })
+                    .then(function (data) { return data.names || []; })
+                    .catch(function () { return []; });
+                names[key].then(function (found) {
+                    if (shown !== key) { return; }
+                    list.textContent = '';
+                    (db ? [db + '.*'].concat(found.map(function (t) { return db + '.' + t; })) : ['*'].concat(found)).forEach(function (value) {
+                        var option = document.createElement('option');
+                        option.value = value;
+                        list.appendChild(option);
+                    });
+                });
+            };
+            input.addEventListener('focus', suggest);
+            input.addEventListener('input', suggest);
+            form.querySelectorAll('input[name="servers[]"]').forEach(function (box) { box.addEventListener('change', function () { shown = null; }); });
+        });
         document.querySelectorAll('[data-reveal]').forEach(function (button) {
             button.addEventListener('click', function () {
                 var input = document.getElementById(button.getAttribute('data-reveal'));

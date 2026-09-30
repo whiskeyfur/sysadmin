@@ -46,6 +46,11 @@ class DbUserManagerService
     public const MIN_PASSWORD = 12;
 
     /**
+     * The most names one suggestion list holds.
+     */
+    public const MAX_NAMES = 1000;
+
+    /**
      * @var array<int, array{ok: bool, reason: string}>
      */
     private array $eligibility = [];
@@ -153,6 +158,80 @@ class DbUserManagerService
     }
 
     /**
+     * What a SHOW GRANTS line is on, as the database fields write it ("*", "db" or "db.table"), when its
+     * privileges can be removed here (REVOKE ALL on that target); null for the account's USAGE line,
+     * role, proxy and routine grants, and names the fields don't take.
+     */
+    public static function grantTarget(string $grant): ?string
+    {
+        $name = '`((?:[^`]|``)+)`';
+
+        if (preg_match('/^GRANT (.+?) ON (\*\.\*|' . $name . '\.(?:\*|' . $name . ')) TO /', $grant, $m) !== 1) {
+            return null;
+        }
+
+        if (trim($m[1]) === 'USAGE' || str_starts_with(trim($m[1]), 'PROXY')) {
+            return null;
+        }
+
+        if ($m[2] === '*.*') {
+            return '*';
+        }
+
+        $schema = str_replace('``', '`', $m[3]);
+        $table = isset($m[4]) ? str_replace('``', '`', $m[4]) : null;
+        $target = $table === null ? $schema : "$schema.$table";
+
+        try {
+            self::target($target);
+        } catch (DomainException) {
+            return null;
+        }
+
+        return $target;
+    }
+
+    /**
+     * Names for the database fields' suggestions, from the chosen servers the tool can manage (through
+     * their monitoring accounts): the databases, or with $database the tables and views in it. Servers
+     * that can't be read are skipped.
+     *
+     * @param list<int> $serverIds
+     * @return list<string>
+     *
+     * @throws AuthorizationException for anyone but an admin
+     */
+    public function names(User $admin, array $serverIds, ?string $database = null): array
+    {
+        if (!$admin->isAdmin()) {
+            throw new AuthorizationException('Only admins can manage database accounts.');
+        }
+
+        $names = [];
+
+        foreach ($this->servers() as $server) {
+            if (!in_array($server->id, $serverIds, true) || !$this->eligibility($server)['ok']) {
+                continue;
+            }
+
+            try {
+                $statement = $this->mysql->connect($server)->prepare($database === null
+                    ? 'SELECT SCHEMA_NAME FROM information_schema.SCHEMATA'
+                    : 'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?');
+                $statement->execute($database === null ? [] : [$database]);
+                array_push($names, ...array_map('strval', $statement->fetchAll(PDO::FETCH_COLUMN)));
+            } catch (ServerConnectionException|PDOException) {
+                continue;
+            }
+        }
+
+        $names = array_values(array_unique($names));
+        natcasesort($names);
+
+        return array_slice(array_values($names), 0, self::MAX_NAMES);
+    }
+
+    /**
      * An account's grants on a server, or null when it doesn't exist there (or can't be read).
      *
      * @return list<string>|null
@@ -183,7 +262,7 @@ class DbUserManagerService
     {
         [$user, $host] = [trim($user), trim($host)];
         $this->checkPassword($password, $user);
-        $target = $this->target($database);
+        $target = self::target($database);
         $privileges = $this->privileges($level);
 
         return $this->onEach($admin, $serverIds, 'create', $user, $host, self::LEVELS[$level][0] . ' on ' . $this->databaseLabel($database), function (PDO $pdo, Server $server) use ($user, $host, $password, $target, $privileges, $track, $admin) {
@@ -240,7 +319,7 @@ class DbUserManagerService
     public function grant(User $admin, array $serverIds, string $user, string $host, string $database, string $level): array
     {
         [$user, $host] = [trim($user), trim($host)];
-        $target = $this->target($database);
+        $target = self::target($database);
         $privileges = $this->privileges($level);
 
         return $this->onEach($admin, $serverIds, 'grant', $user, $host, self::LEVELS[$level][0] . ' on ' . $this->databaseLabel($database), function (PDO $pdo) use ($user, $host, $target, $privileges) {
@@ -263,7 +342,7 @@ class DbUserManagerService
     public function revoke(User $admin, array $serverIds, string $user, string $host, string $database): array
     {
         [$user, $host] = [trim($user), trim($host)];
-        $target = $this->target($database);
+        $target = self::target($database);
 
         return $this->onEach($admin, $serverIds, 'revoke', $user, $host, 'on ' . $this->databaseLabel($database), function (PDO $pdo) use ($user, $host, $target) {
             return $this->revokeAll($pdo, $target, $this->quoted($pdo, $user, $host)) ? 'Access removed.' : 'It had no access there.';
@@ -422,23 +501,29 @@ class DbUserManagerService
     }
 
     /**
-     * `db`.* for one database, *.* for all ("*").
+     * What a grant is on: *.* for everything ("*" or "*.*"), `db`.* for a database ("db" or "db.*"), or
+     * `db`.`table` for one table or view ("db.table").
      *
      * @throws DomainException
      */
-    private function target(string $database): string
+    private static function target(string $database): string
     {
         $database = trim($database);
 
-        if ($database === '*') {
+        if ($database === '*' || $database === '*.*') {
             return '*.*';
         }
 
-        if (preg_match('/^[A-Za-z0-9_$-]{1,64}$/', $database) !== 1) {
-            throw new DomainException('Name the database (letters, digits, "_", "$", "-"), or * for all of them.');
+        [$schema, $table] = array_pad(explode('.', $database, 2), 2, '*');
+        $name = '/^[A-Za-z0-9_$-]{1,64}$/';
+        // A database name may be a pattern, as MariaDB writes it: shop\_% (grants on every shop_... database).
+        $pattern = '/^[A-Za-z0-9_$%\\\\-]{1,64}$/';
+
+        if (preg_match($pattern, $schema) !== 1 || ($table !== '*' && (preg_match($name, $table) !== 1 || preg_match($name, $schema) !== 1))) {
+            throw new DomainException('Name the database (letters, digits, "_", "$", "-"), a table in it as database.table, or * for all of them.');
         }
 
-        return "`$database`.*";
+        return $table === '*' ? "`$schema`.*" : "`$schema`.`$table`";
     }
 
     private function databaseLabel(string $database): string
@@ -461,8 +546,8 @@ class DbUserManagerService
 
             return true;
         } catch (PDOException $e) {
-            // 1141: no such grant.
-            if ((int) ($e->errorInfo[1] ?? 0) === 1141) {
+            // 1141: no such grant (global or database); 1147: none on that table.
+            if (in_array((int) ($e->errorInfo[1] ?? 0), [1141, 1147], true)) {
                 return false;
             }
 

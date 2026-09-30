@@ -10,7 +10,7 @@
 
     <div class="card">
         <h1>Database users</h1>
-        <p class="muted">Create, change and drop MariaDB/MySQL accounts on several servers at once. It works through each server's monitoring account, so only on servers where that account may create users and grant privileges. Access is given per database as a preset: <strong>read only</strong> (SELECT), <strong>read/write</strong> (SELECT, INSERT, UPDATE, DELETE) or <strong>full</strong> (ALL). The monitoring account itself and system accounts (root and the like) are left alone. Every change needs a fresh check with your sign-in and is logged; new accounts and passwords are kept in <a href="/admin/accounts/mariadb">Accounts</a>.</p>
+        <p class="muted">Create, change and drop MariaDB/MySQL accounts on several servers at once. It works through each server's monitoring account, so only on servers where that account may create users and grant privileges. Access is given per database as a preset: <strong>read only</strong> (SELECT), <strong>read/write</strong> (SELECT, INSERT, UPDATE, DELETE) or <strong>full</strong> (ALL). The monitoring account itself and system accounts (root and the like) are left alone. Every change asks for your password or a passkey and is logged; new accounts and passwords are kept in <a href="/admin/accounts/mariadb">Accounts</a>.</p>
     </div>
 
     <div class="card">
@@ -56,14 +56,14 @@
             </div>
         </div>
 
-        <form method="post" action="/mariadb/users" class="card" id="create-account">
+        <form method="post" action="/mariadb/users" class="card" id="create-account" data-confirm-dialog="Create this account on the servers ticked?">
             @csrf
             <h2>Create an account</h2>
             @include('mariadb.user-servers', ['servers' => $eligible, 'chosen' => $input['servers'] ?? [], 'legend' => 'On these servers'])
             <div class="field-row">
                 <div>
                     <label for="new_username">Username</label>
-                    <input type="text" id="new_username" name="username" value="{{ $input['username'] ?? '' }}" maxlength="80" spellcheck="false" autocomplete="off" required>
+                    <input type="text" id="new_username" name="db_username" value="{{ $input['username'] ?? '' }}" maxlength="80" spellcheck="false" autocomplete="off" required>
                 </div>
                 <div>
                     <label for="new_host">Host</label>
@@ -75,7 +75,7 @@
             <div class="field-row">
                 <div>
                     <label for="new_database">Database</label>
-                    <input type="text" id="new_database" name="database" value="{{ $input['database'] ?? '' }}" spellcheck="false" placeholder="* for all databases" required>
+                    <input type="text" id="new_database" name="database" value="{{ $input['database'] ?? '' }}" spellcheck="false" placeholder="a database, database.table, or * for all" required>
                 </div>
                 <div>
                     <label for="new_level">Access</label>
@@ -87,12 +87,12 @@
                 </div>
             </div>
             <label class="check"><input type="checkbox" name="track" value="1" {{ ($input['track'] ?? true) ? 'checked' : '' }}> Keep it and its password in Accounts</label>
-            @include('partials.confirm-fields', ['formId' => 'create-account', 'what' => 'Create', 'passkeyTarget' => 'create-account'])
             <div class="actions"><button type="submit">Create</button></div>
         </form>
     @endif
 
     @include('mariadb.user-changes', ['changes' => $changes])
     @include('mariadb.user-styles')
+    @include('partials.confirm-dialog')
     <script src="{{ \App\Utils\Asset::url('/assets/js/passkeys.js') }}"></script>
 @endsection

@@ -18,6 +18,11 @@ class DbUserController extends Controller
     use ConfirmsIdentity;
 
     /**
+     * The most changes one "Execute" runs.
+     */
+    public const MAX_QUEUE = 50;
+
+    /**
      * GET /mariadb/users
      */
     public function index()
@@ -32,21 +37,21 @@ class DbUserController extends Controller
     {
         $input = $this->input();
 
-        if (($refused = $this->confirmIdentity()) !== null) {
+        if (($refused = $this->confirmIdentity(codes: false, passwordField: 'acct_password')) !== null) {
             $this->showIndex($refused, $input);
 
             return;
         }
 
         try {
-            $results = (new DbUserManagerService())->create($this->authContext()->user, $input['servers'], $input['username'], $input['host'], (string) $this->request->get('password', false), $input['database'], $input['level'], $input['track']);
+            $results = (new DbUserManagerService())->create($this->authContext()->user, $input['servers'], $input['username'], $input['host'], (string) $this->request->get('db_password', false), $input['database'], $input['level'], $input['track']);
         } catch (DomainException|AuthorizationException $e) {
             $this->showIndex($e->getMessage(), $input);
 
             return;
         }
 
-        $this->showAccount($input['username'], $input['host'], 'Create ' . DbUserManagerService::name($input['username'], $input['host']), $results);
+        $this->showAccount($input['username'], $input['host'], [['what' => 'Create ' . DbUserManagerService::name($input['username'], $input['host']), 'results' => $results, 'error' => null]]);
     }
 
     /**
@@ -58,39 +63,82 @@ class DbUserController extends Controller
     }
 
     /**
-     * POST /mariadb/users/account {user, host, action: password|grant|revoke|drop, servers[], ...}
+     * POST /mariadb/users/account {user, host, action: queue|drop, ...}: "queue" runs the queued changes
+     * (changes[i][action] = grant|revoke|password, with servers[], database, level, db_password, track),
+     * in order, after one confirmation; "drop" (servers[]) drops the account.
      */
     public function change()
     {
         $user = (string) $this->request->get('user', false);
         $host = (string) $this->request->get('host', false);
         $action = (string) $this->request->get('action', false);
-        $input = $this->input();
+        $changes = $action === 'queue'
+            ? array_values(array_filter((array) ($this->request->get('changes', false) ?? []), 'is_array'))
+            : [['action' => $action, 'servers' => $this->request->get('servers', false) ?? []]];
 
-        if (($refused = $this->confirmIdentity()) !== null) {
-            $this->showAccount($user, $host, null, null, $refused);
+        if ($changes === [] || count($changes) > self::MAX_QUEUE) {
+            $this->showAccount($user, $host, error: $changes === [] ? 'Nothing is queued.' : 'At most ' . self::MAX_QUEUE . ' changes at a time.');
+
+            return;
+        }
+
+        if (($refused = $this->confirmIdentity(codes: false, passwordField: 'acct_password')) !== null) {
+            $this->showAccount($user, $host, error: $refused);
 
             return;
         }
 
         $service = new DbUserManagerService();
         $admin = $this->authContext()->user;
+        $outcomes = [];
+
+        // Each change on its own: one that's refused (e.g. a password too short) doesn't stop the rest.
+        foreach ($changes as $change) {
+            $servers = array_values(array_map('intval', (array) ($change['servers'] ?? [])));
+            $database = trim((string) ($change['database'] ?? '')) ?: '*';
+            $what = match ((string) ($change['action'] ?? '')) {
+                'password' => 'Change the password',
+                'grant' => 'Set ' . strtolower(DbUserManagerService::LEVELS[(string) ($change['level'] ?? '')][0] ?? '?') . " access on $database",
+                'revoke' => "Remove access on $database",
+                'drop' => 'Drop the account',
+                default => 'Unknown change',
+            };
+
+            try {
+                $results = match ((string) ($change['action'] ?? '')) {
+                    'password' => $service->setPassword($admin, $servers, $user, $host, (string) ($change['db_password'] ?? ''), (string) ($change['track'] ?? '') === '1'),
+                    'grant' => $service->grant($admin, $servers, $user, $host, $database, (string) ($change['level'] ?? '')),
+                    'revoke' => $service->revoke($admin, $servers, $user, $host, $database),
+                    'drop' => $service->drop($admin, $servers, $user, $host),
+                    default => throw new DomainException('Not a change this page makes.'),
+                };
+                $outcomes[] = ['what' => $what, 'results' => $results, 'error' => null];
+            } catch (DomainException|AuthorizationException $e) {
+                $outcomes[] = ['what' => $what, 'results' => [], 'error' => $e->getMessage()];
+            }
+        }
+
+        $this->showAccount($user, $host, $outcomes);
+    }
+
+    /**
+     * GET /mariadb/users/names?servers[]=&db= (JSON): suggestions for the database fields, the chosen
+     * servers' databases, or with db the tables and views in it.
+     */
+    public function names()
+    {
+        $servers = array_values(array_map('intval', (array) ($this->request->get('servers', false) ?? [])));
+        $database = trim((string) $this->request->get('db', false));
 
         try {
-            [$what, $results] = match ($action) {
-                'password' => ['Change the password', $service->setPassword($admin, $input['servers'], $user, $host, (string) $this->request->get('password', false), $input['track'])],
-                'grant' => ['Set access on ' . $input['database'], $service->grant($admin, $input['servers'], $user, $host, $input['database'], $input['level'])],
-                'revoke' => ['Remove access on ' . $input['database'], $service->revoke($admin, $input['servers'], $user, $host, $input['database'])],
-                'drop' => ['Drop the account', $service->drop($admin, $input['servers'], $user, $host)],
-                default => throw new DomainException('Choose a change.'),
-            };
-        } catch (DomainException|AuthorizationException $e) {
-            $this->showAccount($user, $host, null, null, $e->getMessage());
+            $names = (new DbUserManagerService())->names($this->authContext()->user, $servers, $database === '' ? null : mb_substr($database, 0, 64));
+        } catch (AuthorizationException $e) {
+            $this->response->json(['error' => $e->getMessage()], 403);
 
             return;
         }
 
-        $this->showAccount($user, $host, $what, $results);
+        $this->response->json(['names' => $names]);
     }
 
     /**
@@ -100,7 +148,7 @@ class DbUserController extends Controller
     {
         return [
             'servers' => array_values(array_map('intval', (array) ($this->request->get('servers', false) ?? []))),
-            'username' => trim((string) $this->request->get('username', false)),
+            'username' => trim((string) $this->request->get('db_username', false)),
             'host' => trim((string) $this->request->get('host', false)) ?: '%',
             'database' => trim((string) $this->request->get('database', false)) ?: '*',
             'level' => (string) $this->request->get('level', false),
@@ -133,9 +181,9 @@ class DbUserController extends Controller
     }
 
     /**
-     * @param list<array{server: \App\Models\Server, ok: bool, message: string}>|null $results
+     * @param list<array{what: string, results: list<array{server: \App\Models\Server, ok: bool, message: string}>, error: ?string}>|null $outcomes
      */
-    private function showAccount(string $user, string $host, ?string $what = null, ?array $results = null, ?string $error = null): void
+    private function showAccount(string $user, string $host, ?array $outcomes = null, ?string $error = null): void
     {
         $service = new DbUserManagerService();
         $servers = array_values(array_filter($service->servers(), fn ($s) => $service->eligibility($s)['ok']));
@@ -151,8 +199,7 @@ class DbUserController extends Controller
             'host' => $host,
             'servers' => $servers,
             'grants' => $grants,
-            'what' => $what,
-            'results' => $results,
+            'outcomes' => $outcomes,
             'error' => $error,
             'changes' => DbUserChange::query()->with(['user', 'server'])->where('account', DbUserManagerService::name(trim($user), trim($host)))->orderByDesc('id')->limit(30)->get()->all(),
         ] + $this->confirmFields());

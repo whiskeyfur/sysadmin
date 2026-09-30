@@ -16,24 +16,28 @@ use App\Services\LoginMethodService;
 trait ConfirmsIdentity
 {
     /**
-     * Null if the check passed, else why not.
+     * Null if the check passed, else why not. With $codes false only a password or a passkey counts (an
+     * authenticator code sent anyway is ignored). $passwordField names the field with the user's password,
+     * for forms whose "password" is something else (partials.confirm-dialog sends acct_password).
      */
-    protected function confirmIdentity(): ?string
+    protected function confirmIdentity(bool $codes = true, string $passwordField = 'password'): ?string
     {
         if ($this->request->get('passkey_confirmed') && (new AuthSessionService())->takePasskeyConfirmation()) {
             return null;
         }
 
         $result = (new AuthService())->confirm($this->request->next('auth')->user, [
-            'password' => (string) $this->request->get('password', false),
-            'code' => (string) $this->request->get('code', false),
+            'password' => (string) $this->request->get($passwordField, false),
+            'code' => $codes ? (string) $this->request->get('code', false) : '',
         ], $this->clientIp());
         LimitConcurrentLogins::release();
 
         return match ($result->status) {
             LoginStatus::Success => null,
             LoginStatus::TooManyAttempts => 'Too many attempts. Try again in ' . $this->retryMinutes($result->retryAfter) . ' minute(s).',
-            default => "Confirm it's you with your password, a new authenticator code or a passkey; nothing was changed.",
+            default => $codes
+                ? "Confirm it's you with your password, a new authenticator code or a passkey; nothing was changed."
+                : "Confirm it's you with your password or a passkey; nothing was changed.",
         };
     }
 

@@ -196,7 +196,7 @@
                 @php($menus = [
                     'SSL' => ['/ssl/reports' => 'Reports', '/ssl' => 'Test', '/admin/ssl/new' => 'Add', '/admin/settings/ssl' => 'Settings'],
                     'SSH' => ['/ssh/reports' => 'Reports', '/ssh' => 'Test', '/admin/ssh/new' => 'Add', '/admin/accounts/ssh' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
-                    'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/mariadb/query' => 'Query', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/mariadb/users' => 'Database users', '/admin/settings/mariadb' => 'Settings'],
+                    'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/mariadb/query' => 'Query', '/mariadb/browse' => 'Browse', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/mariadb/users' => 'Database users', '/admin/settings/mariadb' => 'Settings'],
                     'Apache' => ['/apache/reports' => 'Reports', '/apache' => 'Test', '/admin/apache/new' => 'Add', '/admin/settings/apache' => 'Settings']
                         // This machine's own Apache: only where the root helper is installed, for admins on this machine.
                         + (\App\Services\LocalApacheService::installed() && \App\Middleware\RequireLocalAdmin::fromThisMachine() ? ['/admin/apache/local' => 'This server', '/admin/apache/local/rewrite' => 'Rewrite rules', '/admin/apache/local/simulate' => 'URL simulator'] : []),
@@ -210,7 +210,7 @@
                         <summary @if ($current) class="current" @endif>{{ $menu }}</summary>
                         <div class="menu-items">
                             @foreach ($items as $href => $label)
-                                @if (in_array($label, ['Reports', 'Test', 'List', 'Query'], true) || $auth->isAdmin())
+                                @if (in_array($label, ['Reports', 'Test', 'List', 'Query', 'Browse'], true) || $auth->isAdmin())
                                     @if ($label === 'Add')
                                         {{-- Viewing items above, admin tools below. --}}
                                         <hr class="menu-divider">

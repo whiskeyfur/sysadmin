@@ -19,12 +19,16 @@ app()->get('/mariadb', ['middleware' => Authenticate::class, 'ServerController@m
 // The database account manager: admins; each change needs a fresh sign-in check.
 app()->get('/mariadb/users', ['middleware' => RequireAdmin::class, 'DbUserController@index']);
 app()->post('/mariadb/users', ['middleware' => RequireAdmin::class, 'DbUserController@create']);
+app()->get('/mariadb/users/names', ['middleware' => RequireAdmin::class, 'DbUserController@names']);
 app()->get('/mariadb/users/account', ['middleware' => RequireAdmin::class, 'DbUserController@account']);
 app()->post('/mariadb/users/account', ['middleware' => RequireAdmin::class, 'DbUserController@change']);
 // The multi-server query tool: everyone signed in, with their own database logins.
 app()->get('/mariadb/query', ['middleware' => Authenticate::class, 'MariadbQueryController@index']);
 app()->post('/mariadb/query', ['middleware' => Authenticate::class, 'MariadbQueryController@run']);
 // Each user's private list of database logins for it.
+// The MariaDB browser: everyone signed in, with their own accounts (admins also the stored ones).
+app()->get('/mariadb/browse', ['middleware' => Authenticate::class, 'DatabaseBrowserController@index']);
+app()->get('/mariadb/browse/rows', ['middleware' => Authenticate::class, 'DatabaseBrowserController@rows']);
 app()->post('/mariadb/query/unthrottle', ['middleware' => RequireAdmin::class, 'MariadbQueryController@clearThrottle']);
 app()->post('/mariadb/query/accounts', ['middleware' => Authenticate::class, 'MariadbQueryController@addAccount']);
 app()->get('/mariadb/query/accounts/{id}', ['middleware' => Authenticate::class, 'MariadbQueryController@editAccount']);

@@ -329,7 +329,7 @@ class MariadbQueryService
                         break;
                     }
 
-                    $result['rows'][] = array_map(fn ($value) => $this->cell($value), $row);
+                    $result['rows'][] = array_map(fn ($value) => self::cell($value), $row);
                 }
 
                 $statement->closeCursor();
@@ -393,7 +393,10 @@ class MariadbQueryService
         return ['columns' => $columns, 'rows' => $rows, 'servers' => $servers];
     }
 
-    private function cell(mixed $value): ?string
+    /**
+     * A value as shown: NULL as null, binary (not UTF-8) as hex, cut at MAX_CELL characters.
+     */
+    public static function cell(mixed $value): ?string
     {
         if ($value === null) {
             return null;

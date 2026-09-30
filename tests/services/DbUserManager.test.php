@@ -168,6 +168,30 @@ test('access is set exactly (revoke, then grant), removed, and the password chan
         ->and($this->accounts->password(Account::query()->where('username', 'shop_rw')->first()))->toBe('a new long password');
 });
 
+test('access can be given on one table as database.table, and on everything as * or *.*', function () {
+    $this->manager->create($this->admin, [$this->ids['alpha']], 'report', '%', 'a long secret password', 'shop.orders', 'read', false);
+    $pdo = $this->mysql->servers['alpha'];
+    $pdo->statements = [];
+
+    $this->manager->grant($this->admin, [$this->ids['alpha']], 'report', '%', 'shop.*', 'write');
+    $this->manager->revoke($this->admin, [$this->ids['alpha']], 'report', '%', 'shop.orders');
+    $this->manager->grant($this->admin, [$this->ids['alpha']], 'report', '%', '*.*', 'read');
+
+    expect($pdo->statements)->toBe([
+        "REVOKE ALL PRIVILEGES ON `shop`.* FROM 'report'@'%'",
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON `shop`.* TO 'report'@'%'",
+        "REVOKE ALL PRIVILEGES ON `shop`.`orders` FROM 'report'@'%'",
+        "REVOKE ALL PRIVILEGES ON *.* FROM 'report'@'%'",
+        "GRANT SELECT ON *.* TO 'report'@'%'",
+    ])
+        ->and(fn () => $this->manager->grant($this->admin, [$this->ids['alpha']], 'report', '%', 'shop.or ders', 'read'))->toThrow(DomainException::class, 'database.table')
+        ->and(fn () => $this->manager->grant($this->admin, [$this->ids['alpha']], 'report', '%', 'shop.a.b', 'read'))->toThrow(DomainException::class, 'database.table');
+});
+
+test('the database fields\' suggestions are for admins only', function () {
+    expect(fn () => $this->manager->names($this->dev, [$this->ids['alpha']]))->toThrow(AuthorizationException::class);
+});
+
 test('dropping removes the tracked account once no account of that name is left on the server', function () {
     $this->manager->create($this->admin, [$this->ids['alpha']], 'temp', '%', 'a long secret password', '*', 'read', true);
     $this->manager->create($this->admin, [$this->ids['alpha']], 'temp', 'localhost', 'a long secret password', '*', 'read', false);
@@ -202,3 +226,17 @@ test('generated passwords are long and plain', function () {
         ->and($password)->toMatch('/^[A-Za-z0-9_-]+$/')
         ->and(DbUserManagerService::generatePassword())->not->toBe($password);
 });
+
+test('a grant line says what its removal would revoke, when it can be removed here', function (string $grant, ?string $target) {
+    expect(DbUserManagerService::grantTarget($grant))->toBe($target);
+})->with([
+    ["GRANT USAGE ON *.* TO `app`@`%` IDENTIFIED BY PASSWORD '*AB'", null],
+    ['GRANT SELECT, PROCESS ON *.* TO `app`@`%`', '*'],
+    ['GRANT SELECT, INSERT ON `shop`.* TO `app`@`%`', 'shop'],
+    ['GRANT SELECT, UPDATE (`note`) ON `shop`.`orders` TO `app`@`%`', 'shop.orders'],
+    ['GRANT SELECT ON `shop\_%`.* TO `app`@`%`', 'shop\_%'],
+    ['GRANT `reader` TO `app`@`%`', null],
+    ["GRANT PROXY ON ''@'%' TO 'app'@'%'", null],
+    ['GRANT EXECUTE ON PROCEDURE `shop`.`p` TO `app`@`%`', null],
+    ['GRANT SELECT ON `odd``name`.* TO `app`@`%`', null],
+]);

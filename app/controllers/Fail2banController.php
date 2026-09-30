@@ -34,7 +34,7 @@ class Fail2banController extends Controller
     }
 
     /**
-     * POST /admin/servers/{id}/fail2ban {action: ban|unban, ip, jail}
+     * POST /admin/servers/{id}/fail2ban {action: ban|unban|protect|unprotect, ip, jail (ban/unban)}
      */
     public function change($id)
     {
@@ -52,6 +52,13 @@ class Fail2banController extends Controller
 
         try {
             $output = (new Fail2banService())->change($this->authContext()->user, $server, $action, $ip, $jail, $this->clientIp());
+
+            if ($action === 'protect' || $action === 'unprotect') {
+                $this->response->json(['message' => $output]);
+
+                return;
+            }
+
             $done = $action === 'ban' ? "Banned $ip in $jail on {$server->name}." : "Unbanned $ip in $jail on {$server->name}.";
             $this->response->json(['message' => $done . ($output !== '' && !ctype_digit($output) ? " fail2ban: $output" : '')]);
         } catch (DomainException $e) {

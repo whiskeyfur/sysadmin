@@ -1,18 +1,19 @@
 {{-- One page of access log rows (ApacheReportService::accessPage()), for the paged table in
-     reports/apache-data. Needs $rows, $banServer (or null) and $canBan. --}}
+     reports/apache-data. Needs $rows, $banServer (or null), $canBan and $protected (addresses protected
+     from banning). --}}
 @forelse ($rows as $request)
     @php($badge = $request->status >= 500 ? 'critical' : ($request->status >= 400 ? 'warning' : ($request->status >= 300 ? 'unknown' : 'ok')))
     @php($jails = $banServer?->bannedIn($request->client) ?? [])
     <tr>
         <td style="white-space: nowrap">{{ \App\Utils\LocalTime::format($request->requested_at, 'Y-m-d H:i:s') }}</td>
         <td style="white-space: nowrap">
+            {{-- Green: protected from banning; red: banned (which jails, in the tooltip). --}}
+            @php($guarded = $request->client !== null && in_array($request->client, $protected ?? [], true))
             @if ($request->client)
-                <code class="client-ip" data-ip="{{ $request->client }}" data-jails="{{ implode(',', $jails) }}" title="Right-click to show only this address{{ $canBan ? ', or ban or unban it with fail2ban' : '' }}">{{ $request->client }}</code>
+                <code class="client-ip{{ $jails ? ' ip-banned' : '' }}{{ $guarded ? ' ip-protected' : '' }}" data-ip="{{ $request->client }}" data-jails="{{ implode(',', $jails) }}" data-protected="{{ $guarded ? '1' : '' }}"
+                    title="{{ $jails ? 'Banned by fail2ban in ' . implode(', ', $jails) . ' (as of ' . \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) . '). ' : '' }}{{ $guarded ? 'Protected from banning (in every jail\'s ignoreip). ' : '' }}Right-click to show only this address{{ $canBan ? ', or ban, unban or protect it' : '' }}.">{{ $request->client }}</code>
             @else
                 <code>—</code>
-            @endif
-            @if ($jails)
-                <span class="badge critical" title="Banned by fail2ban as of {{ \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) }}">banned: {{ implode(', ', $jails) }}</span>
             @endif
         </td>
         <td class="muted">{{ $request->vhost ?? basename($request->source) }}</td>

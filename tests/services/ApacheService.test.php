@@ -553,7 +553,15 @@ test('the access and error logs come a page at a time, searched and sorted in th
     expect($page(1, '', 'time', 'desc', ['banned' => 'yes'])['total'])->toBe(3)
         ->and($page(1, '', 'time', 'desc', ['banned' => 'yes', 'hide_local' => true])['total'])->toBe(2)
         ->and($page(1, '', 'time', 'desc', ['banned' => 'no'])['total'])->toBe(250)
-        ->and($page(1, '', 'time', 'desc', ['banned' => 'maybe'])['total'])->toBe(253);
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'maybe'])['total'])->toBe(253)
+        // Protected: none yet, then one.
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'protected'])['total'])->toBe(0)
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'unprotected'])['total'])->toBe(253);
+
+    App\Models\Fail2banProtection::query()->create(['server_id' => $this->server->id, 'ip' => '10.0.1.9']);
+
+    expect(collect($page(1, '', 'time', 'desc', ['banned' => 'protected'])['rows'])->pluck('client')->all())->toBe(['10.0.1.9'])
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'unprotected'])['total'])->toBe(252);
 
     foreach (['note', 'crash', 'error', 'warning'] as $i => $level) {
         ApacheLogEntry::query()->create(['server_id' => $this->server->id, 'source' => '/var/log/apache2/error.log', 'level' => $level, 'logged_at' => $now->copy()->subMinutes(10 - $i), 'message' => "m$i", 'hash' => "h$i"]);

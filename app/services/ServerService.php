@@ -195,6 +195,7 @@ class ServerService
             ApacheTraffic::query()->where('server_id', $server->id)->delete();
             ApacheLogEntry::query()->where('server_id', $server->id)->delete();
             ApacheAccessEntry::query()->where('server_id', $server->id)->delete();
+            \App\Models\Fail2banProtection::query()->where('server_id', $server->id)->delete();
             $server->delete();
         });
     }

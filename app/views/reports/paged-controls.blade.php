@@ -25,10 +25,12 @@
             <input type="text" id="{{ \Illuminate\Support\Str::slug($label) }}-client" data-paged-param="client" placeholder="Client IP (or its start)" size="18" spellcheck="false" inputmode="decimal">
             @if (!empty($banFilter))
                 <label for="{{ \Illuminate\Support\Str::slug($label) }}-banned" class="visually-hidden">fail2ban</label>
-                <select id="{{ \Illuminate\Support\Str::slug($label) }}-banned" data-paged-param="banned" title="Banned by fail2ban">
-                    <option value="">Banned or not</option>
+                <select id="{{ \Illuminate\Support\Str::slug($label) }}-banned" data-paged-param="banned" title="fail2ban: banned or protected">
+                    <option value="">Banned, protected or not</option>
                     <option value="yes">Banned by fail2ban</option>
                     <option value="no">Not banned</option>
+                    <option value="protected">Protected from banning</option>
+                    <option value="unprotected">Not protected</option>
                 </select>
             @endif
             <label class="check"><input type="checkbox" data-paged-param="hide_local" checked> Hide localhost</label>

@@ -6,6 +6,7 @@ use App\Models\ApacheAccessEntry;
 use App\Models\ApacheLogEntry;
 use App\Models\ApacheTraffic;
 use App\Models\ApacheVhost;
+use App\Models\Fail2banProtection;
 use App\Models\HealthCheck as StoredCheck;
 use App\Models\Server;
 use Carbon\Carbon;
@@ -123,9 +124,9 @@ class ApacheReportService extends HistoryReport
      * client, host, request, referer or user agent (a 3-digit number: that status too). $filters:
      * status ("4xx", "errors" for 4xx and 5xx, or a code), client (a whole address exactly, else from its start) and
      * hide_local (leave out 127.* and ::1) and banned ("yes": addresses fail2ban had banned at the last
-     * read, in any jail; "no": the others).
+     * read, in any jail; "protected": those protected from banning; "no" / "unprotected": the others).
      *
-     * @param array{status?: string, client?: string, hide_local?: bool, banned?: string} $filters
+     * @param array{status?: string, client?: string, hide_local?: bool, banned?: 'yes'|'no'|'protected'|'unprotected'|''} $filters
      * @return array{rows: list<ApacheAccessEntry>, total: int, page: int, pages: int}
      */
     public function accessPage(Server $server, string $range, ?ApacheVhost $vhost = null, int $page = 1, string $search = '', string $sort = 'time', string $direction = 'desc', array $filters = []): array
@@ -152,13 +153,16 @@ class ApacheReportService extends HistoryReport
             $query->where('client', 'like', addcslashes($client, '%_\\') . '%');
         }
 
-        // Banned: the addresses fail2ban had banned at the last read (in any jail), or not.
+        // fail2ban: the addresses it had banned at the last read (in any jail), or those protected from
+        // banning; or everyone else.
         $banned = (string) ($filters['banned'] ?? '');
 
-        if (in_array($banned, ['yes', 'no'], true)) {
-            $ips = array_values(array_unique(array_merge([], ...array_values(array_map(fn ($list) => (array) $list, $server->fail2ban_bans ?? [])))));
+        if (in_array($banned, ['yes', 'no', 'protected', 'unprotected'], true)) {
+            $ips = in_array($banned, ['protected', 'unprotected'], true)
+                ? Fail2banProtection::ipsFor($server)
+                : array_values(array_unique(array_merge([], ...array_values(array_map(fn ($list) => (array) $list, $server->fail2ban_bans ?? [])))));
 
-            if ($banned === 'yes') {
+            if ($banned === 'yes' || $banned === 'protected') {
                 // In chunks: databases limit how many values one IN () takes.
                 $query->where(function ($q) use ($ips) {
                     $q->whereRaw('1 = 0');

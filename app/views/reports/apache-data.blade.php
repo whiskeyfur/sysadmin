@@ -69,11 +69,11 @@
             @else
                 <p class="hint">Each request as logged, read in the format its CustomLog names; newest first, {{ \App\Services\ApacheReportService::PAGE_SIZE }} a page. Search matches client, host, request, referer, user agent or a status; the client box matches a whole address exactly, or a partial one from its start (e.g. 10.0.0.), and Hide localhost leaves out 127.* and ::1.
                     @if ($banServer?->fail2ban_checked_at)
-                        Addresses fail2ban had banned at {{ \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) }} are marked.
+                        Addresses fail2ban had banned at {{ \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) }} are <code class="ip-banned">red</code>, protected ones <code class="ip-protected">green</code> (hover for details).
                     @elseif ($banServer?->fail2ban_message)
                         {{ $banServer->fail2ban_message }}
                     @endif
-                    Right-click a client address to show only its requests{{ $canBan ? ', or to ban or unban it with fail2ban on ' . $banServer->name : '' }}; right-click a URL to search for it.
+                    Right-click a client address to show only its requests{{ $canBan ? ', to ban or unban it with fail2ban on ' . $banServer->name . ', or to protect it from banning' : '' }}; right-click a URL to search for it.
                 </p>
                 <div class="paged" data-paged="/apache/reports/entries?kind=access&amp;{{ $pagedQuery }}">
                     @include('reports.paged-controls', ['label' => 'Search requests', 'statuses' => $report['access_statuses'], 'banFilter' => $banServer?->fail2ban_bans !== null])
@@ -95,6 +95,8 @@
                 @if ($canBan)
                     <button type="button" role="menuitem" data-ban-action="ban">Ban <span data-client-ip></span> with fail2ban…</button>
                     <button type="button" role="menuitem" data-ban-action="unban">Unban <span data-client-ip></span>…</button>
+                    <button type="button" role="menuitem" data-ban-action="protect">Protect <span data-client-ip></span> from banning…</button>
+                    <button type="button" role="menuitem" data-ban-action="unprotect">Remove protection from <span data-client-ip></span>…</button>
                 @endif
             </div>
             <div id="path-menu" class="ban-menu" role="menu" hidden>
@@ -120,6 +122,8 @@
         @endif
         <style>
             .client-ip, .request-path { cursor: context-menu; }
+            code.ip-banned { color: var(--error); background: var(--error-bg); font-weight: 600; }
+            code.ip-protected { color: var(--notice); background: var(--notice-bg); font-weight: 600; }
             .ban-menu button span { display: inline-block; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; font-family: ui-monospace, monospace; font-size: 13px; }
             .ban-menu { position: fixed; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .2); padding: 4px 0; display: flex; flex-direction: column; }
             .ban-menu button { background: none; border: 0; text-align: left; padding: 7px 14px; font: inherit; color: var(--text); cursor: pointer; }

@@ -156,3 +156,5 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — app:apache-history imports rotated Apache logs (idempotent); run for localhost.
 * 2026-09-29 — Chart legends hide/show lines with the scale refitting; access log banned/not-banned filter.
 * 2026-09-29 — Access log right-click: show only a client's requests (exact IP match), search for a URL.
+* 2026-09-29 — fail2ban protection: protected addresses in every jail's ignoreip (re-applied each read), can't be banned; banned ones can't be protected.
+* 2026-09-29 — Access log: banned IPs red, protected green (no badges); protected/not protected filter.

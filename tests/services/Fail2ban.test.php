@@ -30,6 +30,9 @@ class Fail2banFakeSsh extends App\Services\SshService
 
     public bool $installed = true;
 
+    /** @var array<string, list<string>> jail => ignoreip */
+    public array $ignores = ['sshd' => ['127.0.0.1/8'], 'apache-auth' => ['127.0.0.1/8']];
+
     public array $commands = [];
 
     public function __construct()
@@ -68,6 +71,8 @@ class Fail2banFakeSsh extends App\Services\SshService
 
             foreach ($this->jails as $jail => $ips) {
                 $out .= "@@jail $jail\nStatus for the jail: $jail\n`- Actions\n   |- Currently banned:\t" . count($ips) . "\n   `- Banned IP list:\t" . implode(' ', $ips) . "\n";
+                $list = $this->ignores[$jail] ?? [];
+                $out .= "@@ignore $jail\n" . ($list === [] ? "No IP address/network is ignored\n" : "These IP addresses/networks are ignored:\n" . implode('', array_map(fn ($ip, $i) => ($i === count($list) - 1 ? '`- ' : '|- ') . "$ip\n", $list, array_keys($list))));
             }
 
             return $out;
@@ -75,6 +80,12 @@ class Fail2banFakeSsh extends App\Services\SshService
 
         if ($this->denied) {
             throw new ServerConnectionException('The command exited with status 1: sudo: a password is required');
+        }
+
+        if (preg_match("/^sudo -n fail2ban-client set '([^']+)' (addignoreip|delignoreip) '([^']+)' 2>&1$/", $command, $m) === 1) {
+            $this->ignores[$m[1]] = $m[2] === 'addignoreip' ? [...($this->ignores[$m[1]] ?? []), $m[3]] : array_values(array_diff($this->ignores[$m[1]] ?? [], [$m[3]]));
+
+            return "These IP addresses/networks are ignored:\n";
         }
 
         if (preg_match("/^sudo -n fail2ban-client set '([^']+)' (banip|unbanip) '([^']+)' 2>&1$/", $command, $m) === 1) {
@@ -118,7 +129,7 @@ test('refused: your own address, the server itself, bad input, unknown jails, no
     ['ban', 'not-an-ip', 'sshd', "isn't an IP address"],
     ['ban', '198.51.100.4', 'sshd; rm -rf /', 'Choose one of'],
     ['ban', '198.51.100.4', 'nginx', 'no fail2ban jail called nginx'],
-    ['delete', '198.51.100.4', 'sshd', 'Choose ban or unban'],
+    ['delete', '198.51.100.4', 'sshd', 'Choose ban, unban, protect'],
 ]);
 
 test('only admins, and only over a trusted SSH login', function () {
@@ -143,4 +154,41 @@ test('without a sudo rule or fail2ban, nothing is tried and the page says why', 
     $this->ssh->installed = false;
     ($this->f2b)()->readBans(new SSH2('localhost'), $this->server);
     expect($this->server->fresh()->fail2ban_message)->toBe("fail2ban-client isn't installed.");
+});
+
+test('an address is protected in every jail; it can\'t be banned until the protection is removed, and a banned one can\'t be protected', function () {
+    $f2b = ($this->f2b)();
+
+    // Banned in sshd: unban first.
+    expect(fn () => $f2b->change($this->admin, $this->server, 'protect', '203.0.113.9'))->toThrow(DomainException::class, 'unban it before protecting it');
+
+    expect($f2b->change($this->admin, $this->server, 'protect', '198.51.100.4'))->toContain('protected from banning')
+        ->and($this->ssh->ignores)->toBe(['sshd' => ['127.0.0.1/8', '198.51.100.4'], 'apache-auth' => ['127.0.0.1/8', '198.51.100.4']])
+        ->and($f2b->isProtected($this->server, '198.51.100.4'))->toBeTrue()
+        ->and(fn () => $f2b->change($this->admin, $this->server, 'ban', '198.51.100.4', 'sshd'))->toThrow(DomainException::class, 'remove its protection first')
+        ->and($this->ssh->jails['sshd'])->toBe(['203.0.113.9']);
+
+    $f2b->change($this->admin, $this->server, 'unprotect', '198.51.100.4');
+    expect($this->ssh->ignores['sshd'])->toBe(['127.0.0.1/8'])
+        ->and($f2b->isProtected($this->server, '198.51.100.4'))->toBeFalse()
+        ->and(fn () => $f2b->change($this->admin, $this->server, 'unprotect', '198.51.100.4'))->toThrow(DomainException::class, "isn't protected");
+
+    $f2b->change($this->admin, $this->server, 'ban', '198.51.100.4', 'sshd', '192.0.2.1');
+    expect($this->ssh->jails['sshd'])->toContain('198.51.100.4')
+        ->and(ApacheAdminLog::query()->pluck('action')->all())->toContain('fail2ban protect')->toContain('fail2ban unprotect');
+});
+
+test('protection lost with a fail2ban restart is put back when the bans are read; nothing runs when it\'s all there', function () {
+    ($this->f2b)()->change($this->admin, $this->server, 'protect', '198.51.100.4');
+    $this->ssh->ignores = ['sshd' => ['127.0.0.1/8'], 'apache-auth' => ['127.0.0.1/8', '198.51.100.4']]; // sshd forgot it
+    $this->ssh->commands = [];
+
+    ($this->f2b)()->readBans(new SSH2('localhost'), $this->server);
+    expect($this->ssh->ignores['sshd'])->toBe(['127.0.0.1/8', '198.51.100.4'])
+        ->and(count($this->ssh->commands))->toBe(2); // the read, and one addignoreip
+
+    $this->ssh->commands = [];
+    ($this->f2b)()->readBans(new SSH2('localhost'), $this->server);
+    expect(count($this->ssh->commands))->toBe(1)
+        ->and($this->server->fresh()->fail2ban_bans)->toBe(['sshd' => ['203.0.113.9'], 'apache-auth' => []]);
 });

@@ -60,7 +60,13 @@
         closePath();
         menu.dataset.ip = cell.getAttribute('data-ip');
         menu.dataset.jails = cell.getAttribute('data-jails') || '';
+        menu.dataset.protected = cell.getAttribute('data-protected') || '';
         menu.target = cell;
+        // Only what applies: a protected address can't be banned (remove the protection first), a banned
+        // one can't be protected (unban it first).
+        var banned = menu.dataset.jails !== '', guarded = menu.dataset.protected === '1';
+        var shown = { ban: !guarded, unban: banned, protect: !banned && !guarded, unprotect: guarded };
+        menu.querySelectorAll('[data-ban-action]').forEach(function (item) { item.hidden = !shown[item.getAttribute('data-ban-action')]; });
         menu.querySelectorAll('[data-client-ip]').forEach(function (span) { span.textContent = menu.dataset.ip; });
         place(menu, event);
     });

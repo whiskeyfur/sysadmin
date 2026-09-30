@@ -1,0 +1,17 @@
+# Addresses protected from banning on a server (Fail2banService): in every jail's ignoreip, so fail2ban
+# never bans them, and sys refuses to ban them. Re-applied with each Apache import (a fail2ban restart
+# forgets ignoreip changes made at runtime). An address must be unbanned before it can be protected.
+timestamps: false
+columns:
+  server_id:
+    type: integer
+    index: true
+  ip:
+    type: string
+    length: 64
+  user_id:
+    type: integer
+    nullable: true
+  created_at:
+    type: timestamp
+    nullable: true

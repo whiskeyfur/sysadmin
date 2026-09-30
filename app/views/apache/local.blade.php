@@ -70,7 +70,16 @@
         <div class="card">
             <h2>Error log</h2>
             @if ($errorLog)
-                <pre class="log-message">{{ implode("\n", $errorLog) }}</pre>
+                <p class="hint">The last {{ count($errorLog) }} lines, newest first. Long lines are cut at 300 characters: click one for all of it.</p>
+                <div class="log-box">
+                    @foreach (array_reverse($errorLog) as $line)
+                        @if (mb_strlen($line) > 300)
+                            <details class="log-line"><summary><code>{{ mb_substr($line, 0, 300) }}…</code> <span class="muted">({{ number_format(mb_strlen($line)) }} characters)</span></summary><pre class="log-message">{{ $line }}</pre></details>
+                        @else
+                            <div class="log-line"><code>{{ $line }}</code></div>
+                        @endif
+                    @endforeach
+                </div>
             @else
                 <p class="muted">Empty.</p>
             @endif
@@ -104,5 +113,12 @@
         @endif
     </div>
 
+    <style>
+        .log-box { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+        .log-line { padding: 3px 0; border-bottom: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }
+        .log-line:last-child { border-bottom: 0; }
+        .log-line code { background: none; padding: 0; white-space: pre-wrap; }
+        .log-line summary { cursor: pointer; }
+    </style>
     <script src="/assets/js/passkeys.js"></script>
 @endsection

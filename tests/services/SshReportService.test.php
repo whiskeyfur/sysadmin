@@ -73,3 +73,35 @@ test('more runs than a chart can show are averaged into even intervals', functio
         ->and($report['memory']['Memory'][10][1])->toBe(50.0)
         ->and($this->reports->report($this->server, '24h')['bucket_minutes'])->toBeNull();
 });
+
+test('a chosen start and end shows only that stretch, runs after the end left out', function () {
+    ($this->run)(30, ['/' => ['used_percent' => 40.0]], [0.5, 0.4, 0.3, 2], 50.0, null);
+    ($this->run)(20, ['/' => ['used_percent' => 41.0]], [0.5, 0.4, 0.3, 2], 51.0, null);
+    ($this->run)(5, ['/' => ['used_percent' => 45.0]], [1.5, 1.2, 0.9, 2], 60.0, null);
+    $now = Carbon::instance($this->clock->now())->getTimestamp();
+
+    $report = $this->reports->report($this->server, ($now - 25 * 3600) . '-' . ($now - 10 * 3600));
+
+    expect(array_column($report['memory']['Memory'], 1))->toBe([51.0])
+        ->and($report['from']->getTimestamp())->toBe($now - 25 * 3600)
+        ->and($report['to']->getTimestamp())->toBe($now - 10 * 3600)
+        ->and(LineChart::render('Memory', $report['memory'], $now - 25 * 3600, $now - 10 * 3600, '%'))->toContain('data-from="' . ($now - 25 * 3600) . '"');
+});
+
+test('the period comes from start and end fields (app time zone), a zoomed range, or a preset', function () {
+    $zone = App\Utils\LocalTime::zone();
+    $start = (new DateTimeImmutable('2026-09-01 08:00', $zone))->getTimestamp();
+
+    expect(App\Services\HistoryReport::period('7d', '2026-09-01T08:00', '2026-09-02T08:00'))->toBe($start . '-' . ($start + 86400))
+        // Swapped, too short, too long.
+        ->and(App\Services\HistoryReport::period('', '2026-09-02T08:00', '2026-09-01T08:00'))->toBe($start . '-' . ($start + 86400))
+        ->and(App\Services\HistoryReport::period('', '2026-09-01T08:00', '2026-09-01T08:01'))->toBe($start . '-' . ($start + 600))
+        ->and(App\Services\HistoryReport::period('', '2026-09-01T08:00', '2026-12-01T08:00'))->toBe($start . '-' . ($start + 31 * 86400))
+        // Garbage dates fall back to the range.
+        ->and(App\Services\HistoryReport::period('24h', 'soon', 'later'))->toBe('24h')
+        ->and(App\Services\HistoryReport::period('1780000000-1780003600'))->toBe('1780000000-1780003600')
+        ->and(App\Services\HistoryReport::period('1780000000-1780000060'))->toBe('7d')
+        ->and(App\Services\HistoryReport::period('30d'))->toBe('30d')
+        ->and(App\Services\HistoryReport::period('bogus'))->toBe('7d')
+        ->and(App\Services\HistoryReport::custom('7d'))->toBeNull();
+});

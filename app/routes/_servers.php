@@ -55,4 +55,7 @@ app()->group('/admin/servers', ['middleware' => RequireAdmin::class, function ()
     app()->post('/{id}/remove', 'ServerConfigController@remove');
     app()->get('/{id}/ssh-setup', 'ServerConfigController@sshSetup');
     app()->post('/{id}/ssh-setup', 'ServerConfigController@runSshSetup');
+    // fail2ban, from a client address in the access log (JSON).
+    app()->get('/{id}/fail2ban/jails', 'Fail2banController@jails');
+    app()->post('/{id}/fail2ban', 'Fail2banController@change');
 }]);

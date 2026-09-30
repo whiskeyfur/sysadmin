@@ -98,3 +98,20 @@ test('Debian envvars and ServerRoot, as read without the control program', funct
         ->and($files->serverRoot("# ServerRoot \"/etc/apache2\"\nListen 80\n"))->toBeNull()
         ->and($files->serverRoot("ServerRoot \"/etc/httpd/\"\n"))->toBe('/etc/httpd');
 });
+
+test('access log formats: the fields each one logs, in its own order and time format', function (string $format, string $line, array $expected) {
+    $entry = (new App\Services\AccessLogFormat($format))->parse($line);
+
+    expect($entry)->not->toBeNull()
+        ->and(array_intersect_key($entry, $expected))->toEqual($expected);
+})->with([
+    'common with a timed-out request' => ['%h %l %u %t "%r" %>s %b', '10.0.0.1 - - [29/Sep/2026:10:00:00 +0000] "-" 408 -', ['time' => 1790676000, 'status' => 408, 'bytes' => 0, 'path' => null]],
+    'escapes in quoted fields' => ['%h %t "%r" %>s %O "%{User-Agent}i"', '::1 [29/Sep/2026:10:00:00 -0700] "GET /a\x22b HTTP/1.1" 200 5 "x \"y\" \\\\z"', ['client' => '::1', 'path' => '/a"b', 'agent' => 'x "y" \\z', 'time' => 1790701200]],
+    'strftime time, path and query apart, microseconds taken' => ['%{%Y-%m-%d %H:%M:%S}t %a %m %U%q %>s %B %D %V', '2026-09-29 10:00:00 10.0.0.2 GET /x?y=1 500 1234 250000 shop.example.com', ['time' => 1790676000, 'method' => 'GET', 'path' => '/x?y=1', 'status' => 500, 'bytes' => 1234, 'duration_ms' => 250, 'vhost' => 'shop.example.com']],
+    'epoch seconds and milliseconds taken' => ['%{sec}t|%h|%>s|%b|%{ms}T', '1790701200|10.0.0.3|201|99|42', ['time' => 1790701200, 'client' => '10.0.0.3', 'duration_ms' => 42]],
+    'host and port logged apart' => ['%V %p %h %t "%r" %s %b', 'shop 8080 1.2.3.4 [29/Sep/2026:10:00:00 +0000] "GET / HTTP/1.1" 200 1', ['vhost' => 'shop:8080']],
+]);
+
+test('a line in another format doesn\'t parse', function () {
+    expect((new App\Services\AccessLogFormat('%h %t "%r" %>s %b'))->parse('garbage line'))->toBeNull();
+});

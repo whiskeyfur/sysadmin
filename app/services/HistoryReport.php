@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Utils\LocalTime;
 use App\Utils\SystemClock;
 use Carbon\Carbon;
 use Psr\Clock\ClockInterface;
@@ -27,6 +28,19 @@ abstract class HistoryReport
     public const DEFAULT_RANGE = '7d';
 
     /**
+     * A chosen start and end travel as the range "START-END" (unix times): from the date fields
+     * (period()) or from dragging across a chart.
+     */
+    public const CUSTOM = '/^(\d{9,11})-(\d{9,11})$/';
+
+    /**
+     * The shortest and longest chosen period, in seconds.
+     */
+    public const MIN_SPAN = 600;
+
+    public const MAX_SPAN = 31 * 86400;
+
+    /**
      * More runs than this are averaged into time buckets, for readable
      * charts and a table of sane length.
      */
@@ -48,10 +62,57 @@ abstract class HistoryReport
      */
     protected function window(string $range): array
     {
+        if (($custom = self::custom($range)) !== null) {
+            return [Carbon::createFromTimestamp($custom[0]), Carbon::createFromTimestamp($custom[1])];
+        }
+
         $hours = (self::RANGES[$range] ?? self::RANGES[self::DEFAULT_RANGE])[1];
         $to = Carbon::instance($this->clock->now());
 
         return [$to->copy()->subHours($hours), $to];
+    }
+
+    /**
+     * The period a report shows, from the request: a start and end (date fields, in the app's time
+     * zone), else the range (a preset, or "START-END" from zooming into a chart), else the default.
+     * A chosen period is kept between MIN_SPAN and MAX_SPAN (the end moves).
+     */
+    public static function period(string $range, string $start = '', string $end = ''): string
+    {
+        if ($start !== '' && $end !== '') {
+            // As a datetime-local field sends it (seconds optional).
+            $parse = fn (string $value) => \DateTimeImmutable::createFromFormat('!Y-m-d\\TH:i:s', strlen($value) === 16 ? "$value:00" : $value, LocalTime::zone());
+            [$from, $to] = [$parse($start), $parse($end)];
+
+            if ($from === false || $to === false) {
+                return isset(self::RANGES[$range]) ? $range : self::DEFAULT_RANGE;
+            }
+
+            [$from, $to] = [$from->getTimestamp(), $to->getTimestamp()];
+            [$from, $to] = $from <= $to ? [$from, $to] : [$to, $from];
+
+            return $from . '-' . min(max($to, $from + self::MIN_SPAN), $from + self::MAX_SPAN);
+        }
+
+        if (isset(self::RANGES[$range])) {
+            return $range;
+        }
+
+        if (preg_match(self::CUSTOM, $range, $m) === 1 && (int) $m[2] - (int) $m[1] >= self::MIN_SPAN && (int) $m[2] - (int) $m[1] <= self::MAX_SPAN) {
+            return $range;
+        }
+
+        return self::DEFAULT_RANGE;
+    }
+
+    /**
+     * A chosen period's start and end (unix times); null for a preset.
+     *
+     * @return array{0: int, 1: int}|null
+     */
+    public static function custom(string $range): ?array
+    {
+        return preg_match(self::CUSTOM, $range, $m) === 1 ? [(int) $m[1], (int) $m[2]] : null;
     }
 
     protected function bucketMinutes(int $spanSeconds): int

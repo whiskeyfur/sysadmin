@@ -39,6 +39,11 @@
         svg.chart .grid { stroke: currentColor; opacity: .12; }
         svg.chart .axis { fill: currentColor; opacity: .6; font-size: 12px; }
         figure.chart .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-size: 13px; }
+        figure.chart .legend .chart-hint { margin-left: auto; color: var(--muted); font-size: 12px; }
+        svg.chart[data-from] { cursor: crosshair; touch-action: pan-y; user-select: none; }
+        svg.chart .zoom-band { fill: var(--accent, #2563eb); fill-opacity: .15; stroke: var(--accent, #2563eb); stroke-opacity: .6; }
+        .period-dates { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .period-dates input { width: auto; }
         figure.chart .legend i { display: inline-block; width: 12px; height: 3px; margin-right: 6px; vertical-align: middle; border-radius: 2px; }
         .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
         details.menu { position: relative; }
@@ -268,6 +273,61 @@
                 if (event.key === 'Escape') { menus.forEach(function (menu) { menu.open = false; }); }
             });
         })();
+
+        document.addEventListener('DOMContentLoaded', function () {
+            // Report periods: a preset submits on its own; the start and end fields are only sent once
+            // edited (so changing the server keeps "Last 7 days" rolling instead of freezing its dates).
+            document.querySelectorAll('select[data-period-preset]').forEach(function (select) {
+                var form = select.form;
+                var dates = form.querySelectorAll('.period-dates input');
+                dates.forEach(function (input) {
+                    input.setAttribute('data-name', input.name);
+                    input.removeAttribute('name');
+                    input.addEventListener('input', function () { dates.forEach(function (d) { d.name = d.getAttribute('data-name'); }); });
+                });
+                select.addEventListener('change', function () { form.submit(); });
+            });
+
+            // Charts: drag across one to show just that stretch of time (the whole report follows).
+            document.querySelectorAll('svg.chart[data-from]').forEach(function (svg) {
+                var from = +svg.dataset.from, to = +svg.dataset.to, left = +svg.dataset.left, right = +svg.dataset.right;
+                var ns = 'http://www.w3.org/2000/svg', band = null, start = null;
+                var at = function (event) {
+                    var point = svg.createSVGPoint();
+                    point.x = event.clientX; point.y = event.clientY;
+                    return Math.max(left, Math.min(right, point.matrixTransform(svg.getScreenCTM().inverse()).x));
+                };
+                var time = function (x) { return Math.round(from + (x - left) / (right - left) * (to - from)); };
+                svg.addEventListener('pointerdown', function (event) {
+                    if (event.button !== 0) { return; }
+                    start = at(event);
+                    band = document.createElementNS(ns, 'rect');
+                    band.setAttribute('class', 'zoom-band');
+                    band.setAttribute('y', svg.dataset.top);
+                    band.setAttribute('height', svg.dataset.bottom - svg.dataset.top);
+                    band.setAttribute('x', start); band.setAttribute('width', 0);
+                    svg.appendChild(band);
+                    svg.setPointerCapture(event.pointerId);
+                });
+                svg.addEventListener('pointermove', function (event) {
+                    if (band === null) { return; }
+                    var x = at(event);
+                    band.setAttribute('x', Math.min(start, x)); band.setAttribute('width', Math.abs(x - start));
+                });
+                var finish = function (event, apply) {
+                    if (band === null) { return; }
+                    var x = at(event), a = Math.min(start, x), b = Math.max(start, x);
+                    band.remove(); band = null;
+                    if (!apply || b - a < 4) { return; }
+                    var url = new URL(window.location.href);
+                    url.searchParams.set('range', time(a) + '-' + time(b));
+                    url.searchParams.delete('start'); url.searchParams.delete('end');
+                    window.location.href = url.toString();
+                };
+                svg.addEventListener('pointerup', function (event) { finish(event, true); });
+                svg.addEventListener('pointercancel', function (event) { finish(event, false); });
+            });
+        });
 
         // "Are you sure?" for forms and buttons with data-confirm.
         document.addEventListener('submit', function (event) {

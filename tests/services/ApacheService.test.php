@@ -407,3 +407,75 @@ test('the report totals requests per interval, with quiet intervals as zero', fu
         ->and(count($requests))->toBe(5)
         ->and(in_array(0.0, $requests, true))->toBeTrue();
 });
+
+test('each access log is read in the format its CustomLog names, and every request is stored', function () {
+    $this->ssh->files['/etc/apache2/apache2.conf'] .= <<<'CONF'
+        LogFormat "%v:%p %h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" vhost_combined
+        LogFormat "%h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" combined
+        CustomLog ${APACHE_LOG_DIR}/other_vhosts_access.log vhost_combined
+
+        CONF;
+    // The shop redefines "combined" for itself (time taken, then the host), and a second host logs inline.
+    $this->ssh->files['/etc/apache2/sites-enabled/shop.conf'] = <<<'CONF'
+        <VirtualHost *:80>
+            ServerName shop.example.com
+            LogFormat "%a %t \"%r\" %>s %B %D %V" combined
+            CustomLog ${APACHE_LOG_DIR}/shop.log combined
+        </VirtualHost>
+        <VirtualHost *:80>
+            ServerName api.example.com
+            CustomLog ${APACHE_LOG_DIR}/api.log "%{%Y-%m-%d %H:%M:%S}t %h %m %U%q %>s %b"
+        </VirtualHost>
+        CONF;
+    $t = fn (int $minutesAgo, string $format) => ($this->stamp)($minutesAgo)->format($format);
+    $this->ssh->files['/var/log/apache2/shop.log'] = '10.0.0.7 [' . $t(5, 'd/M/Y:H:i:s O') . "] \"GET /cart?id=1 HTTP/2.0\" 200 5120 250000 shop.example.com\n";
+    $this->ssh->files['/var/log/apache2/api.log'] = $t(4, 'Y-m-d H:i:s') . " 10.0.0.8 POST /v1/items?x=\"y\" 201 -\n";
+    $this->ssh->files['/var/log/apache2/other_vhosts_access.log'] = 'blog.example.com:443 10.0.0.9 - - [' . $t(3, 'd/M/Y:H:i:s O') . "] \"GET /feed HTTP/1.1\" 304 0 \"https://ref/\" \"Feed \\\"Reader\\\"\"\n";
+
+    ($this->apache)()->run($this->server);
+    $config = $this->server->fresh()->apache_config;
+    $requests = App\Models\ApacheAccessEntry::query()->orderBy('requested_at')->get();
+
+    expect($config['access_formats']['/var/log/apache2/shop.log'])->toBe(['%a %t "%r" %>s %B %D %V'])
+        ->and($config['access_formats']['/var/log/apache2/other_vhosts_access.log'][0])->toStartWith('%v:%p %h')
+        ->and($requests)->toHaveCount(3)
+        ->and($requests[0]->only(['client', 'vhost', 'method', 'path', 'protocol', 'status', 'bytes', 'duration_ms']))
+        ->toBe(['client' => '10.0.0.7', 'vhost' => 'shop.example.com', 'method' => 'GET', 'path' => '/cart?id=1', 'protocol' => 'HTTP/2.0', 'status' => 200, 'bytes' => 5120, 'duration_ms' => 250])
+        // api.log logs no host: it's the only one writing there.
+        ->and($requests[1]->only(['client', 'vhost', 'method', 'path', 'status', 'bytes']))
+        ->toBe(['client' => '10.0.0.8', 'vhost' => 'api.example.com', 'method' => 'POST', 'path' => '/v1/items?x="y"', 'status' => 201, 'bytes' => 0])
+        ->and($requests[1]->requested_at->getTimestamp())->toBe(($this->stamp)(4)->startOfSecond()->getTimestamp())
+        ->and($requests[2]->only(['vhost', 'referer', 'agent', 'status']))->toBe(['vhost' => 'blog.example.com:443', 'referer' => 'https://ref/', 'agent' => 'Feed "Reader"', 'status' => 304])
+        ->and((int) ApacheTraffic::query()->sum('requests'))->toBe(3);
+
+    // The report lists them; a host's report only its own from a shared log.
+    $reports = new ApacheReportService($this->clock);
+    expect(collect($reports->report($this->server->fresh(), '24h')['access'])->pluck('client')->all())->toBe(['10.0.0.9', '10.0.0.8', '10.0.0.7']);
+});
+
+test('requests are kept for the set number of days, and the ones already read are stored once', function () {
+    // Read once before requests were stored: traffic has them, requests don't.
+    $this->ssh->files['/var/log/apache2/shop.log'] = ($this->accessLine)(60 * 24 * 3, 200) . ($this->accessLine)(30, 200);
+    (new SettingsService())->update($this->admin, ['apache_access_keep_days' => '0']);
+    ($this->apache)()->run($this->server);
+
+    expect(App\Models\ApacheAccessEntry::count())->toBe(0)
+        ->and((int) ApacheTraffic::query()->sum('requests'))->toBe(2);
+
+    // Kept 2 days now: the next import adds the new line and, once, the earlier ones within 2 days.
+    (new SettingsService())->update($this->admin, ['apache_access_keep_days' => '2']);
+    $this->ssh->files['/var/log/apache2/shop.log'] .= ($this->accessLine)(1, 404);
+    ($this->apache)()->run($this->server->fresh());
+
+    expect(App\Models\ApacheAccessEntry::query()->orderBy('requested_at')->pluck('status')->all())->toBe([200, 404])
+        ->and((int) ApacheTraffic::query()->sum('requests'))->toBe(3);
+
+    $this->ssh->files['/var/log/apache2/shop.log'] .= ($this->accessLine)(0, 500);
+    ($this->apache)()->run($this->server->fresh());
+    expect(App\Models\ApacheAccessEntry::count())->toBe(3);
+
+    // Older than the setting: pruned.
+    $this->clock->advance(3 * 86400);
+    ($this->apache)()->run($this->server->fresh());
+    expect(App\Models\ApacheAccessEntry::count())->toBe(0);
+});

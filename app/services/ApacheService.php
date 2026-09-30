@@ -7,6 +7,7 @@ use App\Enums\HealthStatus;
 use App\Enums\ServerPlatform;
 use App\Exceptions\ServerConnectionException;
 use App\Models\ApacheLogEntry;
+use App\Models\ApacheAccessEntry;
 use App\Models\ApacheTraffic;
 use App\Models\ApacheVhost;
 use App\Models\Server;
@@ -130,10 +131,12 @@ class ApacheService
             }
 
             foreach (array_keys($config['access_logs'] ?? []) as $path) {
-                $this->importAccessLog($connection, $server, (string) $path, $state, $problems);
+                $this->importAccessLog($connection, $server, (string) $path, $state, $problems, $config);
             }
 
             $status = isset($config['status_url']) ? $this->status($connection, (string) $config['status_url']) : null;
+            // Who fail2ban has banned, for the access log (on the server itself, not inside a container).
+            (new Fail2banService($this->ssh))->readBans($connection, $server);
         } catch (DomainException $e) {
             return [new CheckResult('apache', 'Apache', HealthStatus::Unknown, $e->getMessage())];
         } finally {
@@ -518,6 +521,7 @@ class ApacheService
         }
 
         $vhosts = $this->vhosts($directives, $resolve);
+        $accessFormats = $this->logFormats($directives, $resolve);
         $statusUrl = $statusLoaded && $statusLocation !== null && $port !== null ? "http://127.0.0.1:$port" . rtrim($statusLocation, '/') . '?auto' : null;
         $notes[] = $statusUrl !== null
             ? "mod_status: $statusLocation, read from the server itself."
@@ -528,10 +532,70 @@ class ApacheService
             'files' => $fileCount,
             'error_logs' => $errorLogs,
             'access_logs' => $accessLogs,
+            'access_formats' => $accessFormats,
             'status_url' => $statusUrl,
             'vhosts' => $vhosts,
             'notes' => array_values(array_unique($notes)),
         ];
+    }
+
+    /**
+     * The LogFormat each access log is written in: CustomLog names a format (inline, with a %) or a
+     * LogFormat nickname, looked up in its virtual host first, then the main server (Apache resolves
+     * them after reading the whole configuration, so order doesn't matter); TransferLog uses its
+     * scope's LogFormat without a nickname, else Common Log Format. Several virtual hosts writing to
+     * one file in different formats give that file several.
+     *
+     * @param list<array<string, mixed>> $directives
+     * @param callable(string): ?string $resolve
+     * @return array<string, list<string>> path => formats
+     */
+    private function logFormats(array $directives, callable $resolve): array
+    {
+        $nicknames = [];
+        $defaults = [];
+
+        foreach ($directives as $d) {
+            if ($d['name'] !== 'logformat' || !isset($d['args'][0])) {
+                continue;
+            }
+
+            $scope = ($d['vhost_index'] ?? null) === null ? 'main' : ($d['file'] ?? '') . '#' . $d['vhost_index'];
+
+            if (isset($d['args'][1])) {
+                $nicknames[$scope][$d['args'][1]] = $d['args'][0];
+            } else {
+                $defaults[$scope] = $d['args'][0];
+            }
+        }
+
+        $formats = [];
+
+        foreach ($directives as $d) {
+            if (!in_array($d['name'], ['customlog', 'transferlog'], true) || !isset($d['args'][0])) {
+                continue;
+            }
+
+            $path = $resolve($d['args'][0]);
+            $scope = ($d['vhost_index'] ?? null) === null ? 'main' : ($d['file'] ?? '') . '#' . $d['vhost_index'];
+
+            if ($path === null) {
+                continue;
+            }
+
+            if ($d['name'] === 'transferlog') {
+                $format = $defaults[$scope] ?? $defaults['main'] ?? AccessLogFormat::COMMON;
+            } else {
+                $named = (string) ($d['args'][1] ?? '');
+                $format = str_contains($named, '%') ? $named : ($nicknames[$scope][$named] ?? $nicknames['main'][$named] ?? null);
+            }
+
+            if ($format !== null) {
+                $formats[$path] = array_values(array_unique([...($formats[$path] ?? []), $format]));
+            }
+        }
+
+        return $formats;
     }
 
     /**
@@ -743,8 +807,9 @@ class ApacheService
     /**
      * @param array<string, mixed> $state
      * @param array{error: list<string>, access: list<string>} $problems
+     * @param array<string, mixed> $config the scan: the log's formats, and which virtual hosts write to it
      */
-    private function importAccessLog(SSH2 $connection, Server $server, string $path, array &$state, array &$problems): void
+    private function importAccessLog(SSH2 $connection, Server $server, string $path, array &$state, array &$problems, array $config = []): void
     {
         try {
             $text = $this->readLog($connection, $path, $state);
@@ -754,13 +819,42 @@ class ApacheService
             return;
         }
 
-        $cutoff = Carbon::instance($this->clock->now())->subDays(HealthCheckService::RETENTION_DAYS)->getTimestamp();
+        $now = Carbon::instance($this->clock->now());
+        $cutoff = $now->copy()->subDays(HealthCheckService::RETENTION_DAYS)->getTimestamp();
+        $keepDays = (new SettingsService())->integer(SettingsService::APACHE_ACCESS_KEEP_DAYS);
+        $keepFrom = $keepDays > 0 ? $now->copy()->subDays($keepDays)->getTimestamp() : PHP_INT_MAX;
+        $formats = array_map(fn ($f) => new AccessLogFormat((string) $f), array_values((array) ($config['access_formats'][$path] ?? [])));
+        // A file only one virtual host writes to is that host's, whatever the format logs.
+        $writers = array_values(array_filter((array) ($config['vhosts'] ?? []), fn ($v) => in_array($path, (array) ($v['access_logs'] ?? []), true)));
+        $owner = count($writers) === 1 && !in_array('main server', (array) ($config['access_logs'][$path] ?? []), true) ? ($writers[0]['name'] ?? null) : null;
         $buckets = [];
         $skipped = 0;
+        $batch = [];
+        $cut = fn (?string $value, int $length) => $value === null ? null : mb_substr($value, 0, $length);
+        $keep = function (array $line) use (&$batch, $server, $path, $owner, $cut): void {
+            $batch[] = [
+                'server_id' => $server->id, 'source' => $path, 'requested_at' => Carbon::createFromTimestamp($line['time'])->format('Y-m-d H:i:s'),
+                'client' => $cut($line['client'], 255), 'vhost' => $cut($line['vhost'] ?? $owner, 255), 'method' => $cut($line['method'], 32),
+                'path' => $cut($line['path'], 8000), 'protocol' => $cut($line['protocol'], 32), 'status' => $line['status'], 'bytes' => $line['bytes'],
+                'referer' => $cut($line['referer'], 4000), 'agent' => $cut($line['agent'], 4000), 'duration_ms' => $line['duration_ms'],
+            ];
 
-        foreach ($this->logs->accessLines($text, $skipped) as $line) {
+            if (count($batch) >= 500) {
+                ApacheAccessEntry::query()->insert($batch);
+                $batch = [];
+            }
+        };
+        $firstNew = null;
+
+        foreach ($this->logs->accessLines($text, $skipped, $formats) as $line) {
             if ($line['time'] < $cutoff) {
                 continue;
+            }
+
+            $firstNew = min($firstNew ?? $line['time'], $line['time']);
+
+            if ($line['time'] >= $keepFrom) {
+                $keep($line);
             }
 
             $bucket = intdiv($line['time'], self::BUCKET_SECONDS) * self::BUCKET_SECONDS;
@@ -774,6 +868,31 @@ class ApacheService
             }
 
             $buckets[$bucket] = $counts;
+        }
+
+        // Once per log: the requests already read before requests were stored (the log's tail, as a first
+        // read gets it), up to where this read began. Traffic figures already have them.
+        if ($keepDays > 0 && !isset($state['access_entries'][$path])) {
+            $earlier = [];
+            $ignored = 0;
+
+            try {
+                $tail = $this->readLog($connection, $path, $earlier);
+            } catch (ServerConnectionException) {
+                $tail = '';
+            }
+
+            foreach ($this->logs->accessLines($tail, $ignored, $formats) as $line) {
+                if ($line['time'] >= $keepFrom && ($firstNew === null || $line['time'] < $firstNew)) {
+                    $keep($line);
+                }
+            }
+
+            $state['access_entries'][$path] = true;
+        }
+
+        if ($batch !== []) {
+            ApacheAccessEntry::query()->insert($batch);
         }
 
         if ($skipped > 0 && $buckets === []) {
@@ -1009,6 +1128,8 @@ class ApacheService
         $cutoff = Carbon::instance($this->clock->now())->subDays(HealthCheckService::RETENTION_DAYS);
         ApacheLogEntry::query()->where('logged_at', '<', $cutoff)->delete();
         ApacheTraffic::query()->where('bucket_at', '<', $cutoff)->delete();
+        $keepDays = (new SettingsService())->integer(SettingsService::APACHE_ACCESS_KEEP_DAYS);
+        ApacheAccessEntry::query()->where('requested_at', '<', Carbon::instance($this->clock->now())->subDays($keepDays))->delete();
     }
 
     private function remote(): RemoteLogs

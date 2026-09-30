@@ -19,13 +19,7 @@
                             </optgroup>
                         @endforeach
                     </select>
-                    <label for="range" class="visually-hidden">Period</label>
-                    <select id="range" name="range" onchange="this.form.submit()">
-                        @foreach (\App\Services\HistoryReport::RANGES as $key => [$label])
-                            <option value="{{ $key }}" {{ $range === $key ? 'selected' : '' }}>{{ $label }}</option>
-                        @endforeach
-                    </select>
-                    <noscript><button type="submit">Show</button></noscript>
+                    @include('reports.period', ['range' => $range])
                 </form>
             @endif
         </div>
@@ -40,13 +34,13 @@
             @if ($logs['shared'])
                 <p class="hint">Shared with other hosts, so their requests and errors are counted here too: {{ implode(', ', $logs['shared']) }}. Give the vhost its own CustomLog / ErrorLog for figures of its own.</p>
             @endif
-            @if ($report['rows'] === [] && $report['log'] === [])
+            @if ($report['rows'] === [] && $report['log'] === [] && $report['access'] === [])
                 <p class="muted">Nothing from these logs in this period yet.</p>
             @endif
         @endif
     </div>
 
-    @if ($vhost !== null && ($report['rows'] !== [] || $report['log'] !== []))
-        @include('reports.apache-data', ['scope' => 'its access logs'])
+    @if ($vhost !== null && ($report['rows'] !== [] || $report['log'] !== [] || $report['access'] !== []))
+        @include('reports.apache-data', ['scope' => 'its access logs', 'banServer' => $vhost->server])
     @endif
 @endsection

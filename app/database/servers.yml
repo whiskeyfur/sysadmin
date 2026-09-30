@@ -126,6 +126,17 @@ columns:
   apache_container:
     type: string
     nullable: true
+  # fail2ban on the server (Fail2banService::bans(), read with each Apache import when the SSH user may run
+  # fail2ban-client with sudo): JSON {jail: [banned addresses]}; null when not readable (fail2ban_message says why).
+  fail2ban_bans:
+    type: mediumText
+    nullable: true
+  fail2ban_checked_at:
+    type: timestamp
+    nullable: true
+  fail2ban_message:
+    type: text
+    nullable: true
   # Health checks (HealthCheckService). The interval is for a future scheduler.
   check_interval_minutes:
     type: integer

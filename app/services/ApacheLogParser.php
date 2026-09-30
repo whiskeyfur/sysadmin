@@ -68,34 +68,75 @@ class ApacheLogParser
     }
 
     /**
-     * One entry per request line; lines in other formats are skipped (see $skipped).
+     * One entry per request line: read with the log's own formats (AccessLogFormat, from its CustomLog)
+     * when known, else by the [time] "request" status bytes core every common format has (lines in
+     * neither are skipped, see $skipped).
      *
      * @param int $skipped lines that didn't match
-     * @return \Generator<int, array{time: int, status: int, bytes: int}> time as a unix timestamp
+     * @param list<AccessLogFormat> $formats
+     * @return \Generator<int, array{time: int, status: int, bytes: int, client: ?string, vhost: ?string, method: ?string, path: ?string, protocol: ?string, referer: ?string, agent: ?string, duration_ms: ?int}> time as a unix timestamp
      */
-    public function accessLines(string $text, int &$skipped = 0): \Generator
+    public function accessLines(string $text, int &$skipped = 0, array $formats = []): \Generator
     {
         foreach ($this->lines($text) as $line) {
             if (trim($line) === '') {
                 continue;
             }
 
-            if (preg_match('#\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\] "(?:[^"\\\\]|\\\\.)*" (\d{3}) (\d+|-)#', $line, $m) !== 1) {
+            foreach ($formats as $format) {
+                if (($entry = $format->parse($line)) !== null) {
+                    yield $entry;
+
+                    continue 2;
+                }
+            }
+
+            if (($entry = $this->accessCore($line)) === null) {
                 $skipped++;
 
                 continue;
             }
 
-            $time = \DateTimeImmutable::createFromFormat('d/M/Y:H:i:s O', $m[1]);
-
-            if ($time === false) {
-                $skipped++;
-
-                continue;
-            }
-
-            yield ['time' => $time->getTimestamp(), 'status' => (int) $m[2], 'bytes' => $m[3] === '-' ? 0 : (int) $m[3]];
+            yield $entry;
         }
+    }
+
+    /**
+     * A line in an unknown format, by its [time] "request" status bytes core; what's before is taken as
+     * [vhost:port] client, what's after as "referer" "agent" when it looks like that (combined).
+     *
+     * @return array{time: int, status: int, bytes: int, client: ?string, vhost: ?string, method: ?string, path: ?string, protocol: ?string, referer: ?string, agent: ?string, duration_ms: ?int}|null
+     */
+    private function accessCore(string $line): ?array
+    {
+        if (preg_match('#^(.*?)\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\] "((?:[^"\\\\]|\\\\.)*)" (\d{3}) (\d+|-)(?: "((?:[^"\\\\]|\\\\.)*)" "((?:[^"\\\\]|\\\\.)*)")?#', $line, $m) !== 1) {
+            return null;
+        }
+
+        $time = \DateTimeImmutable::createFromFormat('d/M/Y:H:i:s O', $m[2]);
+
+        if ($time === false) {
+            return null;
+        }
+
+        $before = preg_split('/\s+/', trim($m[1])) ?: [];
+        $vhost = count($before) >= 4 && preg_match('/^[\w.-]+:\d+$/', $before[0]) === 1 ? array_shift($before) : null;
+        $parts = explode(' ', stripslashes($m[3]), 3);
+        $value = fn (?string $v) => $v === null || $v === '' || $v === '-' ? null : stripslashes($v);
+
+        return [
+            'time' => $time->getTimestamp(),
+            'status' => (int) $m[4],
+            'bytes' => $m[5] === '-' ? 0 : (int) $m[5],
+            'client' => $value($before[0] ?? null),
+            'vhost' => $vhost,
+            'method' => count($parts) === 3 ? $parts[0] : null,
+            'path' => count($parts) === 3 ? $parts[1] : $value($m[3]),
+            'protocol' => count($parts) === 3 ? $parts[2] : null,
+            'referer' => $value($m[6] ?? null),
+            'agent' => $value($m[7] ?? null),
+            'duration_ms' => null,
+        ];
     }
 
     private function errorTime(string $value, DateTimeZone $zone): ?Carbon

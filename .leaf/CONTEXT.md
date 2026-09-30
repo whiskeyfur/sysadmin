@@ -147,3 +147,6 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Apache page: the sign-in check moved from a card at the top into a dialog opened by each change button.
 * 2026-09-29 — URL simulator trace as a table: step, directive as written, file, line, explanation.
 * 2026-09-29 — SSL: every SAN name becomes its own entry checked directly through DNS; /ssl rows fold out only when not OK, showing the failing checks; hostname lists removed from /ssl.
+* 2026-09-29 — Reports: start/end date fields and drag-to-zoom on every chart (`HistoryReport::period()`, range "START-END").
+* 2026-09-29 — Apache access logs: each request stored (apache_access_entries, kept apache_access_keep_days), each log read in its own LogFormat (AccessLogFormat, per-vhost nicknames).
+* 2026-09-29 — fail2ban: banned clients marked in the access log (bans read with each Apache import); admins right-click a client to ban/unban over SSH with sudo -n fail2ban-client.

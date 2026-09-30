@@ -21,7 +21,7 @@ use App\Services\SslReportService;
 class ReportController extends Controller
 {
     /**
-     * ?server=<id>&range=24h|7d|30d
+     * ?server=<id>&range=24h|7d|30d|START-END, or &start=&end=
      */
     public function apache()
     {
@@ -37,14 +37,13 @@ class ReportController extends Controller
     }
 
     /**
-     * ?certificate=<id> (else all)&range=24h|7d|30d
+     * ?certificate=<id> (else all)&range=24h|7d|30d|START-END, or &start=&end=
      */
     public function ssl()
     {
         $certificates = SslCertificate::query()->get()->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)->values()->all();
         $certificate = collect($certificates)->firstWhere('id', (int) $this->request->get('certificate'));
-        $range = (string) $this->request->get('range');
-        $range = isset(HistoryReport::RANGES[$range]) ? $range : HistoryReport::DEFAULT_RANGE;
+        $range = $this->period();
 
         $this->response->view('reports.ssl', [
             'auth' => $this->authContext(),
@@ -57,7 +56,7 @@ class ReportController extends Controller
     }
 
     /**
-     * ?server=<id>&range=24h|7d|30d
+     * ?server=<id>&range=24h|7d|30d|START-END, or &start=&end=
      */
     public function ssh()
     {
@@ -73,7 +72,7 @@ class ReportController extends Controller
     }
 
     /**
-     * ?server=<id>&range=24h|7d|30d
+     * ?server=<id>&range=24h|7d|30d|START-END, or &start=&end=
      */
     public function mariadb()
     {
@@ -103,9 +102,16 @@ class ReportController extends Controller
     {
         $servers = array_values(array_filter((new ServerService())->all(), $covered));
         $server = collect($servers)->firstWhere('id', (int) $this->request->get('server')) ?? ($servers[0] ?? null);
-        $range = (string) $this->request->get('range');
 
-        return [$servers, $server, isset(HistoryReport::RANGES[$range]) ? $range : HistoryReport::DEFAULT_RANGE];
+        return [$servers, $server, $this->period()];
+    }
+
+    /**
+     * ?start=&end= (date fields), else ?range= (a preset or a zoomed-in "START-END").
+     */
+    private function period(): string
+    {
+        return HistoryReport::period((string) $this->request->get('range', false), (string) $this->request->get('start', false), (string) $this->request->get('end', false));
     }
 
     private function authContext(): AuthContext

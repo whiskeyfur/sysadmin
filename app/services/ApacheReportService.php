@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ApacheAccessEntry;
 use App\Models\ApacheLogEntry;
 use App\Models\ApacheTraffic;
 use App\Models\ApacheVhost;
@@ -26,6 +27,7 @@ class ApacheReportService extends HistoryReport
      *     from: Carbon,
      *     to: Carbon,
      *     bucket_minutes: int,
+     *     access: list<ApacheAccessEntry>,
      *     requests: array<string, list<array{0: int, 1: float}>>,
      *     traffic: array<string, list<array{0: int, 1: float}>>,
      *     workers: array<string, list<array{0: int, 1: float}>>,
@@ -47,7 +49,7 @@ class ApacheReportService extends HistoryReport
         $seconds = $bucket * 60;
         $intervals = [];
 
-        $traffic = ApacheTraffic::query()->where('server_id', $server->id)->where('bucket_at', '>=', $from);
+        $traffic = ApacheTraffic::query()->where('server_id', $server->id)->whereBetween('bucket_at', [$from, $to]);
 
         foreach (($logs === null ? $traffic : $traffic->whereIn('log', $logs['access']))->get() as $row) {
             $time = intdiv($row->bucket_at->getTimestamp(), $seconds) * $seconds;
@@ -88,7 +90,7 @@ class ApacheReportService extends HistoryReport
         }
 
         $workers = $vhost !== null ? [] : StoredCheck::query()->where('server_id', $server->id)->where('check_key', 'apache_workers')->where('unit', '%')
-            ->where('checked_at', '>=', $from)->get()->sortBy('checked_at')
+            ->where('checked_at', '>=', $from)->where('checked_at', '<=', $to)->get()->sortBy('checked_at')
             ->map(fn (StoredCheck $c) => [(int) $c->checked_at->getTimestamp(), (float) $c->value])->values()->all();
 
         if (count($workers) > self::MAX_POINTS) {
@@ -96,13 +98,28 @@ class ApacheReportService extends HistoryReport
         }
 
         /** @var list<ApacheLogEntry> $log */
-        $log = $this->entries($server, $logs)->where('logged_at', '>=', $from)
+        $log = $this->entries($server, $logs)->whereBetween('logged_at', [$from, $to])
             ->orderByDesc('logged_at')->orderByDesc('id')->limit(self::MAX_ENTRIES)->get()->all();
+
+        $access = ApacheAccessEntry::query()->where('server_id', $server->id)->whereBetween('requested_at', [$from, $to]);
+
+        if ($logs !== null) {
+            $access->whereIn('source', $logs['access']);
+        }
+
+        // A shared log (e.g. other_vhosts_access.log) holds other hosts' requests too: keep this one's.
+        if ($vhost?->name !== null) {
+            $access->where(fn ($q) => $q->whereNull('vhost')->orWhere('vhost', $vhost->name)->orWhere('vhost', 'like', addcslashes($vhost->name, '%_\\') . ':%'));
+        }
+
+        /** @var list<ApacheAccessEntry> $requestLog */
+        $requestLog = $access->orderByDesc('requested_at')->orderByDesc('id')->limit(self::MAX_ENTRIES)->get()->all();
 
         return [
             'from' => $from,
             'to' => $to,
             'bucket_minutes' => $bucket,
+            'access' => $requestLog,
             'requests' => array_filter($requests),
             'traffic' => array_filter($traffic),
             'workers' => $workers === [] ? [] : ['Busy workers' => $workers],
@@ -163,7 +180,7 @@ class ApacheReportService extends HistoryReport
         $seconds = $minutes * 60;
         $counts = [];
 
-        foreach ($this->entries($server, $logs)->where('logged_at', '>=', $from)->whereIn('level', array_keys(self::LOG_LEVELS))->get(['level', 'logged_at']) as $entry) {
+        foreach ($this->entries($server, $logs)->whereBetween('logged_at', [$from, $to])->whereIn('level', array_keys(self::LOG_LEVELS))->get(['level', 'logged_at']) as $entry) {
             $bucket = intdiv($entry->logged_at->getTimestamp(), $seconds) * $seconds;
             $counts[$entry->level][$bucket] = ($counts[$entry->level][$bucket] ?? 0) + 1;
         }

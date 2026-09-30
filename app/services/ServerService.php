@@ -6,6 +6,7 @@ use App\DTOs\HostKey;
 use App\Enums\ServerPlatform;
 use App\Exceptions\AuthorizationException;
 use App\Models\Account;
+use App\Models\ApacheAccessEntry;
 use App\Models\ApacheLogEntry;
 use App\Models\ApacheTraffic;
 use App\Models\ApacheVhost;
@@ -193,6 +194,7 @@ class ServerService
             ApacheVhost::query()->where('server_id', $server->id)->delete();
             ApacheTraffic::query()->where('server_id', $server->id)->delete();
             ApacheLogEntry::query()->where('server_id', $server->id)->delete();
+            ApacheAccessEntry::query()->where('server_id', $server->id)->delete();
             $server->delete();
         });
     }

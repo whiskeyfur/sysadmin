@@ -50,11 +50,18 @@ class LineChart
         $y = fn (float $value) => self::TOP + (1 - (max($min, min($value, $top)) - $min) / ($top - $min)) * $plotHeight;
         $e = fn (string $text) => htmlspecialchars($text, ENT_QUOTES);
 
+        // data-*: the time axis, for zooming in by dragging across the plot (layouts/app).
         $svg = [sprintf(
-            '<svg class="chart" viewBox="0 0 %d %d" role="img" aria-label="%s">',
+            '<svg class="chart" viewBox="0 0 %d %d" role="img" aria-label="%s" data-from="%d" data-to="%d" data-left="%s" data-right="%d" data-top="%d" data-bottom="%d">',
             self::WIDTH,
             self::HEIGHT,
             $e($title . ' over time'),
+            $from,
+            $from + $span,
+            round($left, 1),
+            self::WIDTH - self::RIGHT,
+            self::TOP,
+            self::HEIGHT - self::BOTTOM,
         )];
 
         // Horizontal grid lines with their values.
@@ -108,7 +115,7 @@ class LineChart
         }
 
         return '<figure class="chart"><figcaption>' . $e($title) . '</figcaption>' . implode('', $svg)
-            . '<div class="legend">' . implode('', $legend) . '</div></figure>';
+            . '<div class="legend">' . implode('', $legend) . '<span class="chart-hint">Drag across the chart to zoom in</span></div></figure>';
     }
 
     private static function number(float $value): string

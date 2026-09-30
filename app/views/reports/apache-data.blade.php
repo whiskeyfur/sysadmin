@@ -50,6 +50,94 @@
             </div>
         @endif
 
+        @php($banServer = $banServer ?? null)
+        @php($canBan = $banServer !== null && ($auth ?? null)?->isAdmin() && $banServer->sshReady())
+        <div class="card">
+            <h2>Access log</h2>
+            @if ($report['access'] === [])
+                <p class="muted">No requests stored for this period.
+                    @if (($keep = (new \App\Services\SettingsService())->integer(\App\Services\SettingsService::APACHE_ACCESS_KEEP_DAYS)) === 0)
+                        Storing requests is turned off in the Apache settings.
+                    @else
+                        Requests are kept {{ $keep }} {{ $keep === 1 ? 'day' : 'days' }} (Apache settings).
+                    @endif
+                </p>
+            @else
+                <p class="hint">Each request as logged, read in the format its CustomLog names.
+                    @if ($banServer?->fail2ban_checked_at)
+                        Addresses fail2ban had banned at {{ \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) }} are marked.
+                    @elseif ($banServer?->fail2ban_message)
+                        {{ $banServer->fail2ban_message }}
+                    @endif
+                    @if ($canBan)
+                        Right-click a client address to ban or unban it with fail2ban on {{ $banServer->name }}.
+                    @endif{{ count($report['access']) >= \App\Services\ApacheReportService::MAX_ENTRIES ? ' The newest ' . \App\Services\ApacheReportService::MAX_ENTRIES . '; choose a shorter period for others.' : '' }}</p>
+                <div class="table-wrap">
+                <table class="top">
+                    <thead>
+                        <tr><th>Time</th><th>Client</th><th>Host</th><th>Request</th><th>Status</th><th>Size</th><th>Took</th><th>Referer / user agent</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach ($report['access'] as $request)
+                            @php($badge = $request->status >= 500 ? 'critical' : ($request->status >= 400 ? 'warning' : ($request->status >= 300 ? 'unknown' : 'ok')))
+                            <tr>
+                                <td data-sort="{{ $request->requested_at->getTimestamp() }}" style="white-space: nowrap">{{ \App\Utils\LocalTime::format($request->requested_at, 'Y-m-d H:i:s') }}</td>
+                                @php($jails = $banServer?->bannedIn($request->client) ?? [])
+                                <td style="white-space: nowrap">
+                                    @if ($request->client && $canBan)
+                                        <code class="client-ip" data-ip="{{ $request->client }}" data-jails="{{ implode(',', $jails) }}" title="Right-click to ban or unban with fail2ban">{{ $request->client }}</code>
+                                    @else
+                                        <code>{{ $request->client ?? '—' }}</code>
+                                    @endif
+                                    @if ($jails)
+                                        <span class="badge critical" title="Banned by fail2ban as of {{ \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) }}">banned: {{ implode(', ', $jails) }}</span>
+                                    @endif
+                                </td>
+                                <td class="muted">{{ $request->vhost ?? basename($request->source) }}</td>
+                                <td class="access-request"><code>{{ trim(($request->method ?? '') . ' ' . ($request->path ?? '—')) }}</code>@if ($request->protocol) <span class="muted">{{ $request->protocol }}</span>@endif</td>
+                                <td data-sort="{{ $request->status }}"><span class="badge {{ $badge }}">{{ $request->status ?: '—' }}</span></td>
+                                <td data-sort="{{ $request->bytes }}" style="white-space: nowrap">{{ \App\Services\Checks\FileIoCheck::size($request->bytes) }}</td>
+                                <td data-sort="{{ $request->duration_ms ?? -1 }}" style="white-space: nowrap">{{ $request->duration_ms === null ? '' : $request->duration_ms . ' ms' }}</td>
+                                <td class="access-agent">@if ($request->referer)<div>{{ $request->referer }}</div>@endif<div class="muted">{{ $request->agent }}</div></td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+                </div>
+            @endif
+        </div>
+        @if ($canBan)
+            <div id="ban-menu" class="ban-menu" role="menu" hidden>
+                <button type="button" role="menuitem" data-ban-action="ban">Ban <span data-ban-ip></span> with fail2ban…</button>
+                <button type="button" role="menuitem" data-ban-action="unban">Unban <span data-ban-ip></span>…</button>
+            </div>
+            <dialog id="ban-dialog" class="ban-dialog" data-server="{{ $banServer->id }}" data-server-name="{{ $banServer->name }}">
+                <h2 id="ban-title"></h2>
+                <p class="muted" id="ban-where"></p>
+                <label for="ban-jail">Jail</label>
+                <select id="ban-jail"><option>Loading…</option></select>
+                <p class="alert error" id="ban-error" role="alert" hidden></p>
+                <p class="alert notice" id="ban-done" role="status" hidden></p>
+                <div class="actions">
+                    <button type="button" id="ban-go" disabled></button>
+                    <button type="button" class="secondary" id="ban-cancel">Close</button>
+                </div>
+            </dialog>
+            <script src="/assets/js/fail2ban.js"></script>
+        @endif
+        <style>
+            .client-ip { cursor: context-menu; }
+            .ban-menu { position: fixed; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .2); padding: 4px 0; display: flex; flex-direction: column; }
+            .ban-menu button { background: none; border: 0; text-align: left; padding: 7px 14px; font: inherit; color: var(--text); cursor: pointer; }
+            .ban-menu button:hover, .ban-menu button:focus { background: var(--code-bg); }
+            .ban-dialog { width: min(440px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); padding: 24px; }
+            .ban-dialog::backdrop { background: rgba(0, 0, 0, .45); }
+            .ban-dialog h2 { margin-top: 0; }
+            td.access-request, td.access-agent { overflow-wrap: anywhere; }
+            td.access-request { min-width: 16em; }
+            td.access-agent { font-size: 12px; min-width: 14em; max-width: 28em; }
+        </style>
+
         <div class="card">
             <h2>Error log</h2>
             @if ($report['log'] === [])

@@ -70,7 +70,7 @@ class MariadbReportService extends HistoryReport
         $checks = StoredCheck::query()
             ->where('server_id', $server->id)
             ->whereIn('check_key', self::KEYS)
-            ->where('checked_at', '>=', $from)
+            ->whereBetween('checked_at', [$from, $to])
             ->get()
             ->sortBy(['checked_at', 'id']);
 
@@ -228,8 +228,8 @@ class MariadbReportService extends HistoryReport
             'io' => array_filter($io),
             'rows' => array_values($rows),
             'bucket_minutes' => $bucket,
-            'log' => $this->logEntries($server, $from),
-            'log_counts' => $this->logCounts($server, $from, $to, $logBucket = self::LOG_BUCKET_MINUTES[$range] ?? self::LOG_BUCKET_MINUTES[self::DEFAULT_RANGE]),
+            'log' => $this->logEntries($server, $from, $to),
+            'log_counts' => $this->logCounts($server, $from, $to, $logBucket = self::LOG_BUCKET_MINUTES[$range] ?? $this->logBucket($to->getTimestamp() - $from->getTimestamp())),
             'log_bucket_minutes' => $logBucket,
         ];
     }
@@ -259,14 +259,28 @@ class MariadbReportService extends HistoryReport
     }
 
     /**
+     * Log count bars for a chosen start and end: about 24 to 60 of them.
+     */
+    private function logBucket(int $span): int
+    {
+        foreach ([5, 15, 60, 360, 1440] as $minutes) {
+            if ($span / ($minutes * 60) <= 60) {
+                return $minutes;
+            }
+        }
+
+        return 1440;
+    }
+
+    /**
      * Imported log entries in the period, newest first.
      *
      * @return list<MariadbLogEntry>
      */
-    private function logEntries(Server $server, Carbon $from, int $limit = 500): array
+    private function logEntries(Server $server, Carbon $from, Carbon $to, int $limit = 500): array
     {
         /** @var list<MariadbLogEntry> $entries */
-        $entries = MariadbLogEntry::query()->where('server_id', $server->id)->where('logged_at', '>=', $from)
+        $entries = MariadbLogEntry::query()->where('server_id', $server->id)->whereBetween('logged_at', [$from, $to])
             ->orderByDesc('logged_at')->orderByDesc('id')->limit($limit)->get()->all();
 
         return $entries;
@@ -283,7 +297,7 @@ class MariadbReportService extends HistoryReport
         $start = intdiv($from->getTimestamp(), $seconds) * $seconds;
         $counts = [];
 
-        foreach (MariadbLogEntry::query()->where('server_id', $server->id)->where('logged_at', '>=', $from)->get(['level', 'logged_at']) as $entry) {
+        foreach (MariadbLogEntry::query()->where('server_id', $server->id)->whereBetween('logged_at', [$from, $to])->get(['level', 'logged_at']) as $entry) {
             $bucket = intdiv($entry->logged_at->getTimestamp(), $seconds) * $seconds;
             $counts[$entry->level][$bucket] = ($counts[$entry->level][$bucket] ?? 0) + 1;
         }

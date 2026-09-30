@@ -1,0 +1,47 @@
+# Apache access log requests imported over SSH (ApacheService), each log read in its own LogFormat.
+# Kept for the Apache setting apache_access_keep_days (0 = not kept; apache_traffic still sums them).
+# source: the access log file. requested_at: UTC. vhost: from %v/%V (with %p) when the format logs it,
+#   else the virtual host that alone writes to the file. duration_ms: from %D/%T when logged.
+timestamps: false
+columns:
+  server_id:
+    type: integer
+    index: true
+  source:
+    type: string
+    length: 1024
+  requested_at:
+    type: timestamp
+    index: true
+  client:
+    type: string
+    nullable: true
+  vhost:
+    type: string
+    nullable: true
+  method:
+    type: string
+    length: 32
+    nullable: true
+  path:
+    type: text
+    nullable: true
+  protocol:
+    type: string
+    length: 32
+    nullable: true
+  status:
+    type: integer
+    index: true
+  bytes:
+    type: bigInteger
+    default: 0
+  referer:
+    type: text
+    nullable: true
+  agent:
+    type: text
+    nullable: true
+  duration_ms:
+    type: integer
+    nullable: true

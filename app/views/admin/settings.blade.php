@@ -114,6 +114,12 @@
                     <input type="text" id="apache_restart_warning_minutes" name="apache_restart_warning_minutes" value="{{ $value('apache_restart_warning_minutes') }}" inputmode="numeric" required>
                     <p class="hint">1–10080, default {{ $default('apache_restart_warning_minutes') }}.</p>
                 </fieldset>
+                <fieldset>
+                    <legend>Access log</legend>
+                    <label for="apache_access_keep_days">Keep each request for (days)</label>
+                    <input type="text" id="apache_access_keep_days" name="apache_access_keep_days" value="{{ $value('apache_access_keep_days') }}" inputmode="numeric" required>
+                    <p class="hint">0–30, default {{ $default('apache_access_keep_days') }}. Every request in the access logs is stored (client, host, request, status, size, referer, user agent) and listed in the Apache report; a busy site logs a lot, so they're kept for less time than the rest. 0 stores none. The per-minute request and traffic figures are kept {{ \App\Services\HealthCheckService::RETENTION_DAYS }} days either way.</p>
+                </fieldset>
             @else
                 <fieldset>
                     <legend>Connections</legend>

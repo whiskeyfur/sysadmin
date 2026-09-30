@@ -65,6 +65,8 @@ class SettingsService
 
     public const APACHE_RESTART_WARNING_MINUTES = 'apache_restart_warning_minutes';
 
+    public const APACHE_ACCESS_KEEP_DAYS = 'apache_access_keep_days';
+
     /**
      * @var array<string, int>
      */
@@ -93,6 +95,7 @@ class SettingsService
         self::APACHE_WORKERS_WARNING_PERCENT => 80,
         self::APACHE_WORKERS_CRITICAL_PERCENT => 95,
         self::APACHE_RESTART_WARNING_MINUTES => 60,
+        self::APACHE_ACCESS_KEEP_DAYS => 7,
     ];
 
     /**
@@ -120,6 +123,7 @@ class SettingsService
             self::APACHE_WORKERS_WARNING_PERCENT,
             self::APACHE_WORKERS_CRITICAL_PERCENT,
             self::APACHE_RESTART_WARNING_MINUTES,
+            self::APACHE_ACCESS_KEEP_DAYS,
         ],
     ];
 
@@ -151,6 +155,7 @@ class SettingsService
         self::APACHE_WORKERS_WARNING_PERCENT => ['min' => 1, 'max' => 100],
         self::APACHE_WORKERS_CRITICAL_PERCENT => ['min' => 1, 'max' => 100],
         self::APACHE_RESTART_WARNING_MINUTES => ['min' => 1, 'max' => 10080],
+        self::APACHE_ACCESS_KEEP_DAYS => ['min' => 0, 'max' => 30],
     ];
 
     /**

@@ -43,7 +43,7 @@ class SslReportService extends HistoryReport
         $checks = SslCheck::query()
             ->with(['binding.certificate', 'binding.server'])
             ->whereIn('binding_id', $bindingIds)
-            ->where('checked_at', '>=', $from)
+            ->whereBetween('checked_at', [$from, $to])
             ->get()
             ->sortBy(['checked_at', 'id']);
 

@@ -40,7 +40,7 @@ class SshReportService extends HistoryReport
         $checks = StoredCheck::query()
             ->where('server_id', $server->id)
             ->whereIn('check_key', ['disk', 'load', 'memory'])
-            ->where('checked_at', '>=', $from)
+            ->whereBetween('checked_at', [$from, $to])
             ->get()
             ->sortBy(['checked_at', 'id']);
 

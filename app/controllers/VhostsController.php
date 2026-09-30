@@ -33,8 +33,7 @@ class VhostsController extends Controller
     {
         $vhosts = array_values(array_filter((new VhostService())->all(), fn ($v) => $v->server !== null));
         $vhost = collect($vhosts)->firstWhere('id', (int) $this->request->get('vhost')) ?? ($vhosts[0] ?? null);
-        $range = (string) $this->request->get('range');
-        $range = isset(HistoryReport::RANGES[$range]) ? $range : HistoryReport::DEFAULT_RANGE;
+        $range = HistoryReport::period((string) $this->request->get('range', false), (string) $this->request->get('start', false), (string) $this->request->get('end', false));
         $reports = new ApacheReportService();
 
         $this->response->view('reports.vhost', [

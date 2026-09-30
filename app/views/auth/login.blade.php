@@ -57,5 +57,5 @@
             <p class="passkey-message alert error" role="alert" hidden></p>
         </form>
     </div>
-    <script src="/assets/js/passkeys.js"></script>
+    <script src="{{ \App\Utils\Asset::url('/assets/js/passkeys.js') }}"></script>
 @endsection

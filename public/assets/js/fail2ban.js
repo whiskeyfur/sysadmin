@@ -94,6 +94,8 @@
             .then(function (data) {
                 if (data.error) { throw new Error(data.error); }
                 show(done, data.message);
+                // Paged tables reload their page: a row the filters (e.g. "Not banned") now leave out goes.
+                document.dispatchEvent(new CustomEvent('paged-refresh'));
                 // Mark every row of this address.
                 document.querySelectorAll('.client-ip[data-ip="' + CSS.escape(current.ip) + '"]').forEach(function (cell) {
                     var jails = (cell.getAttribute('data-jails') || '').split(',').filter(Boolean);

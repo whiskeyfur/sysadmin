@@ -170,7 +170,7 @@
                     </table>
                     </div>
                 </div>
-                <script src="/assets/js/paged-table.js"></script>
+                <script src="{{ \App\Utils\Asset::url('/assets/js/paged-table.js') }}"></script>
             @endif
         </div>
     @endif

@@ -123,5 +123,5 @@
             <div class="actions"><button type="submit" class="secondary">Simulate</button></div>
         </form>
     </div>
-    <script src="/assets/js/passkeys.js"></script>
+    <script src="{{ \App\Utils\Asset::url('/assets/js/passkeys.js') }}"></script>
 @endsection

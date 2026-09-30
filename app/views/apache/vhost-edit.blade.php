@@ -128,5 +128,5 @@
     <style>
         .vhost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 24px; }
     </style>
-    <script src="/assets/js/passkeys.js"></script>
+    <script src="{{ \App\Utils\Asset::url('/assets/js/passkeys.js') }}"></script>
 @endsection

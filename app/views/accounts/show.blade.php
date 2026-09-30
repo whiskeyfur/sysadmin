@@ -71,7 +71,7 @@
             <p class="muted">Confirm it's you to reveal it (an authenticator code works once: wait for the next one after signing in).</p>
             @include('partials.confirm', ['formId' => 'reveal', 'action' => '/admin/accounts/' . $account->id . '/reveal', 'what' => 'Reveal'])
             <p class="hint">Every reveal is logged with who and when.</p>
-            <script src="/assets/js/passkeys.js"></script>
+            <script src="{{ \App\Utils\Asset::url('/assets/js/passkeys.js') }}"></script>
         @else
             <p class="muted">No password recorded.</p>
         @endif

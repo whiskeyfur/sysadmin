@@ -90,5 +90,5 @@
         .conds-wrap { overflow-x: auto; }
         .conds-wrap table { width: 100%; }
     </style>
-    <script src="/assets/js/passkeys.js"></script>
+    <script src="{{ \App\Utils\Asset::url('/assets/js/passkeys.js') }}"></script>
 @endsection

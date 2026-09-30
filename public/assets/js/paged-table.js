@@ -83,6 +83,9 @@
             th.addEventListener('keydown', function (event) { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); sort(); } });
         });
 
+        // Reload the page shown when something outside changes what it holds (a fail2ban ban or unban).
+        document.addEventListener('paged-refresh', load);
+
         load();
     });
 })();

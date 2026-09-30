@@ -107,7 +107,7 @@
                     <button type="button" class="secondary" id="ban-cancel">Close</button>
                 </div>
             </dialog>
-            <script src="/assets/js/fail2ban.js"></script>
+            <script src="{{ \App\Utils\Asset::url('/assets/js/fail2ban.js') }}"></script>
         @endif
         <style>
             .client-ip { cursor: context-menu; }
@@ -141,4 +141,4 @@
                 </div>
             @endif
         </div>
-        <script src="/assets/js/paged-table.js"></script>
+        <script src="{{ \App\Utils\Asset::url('/assets/js/paged-table.js') }}"></script>

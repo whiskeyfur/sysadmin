@@ -28,9 +28,10 @@ class SslReportService extends HistoryReport
      * }
      *
      * days: series name (certificate, or place) => [unix time, days left];
-     * a check that got no certificate leaves a gap. rows: the newest checks
-     * (up to MAX_ROWS, with binding.certificate and binding.server loaded);
-     * row_total counts them all. bucket_minutes is set when points were
+     * a check that got no certificate leaves a gap. rows: the most recent
+     * check of each place a certificate is served (up to MAX_ROWS, with
+     * binding.certificate and binding.server loaded), soonest to expire
+     * first; row_total counts every check in the period. bucket_minutes is set when points were
      * reduced to one per bucket, keeping the lowest days left.
      */
     public function report(?SslCertificate $certificate, string $range = self::DEFAULT_RANGE): array
@@ -71,8 +72,17 @@ class SslReportService extends HistoryReport
             $days = array_map(fn (array $points) => $this->averageSeries($points, $bucket * 60, 'min'), $days);
         }
 
-        /** @var list<SslCheck> $rows */
-        $rows = $checks->reverse()->take(self::MAX_ROWS)->values()->all();
+        // The table: each certificate's most recent check in the period, one per place it's served (a
+        // server still serving an old copy stands out), soonest to expire first.
+        $latest = [];
+
+        /** @var SslCheck $check */
+        foreach ($checks->reverse() as $check) {
+            $latest[$check->binding_id] ??= $check;
+        }
+
+        usort($latest, fn (SslCheck $a, SslCheck $b) => [$a->days_left ?? -INF, $a->binding->certificate->name ?? ''] <=> [$b->days_left ?? -INF, $b->binding->certificate->name ?? '']);
+        $rows = array_slice($latest, 0, self::MAX_ROWS);
 
         return [
             'from' => $from,

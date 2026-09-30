@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\DTOs\AuthContext;
+use App\Enums\HealthStatus;
 use App\Models\Server;
 use App\Models\SslBinding;
 use App\Exceptions\ServerConnectionException;
@@ -89,6 +90,41 @@ class ServerController extends Controller
     public function mariadb()
     {
         $this->renderKind(HealthCheckService::KIND_MYSQL);
+    }
+
+    /**
+     * /servers: every server, with a button per report (SSH, MariaDB, Apache, its virtual hosts) coloured
+     * by its current worst status: the latest checks of that kind; for virtual hosts, the monitored
+     * certificates that cover their names.
+     */
+    public function servers()
+    {
+        $health = new HealthCheckService();
+        $vhostService = new \App\Services\VhostService();
+        $allVhosts = $vhostService->all();
+        $certificates = $vhostService->certificates($allVhosts);
+        $servers = (new ServerService())->all();
+        $rows = [];
+
+        foreach ($servers as $server) {
+            $vhosts = array_values(array_filter($allVhosts, fn ($v) => $v->server_id === $server->id));
+            $covering = array_values(array_filter(array_map(fn ($v) => $certificates[$v->id] ?? null, $vhosts)));
+            $statuses = array_values(array_filter(array_map(fn ($c) => HealthStatus::tryFrom((string) $c->last_status), $covering)));
+
+            $rows[] = [
+                'server' => $server,
+                'summary' => $health->summary($server),
+                'vhosts' => count($vhosts),
+                'vhost_status' => $statuses === [] ? null : HealthStatus::worst($statuses),
+                'vhost_note' => count($vhosts) === 0 ? '' : count($covering) . ' of ' . count($vhosts) . ' covered by a monitored certificate'
+                    . ($statuses === [] ? '' : '; worst: ' . HealthStatus::worst($statuses)->value),
+            ];
+        }
+
+        $this->response->view('servers.list', [
+            'auth' => $this->request->next('auth'),
+            'rows' => $rows,
+        ]);
     }
 
     public function show($id)

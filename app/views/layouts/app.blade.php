@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>@yield('title') · sys</title>
+    <title>@yield('title') · SysAdmin</title>
     <style>
         :root {
             --bg: #f6f7f9; --panel: #ffffff; --line: #dfe3e8; --text: #1b1f24; --muted: #5b6470;
@@ -183,7 +183,7 @@
 <body>
     @php($path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/')
     <header>
-        <a class="brand" href="/">sys</a>
+        <a class="brand" href="/servers" title="All servers">SysAdmin</a>
         @isset($auth)
             {{-- Phones: the menus fold away behind this button (see the header script). --}}
             <button type="button" class="nav-toggle" aria-expanded="false" aria-controls="site-menus">☰ Menu</button>

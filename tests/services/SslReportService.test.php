@@ -38,7 +38,8 @@ test('all certificates: one line each, at the soonest-expiring place', function 
     expect(array_keys($report['days']))->toBe(['Blog', 'Shop'])
         ->and(array_column($report['days']['Shop'], 1))->toBe([12.0, 39.9])
         ->and($report['row_total'])->toBe(5)
-        ->and($report['rows'][0]->days_left)->toBeNull();
+        // The table: each place's latest check only, soonest to expire first (a failed check first of all).
+        ->and(array_map(fn ($c) => [$c->binding->label(), $c->days_left], $report['rows']))->toBe([['web-2:8443', null], ['web-1:443', 39.9], ['direct:443', 80.0]]);
 });
 
 test('one certificate: one line per place it\'s served', function () {
@@ -52,7 +53,7 @@ test('one certificate: one line per place it\'s served', function () {
         ->and(count($report['rows']))->toBe(2);
 });
 
-test('dense data keeps the lowest days left per interval; the table shows the newest checks', function () {
+test('dense data keeps the lowest days left per interval; the table shows the latest check', function () {
     for ($i = 0; $i < 2000; $i++) {
         ($this->check)($this->shop1, $i * 5, $i === 100 ? 3.0 : 50.0);
     }
@@ -61,7 +62,7 @@ test('dense data keeps the lowest days left per interval; the table shows the ne
 
     expect($report['bucket_minutes'])->not->toBeNull()
         ->and(min(array_column($report['days']['web-1:443'], 1)))->toBe(3.0)
-        ->and(count($report['rows']))->toBe(SslReportService::MAX_ROWS)
         ->and($report['row_total'])->toBe(2000)
-        ->and($report['rows'][0]->checked_at->greaterThan($report['rows'][1]->checked_at))->toBeTrue();
+        ->and(count($report['rows']))->toBe(1)
+        ->and($report['rows'][0]->checked_at->getTimestamp())->toBe(Carbon::instance($this->clock->now())->startOfSecond()->getTimestamp());
 });

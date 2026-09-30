@@ -5,7 +5,10 @@
 
 @section('content')
     <div class="card">
-        <h1>Virtual hosts</h1>
+        <h1>Virtual hosts @if ($server ?? null)<span class="muted">on {{ $server->name }}</span>@endif</h1>
+        @if ($server ?? null)
+            <p><a href="/vhosts">All servers' virtual hosts</a></p>
+        @endif
         @if ($error)
             <div class="alert error" role="alert">{{ $error }}</div>
         @endif

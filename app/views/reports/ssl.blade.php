@@ -53,19 +53,17 @@
         </div>
 
         <div class="card">
-            <h2>Checks</h2>
-            @if ($report['row_total'] > count($report['rows']))
-                <p class="hint">The newest {{ count($report['rows']) }} of {{ $report['row_total'] }} checks in this period.</p>
-            @endif
+            <h2>Latest checks</h2>
+            <p class="hint">Each certificate's most recent check in this period, one row per place it's served, soonest to expire first ({{ number_format($report['row_total']) }} {{ $report['row_total'] === 1 ? 'check' : 'checks' }} in all; the chart above has their history). Click a row for the check's full result.</p>
             <div class="table-wrap">
             <table class="top">
                 <thead>
-                    <tr><th>Checked</th><th>Certificate</th><th>Where</th><th>Status</th><th>Days left</th><th>Result</th></tr>
+                    <tr><th>Checked</th><th>Certificate</th><th>Where</th><th>Status</th><th>Days left</th></tr>
                 </thead>
                 <tbody>
                     @foreach ($report['rows'] as $check)
-                        <tr>
-                            <td data-sort="{{ $check->checked_at->getTimestamp() }}" style="white-space: nowrap">{{ \App\Utils\LocalTime::format($check->checked_at) }}</td>
+                        <tr class="foldable">
+                            <td data-sort="{{ $check->checked_at->getTimestamp() }}" style="white-space: nowrap"><button type="button" class="link fold" aria-expanded="false" aria-controls="result-{{ $check->id }}" title="Show the result"></button> {{ \App\Utils\LocalTime::format($check->checked_at) }}</td>
                             <td>
                                 @if ($check->binding?->certificate)
                                     <a href="/ssl/{{ $check->binding->certificate->id }}">{{ $check->binding->certificate->name }}</a>
@@ -74,12 +72,32 @@
                             <td class="muted">{{ $check->binding?->label() }}</td>
                             <td data-sort="{{ $check->status->severity() }}"><span class="badge {{ $check->status->value }}">{{ $check->status->label() }}</span></td>
                             <td data-sort="{{ $check->days_left ?? '' }}">{{ $check->days_left === null ? '—' : floor($check->days_left) }}</td>
-                            <td>{{ $check->summary }}</td>
+                        </tr>
+                        <tr id="result-{{ $check->id }}" class="fold-row" hidden>
+                            <td colspan="5"><pre class="log-message">{{ $check->summary }}</pre></td>
                         </tr>
                     @endforeach
                 </tbody>
             </table>
             </div>
         </div>
+
+        <style>
+            tr.foldable { cursor: pointer; }
+            tr.foldable button.fold { text-decoration: none; color: var(--muted); padding-right: 2px; }
+        </style>
+        <script>
+            // A check's result folds out in a row under it (click the row or the arrow).
+            document.querySelectorAll('tr.foldable').forEach(function (tr) {
+                var button = tr.querySelector('button.fold');
+                var row = document.getElementById(button.getAttribute('aria-controls'));
+                tr.addEventListener('click', function (event) {
+                    if (event.target.closest('a')) { return; }
+                    var open = button.getAttribute('aria-expanded') !== 'true';
+                    button.setAttribute('aria-expanded', open ? 'true' : 'false');
+                    row.hidden = !open;
+                });
+            });
+        </script>
     @endif
 @endsection

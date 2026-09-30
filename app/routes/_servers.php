@@ -5,7 +5,8 @@ use App\Middleware\RequireAdmin;
 
 // Monitoring (left side of the navbar: SSL, SSH, MariaDB): everyone signed in.
 // The overview of all servers is the home page; /servers shows it too.
-app()->get('/servers', ['middleware' => Authenticate::class, 'ServerController@index']);
+// Every server with links to its reports (the SysAdmin link, top left); / is the overview of results.
+app()->get('/servers', ['middleware' => Authenticate::class, 'ServerController@servers']);
 // Reports come first in each menu; registered before /ssl/{id}.
 app()->get('/ssl/reports', ['middleware' => Authenticate::class, 'ReportController@ssl']);
 app()->get('/ssh/reports', ['middleware' => Authenticate::class, 'ReportController@ssh']);

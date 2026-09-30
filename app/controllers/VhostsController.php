@@ -13,14 +13,23 @@ use App\Services\VhostService;
  */
 class VhostsController extends Controller
 {
+    /**
+     * ?server=<id>: only that server's.
+     */
     public function index()
     {
         $service = new VhostService();
         $vhosts = $service->all();
+        $server = (int) $this->request->get('server') > 0 ? \App\Models\Server::query()->find((int) $this->request->get('server')) : null;
+
+        if ($server !== null) {
+            $vhosts = array_values(array_filter($vhosts, fn ($v) => $v->server_id === $server->id));
+        }
 
         $this->response->view('vhosts.index', [
             'auth' => $this->authContext(),
             'vhosts' => $vhosts,
+            'server' => $server,
             'certificates' => $service->certificates($vhosts),
             'error' => $this->request->flash('error'),
         ]);

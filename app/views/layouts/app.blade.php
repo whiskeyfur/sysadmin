@@ -328,7 +328,8 @@
 
             // Section navigator: every card (or collapsible section, or chart) with a heading, listed in a
             // box at the top right that follows the scroll; click to jump (opening a closed section). In the
-            // right margin when it fits, else a small "Sections" button; only on pages with 3 or more.
+            // right margin when it fits, else a small "Sections" button whose list stays open until the
+            // button or the page is clicked; only on pages with 3 or more.
             (function () {
                 var main = document.querySelector('main');
                 if (!main) { return; }
@@ -370,8 +371,6 @@
                         if (section.el.tagName === 'DETAILS' && !section.el.open) { section.el.open = true; }
                         section.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
                         history.replaceState(null, '', '#' + section.el.id);
-                        nav.classList.remove('open');
-                        toggle.setAttribute('aria-expanded', 'false');
                     });
                     section.link = link;
                     item.appendChild(link);

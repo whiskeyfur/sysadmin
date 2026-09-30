@@ -369,7 +369,7 @@
             // Section navigator: every card (or collapsible section, or chart) with a heading, listed in a
             // box at the top right, under the sticky header; click to jump (opening a closed section). In the
             // right margin when it fits, else a small "Sections" button whose list stays open until the
-            // button or the page is clicked; only on pages with 3 or more.
+            // button or the page is clicked; on every page with a section.
             (function () {
                 var main = document.querySelector('main');
                 if (!main) { return; }
@@ -383,7 +383,7 @@
                     if (!el.id) { el.id = 'section-' + (sections.length + 1); }
                     sections.push({ el: el, label: label.length > 48 ? label.slice(0, 47) + '…' : label });
                 });
-                if (sections.length < 3) { return; }
+                if (sections.length === 0) { return; } // nothing with a heading to list
 
                 var nav = document.createElement('nav');
                 nav.className = 'spy';

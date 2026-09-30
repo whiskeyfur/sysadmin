@@ -144,6 +144,8 @@ class DatabaseBrowserService
         }
 
         if ($account instanceof QueryAccount) {
+            // A login let in by socket identity is this site's own system user: admins only.
+            QueryAccountService::requireNotSocketIdentity($user, $pdo);
             $account->last_used_at = Carbon::instance($this->clock->now());
             $account->save();
         }

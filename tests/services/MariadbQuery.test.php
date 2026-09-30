@@ -11,6 +11,27 @@ use App\Services\MysqlService;
 use App\Services\QueryAccountService;
 use App\Services\ServerService;
 
+// A login let in by socket identity: over the local socket, its account IDENTIFIED VIA unix_socket.
+class QueryToolSocketPdo extends PDO
+{
+    public function __construct()
+    {
+        parent::__construct('sqlite::memory:');
+    }
+
+    public function getAttribute(int $attribute): mixed
+    {
+        return $attribute === PDO::ATTR_CONNECTION_STATUS ? 'Localhost via UNIX socket' : parent::getAttribute($attribute);
+    }
+
+    public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): PDOStatement|false
+    {
+        return str_starts_with($query, 'SHOW GRANTS FOR CURRENT_USER()')
+            ? parent::query("SELECT 'GRANT USAGE ON *.* TO `www-data`@`localhost` IDENTIFIED VIA unix_socket'")
+            : parent::query($query, ...array_filter([$fetchMode], fn ($m) => $m !== null), ...$fetchModeArgs);
+    }
+}
+
 // Each "server" is an in-memory SQLite database. Logins: $users (username => password) on every server,
 // except the pairs in $refuse (server name => usernames it refuses). Stored-account logins are recorded.
 class QueryToolFakeMysql extends MysqlService
@@ -34,6 +55,11 @@ class QueryToolFakeMysql extends MysqlService
     public function connectAs(Server $server, string $username, string $password, ?string $database = null): PDO
     {
         $this->connections[] = "{$server->name} as $username";
+
+        // A socket login: any password does (as with unix_socket over the socket).
+        if ($username === 'www-data') {
+            return new QueryToolSocketPdo();
+        }
 
         if ($username === 'sockonly') {
             $e = new PDOException("SQLSTATE[HY000] [1698] Access denied for user 'sockonly'@'localhost'");
@@ -280,4 +306,28 @@ test('an account without a password can be added when the servers accept that', 
     expect($saved['account'])->toBeInstanceOf(QueryAccount::class)
         ->and($this->accounts->password($saved['account']->fresh()))->toBe('')
         ->and($this->query->run($this->dev, [$this->ids['alpha'] => $saved['account']->id], null, 'SELECT 1 AS one')['servers'][0]['ok'])->toBeTrue();
+});
+
+test('a login let in by socket identity (this site\'s own system user) is for admins only', function () {
+    // Any password gets in, as unix_socket ignores it: the account is only the web server's identity.
+    $dev = $this->accounts->save($this->dev, null, ['label' => 'Web', 'username' => 'www-data', 'password' => 'anything at all', 'servers' => [$this->ids['alpha']]]);
+    $admin = $this->accounts->save($this->admin, null, ['label' => 'Web', 'username' => 'www-data', 'password' => '', 'servers' => [$this->ids['alpha']]]);
+
+    expect($dev['account'])->toBeNull()
+        ->and($dev['results'][0]['message'])->toContain('only admins')
+        ->and($admin['account'])->toBeInstanceOf(QueryAccount::class)
+        ->and($this->query->run($this->admin, [$this->ids['alpha'] => $admin['account']->id], null, 'SELECT 1 AS one')['servers'][0]['ok'])->toBeTrue();
+
+    // An account a non-admin already has (e.g. from before) is refused when used, and when tested.
+    $old = QueryAccount::query()->create(['user_id' => $this->dev->id, 'label' => 'Old', 'username' => 'www-data', 'servers' => [$this->ids['alpha']]]);
+    $old->password = $this->cipher->encrypt('', "query-account:{$this->dev->id}:{$old->id}");
+    $old->save();
+    $run = $this->query->run($this->dev, [$this->ids['alpha'] => $old->id], null, 'SELECT 1 AS one');
+
+    expect($run['servers'][0]['ok'])->toBeFalse()
+        ->and($run['servers'][0]['message'])->toContain('only admins')
+        ->and($run['auth_failed'])->toBeFalse()
+        ->and($this->accounts->test($this->dev, $old)[0]['ok'])->toBeFalse()
+        // Not a socket login (over TCP, or a password account): as before.
+        ->and(QueryAccountService::socketIdentity(new PDO('sqlite::memory:')))->toBeFalse();
 });

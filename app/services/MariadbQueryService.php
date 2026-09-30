@@ -183,7 +183,7 @@ class MariadbQueryService
                 continue;
             }
 
-            $result = $this->runOn($server, $account === null ? null : [$account->username, $accounts->password($account)], $database, $sql, $limit);
+            $result = $this->runOn($server, $account === null ? null : [$account->username, $accounts->password($account)], $database, $sql, $limit, $user);
             $result['login'] = $login;
             $results[] = $result;
 
@@ -279,8 +279,9 @@ class MariadbQueryService
      */
     /**
      * @param array{0: string, 1: string}|null $login username and password; null: the server's stored account
+     * @param User $user who runs it (a socket-identity login is refused for non-admins)
      */
-    private function runOn(Server $server, ?array $login, ?string $database, string $sql, int $limit): array
+    private function runOn(Server $server, ?array $login, ?string $database, string $sql, int $limit, User $user): array
     {
         $result = ['server' => $server, 'ok' => false, 'auth' => false, 'guess' => false, 'message' => '', 'columns' => [], 'rows' => [], 'affected' => null, 'ms' => 0, 'truncated' => false];
         // Timed from the login: a slow or unreachable server spends its time there.
@@ -293,6 +294,14 @@ class MariadbQueryService
             $result['auth'] = in_array($code, self::AUTH_ERRORS, true);
             $result['guess'] = $code === 1045;
             $result['message'] = $e->getMessage() . ($code === 1698 ? QueryAccountService::NO_PASSWORD_HINT : '');
+            $result['ms'] = (int) round((hrtime(true) - $start) / 1e6);
+
+            return $result;
+        }
+
+        // A login let in by socket identity is this site's own system user: admins only.
+        if ($login !== null && !$user->isAdmin() && QueryAccountService::socketIdentity($pdo)) {
+            $result['message'] = QueryAccountService::SOCKET_ADMINS_ONLY;
             $result['ms'] = (int) round((hrtime(true) - $start) / 1e6);
 
             return $result;

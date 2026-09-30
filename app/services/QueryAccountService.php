@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Utils\SystemClock;
 use Carbon\Carbon;
 use DomainException;
+use PDO;
 use PDOException;
 use Psr\Clock\ClockInterface;
 
@@ -35,6 +36,55 @@ class QueryAccountService
      * Why an account refused with 1698 can't be used, and how to allow it.
      */
     public const NO_PASSWORD_HINT = ' This account doesn\'t sign in with a password (e.g. it uses unix_socket, which only lets the matching system user in over the local socket), so no password works for it here. To use it, allow a password too on the server, e.g. ALTER USER \'name\'@\'host\' IDENTIFIED VIA unix_socket OR mysql_native_password USING PASSWORD(\'…\').';
+
+    /**
+     * Why a non-admin can't use a login that signs in by socket.
+     */
+    public const SOCKET_ADMINS_ONLY = 'This login signs in by socket, as the system user this site runs as, so its password isn\'t what lets it in here (anyone could use it): only admins can.';
+
+    /**
+     * Whether a connection was let in by socket identity rather than a password: it came over the local
+     * socket and its account uses unix_socket (MariaDB) or auth_socket (MySQL). Over the socket such a
+     * login is this site's own system user (www-data), whatever password was typed, so non-admins may
+     * not use it (see requireNotSocketIdentity()).
+     */
+    public static function socketIdentity(PDO $pdo): bool
+    {
+        try {
+            $status = strtolower((string) $pdo->getAttribute(PDO::ATTR_CONNECTION_STATUS));
+        } catch (\Throwable) {
+            return false;
+        }
+
+        if (!str_contains($status, 'socket')) {
+            return false;
+        }
+
+        // MariaDB's SHOW GRANTS names the plugin; MySQL's SHOW CREATE USER does (both allowed for oneself).
+        foreach (['SHOW GRANTS FOR CURRENT_USER()', 'SHOW CREATE USER CURRENT_USER()'] as $sql) {
+            try {
+                $text = implode("\n", array_map('strval', $pdo->query($sql)?->fetchAll(PDO::FETCH_COLUMN) ?: []));
+            } catch (PDOException) {
+                continue;
+            }
+
+            if (preg_match('/\b(unix_socket|auth_socket)\b/i', $text) === 1) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @throws DomainException for a non-admin on a socket-identity login
+     */
+    public static function requireNotSocketIdentity(User $user, PDO $pdo): void
+    {
+        if (!$user->isAdmin() && self::socketIdentity($pdo)) {
+            throw new DomainException(self::SOCKET_ADMINS_ONLY);
+        }
+    }
 
     /**
      * The MySQL error code behind a failed login, or 0.
@@ -217,8 +267,10 @@ class QueryAccountService
             }
 
             try {
-                $this->mysql->connectAs($server, $username, $password);
+                self::requireNotSocketIdentity($user, $this->mysql->connectAs($server, $username, $password));
                 $results[] = ['server' => $server, 'ok' => true, 'message' => 'The login works.'];
+            } catch (DomainException $e) {
+                $results[] = ['server' => $server, 'ok' => false, 'message' => $e->getMessage()];
             } catch (ServerConnectionException $e) {
                 $code = self::loginError($e);
                 $results[] = ['server' => $server, 'ok' => false, 'message' => $e->getMessage() . ($code === 1698 ? self::NO_PASSWORD_HINT : '')];

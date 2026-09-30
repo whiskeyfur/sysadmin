@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\DTOs\AuthContext;
+use App\Services\AppDatabaseService;
 use App\Services\SettingsService;
 use DomainException;
 
@@ -73,7 +74,21 @@ class SettingsController extends Controller
             'settings' => new SettingsService(),
             'error' => $error,
             'notice' => $notice,
+            // The app's own database, shown (read only) on App settings.
+            'database' => $section === 'app' ? $this->appDatabase() : null,
         ], $status);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function appDatabase(): array
+    {
+        try {
+            return (new AppDatabaseService())->describe();
+        } catch (\Throwable $e) {
+            return ['Error' => "Couldn't read the connection: {$e->getMessage()}"];
+        }
     }
 
     private function authContext(): AuthContext

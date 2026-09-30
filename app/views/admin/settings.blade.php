@@ -166,4 +166,22 @@
             </div>
         </form>
     </div>
+
+    @if ($database)
+        <div class="card" id="database">
+            <h2>Database</h2>
+            <p class="hint">The database this app keeps its own data in. Read only here: it's set up with the install wizard or <code>php leaf app:db-setup</code>. The password isn't shown.</p>
+            <dl class="details">
+                @foreach ($database as $label => $value)
+                    <dt>{{ $label }}</dt>
+                    <dd>{{ $value }}</dd>
+                @endforeach
+            </dl>
+        </div>
+        <style>
+            dl.details { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+            dl.details dt { font-weight: 600; }
+            dl.details dd { margin: 0; overflow-wrap: anywhere; }
+        </style>
+    @endif
 @endsection

@@ -144,6 +144,11 @@ class RewriteController extends Controller
                 'up' => $this->editor->withRuleMoved($scope, (int) $n, -1),
                 'down' => $this->editor->withRuleMoved($scope, (int) $n, 1),
                 'settings' => $this->editor->withSettings($scope, (bool) $this->request->get('engine'), trim((string) $this->request->get('base', false))),
+                'access' => $this->editor->withAccess(
+                    $scope,
+                    array_map(fn ($v) => (string) $v, (array) $this->request->get('access_lines', false)),
+                    (string) $this->request->get('access_add', false),
+                ),
                 default => throw new DomainException('Unknown change.'),
             };
 
@@ -258,7 +263,7 @@ class RewriteController extends Controller
     private function renderScope(array $scope, ?string $notice = null, ?string $error = null): void
     {
         $this->response->withHeader('Cache-Control', 'no-store');
-        $this->response->view('apache.rewrite-scope', ['auth' => $this->authContext(), 'scope' => $scope, 'notice' => $notice, 'error' => $error] + $this->confirmFields());
+        $this->response->view('apache.rewrite-scope', ['auth' => $this->authContext(), 'scope' => $scope, 'access' => $this->editor->access($scope), 'notice' => $notice, 'error' => $error] + $this->confirmFields());
     }
 
     /**

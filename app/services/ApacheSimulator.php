@@ -965,6 +965,7 @@ class ApacheSimulator
         $config = [
             'allow_override' => ['none' => true], 'options' => ['followsymlinks' => true], 'require' => null, 'directory_index' => ['index.html'],
             'fallback' => null, 'directory_slash' => true, 'accept_path_info' => null, 'handler' => null, 'rewrite' => null, 'redirects' => [],
+            'compat' => null,
         ];
         $sections = [...array_filter($main, fn ($n) => $n->kind === 'block'), ...($vhost !== null ? array_filter($vhost->effective(), fn ($n) => $n->kind === 'block') : [])];
         $directories = array_values(array_filter($sections, fn ($n) => $n->name === 'directory' && $n->arg() !== '~'));
@@ -1072,8 +1073,10 @@ class ApacheSimulator
         $may = fn (string $class) => !$htaccess || isset($allowed['all']) || isset($allowed[$class]);
         $groups = ['options' => 'options', 'directoryindex' => 'indexes', 'fallbackresource' => 'indexes', 'directoryslash' => 'indexes',
             'require' => 'authconfig', 'rewriteengine' => 'fileinfo', 'rewriterule' => 'fileinfo', 'rewritecond' => 'fileinfo', 'rewritebase' => 'fileinfo',
-            'rewriteoptions' => 'fileinfo', 'redirect' => 'fileinfo', 'redirectmatch' => 'fileinfo', 'sethandler' => 'fileinfo', 'acceptpathinfo' => 'fileinfo'];
+            'rewriteoptions' => 'fileinfo', 'redirect' => 'fileinfo', 'redirectmatch' => 'fileinfo', 'sethandler' => 'fileinfo', 'acceptpathinfo' => 'fileinfo',
+            'order' => 'limit', 'allow' => 'limit', 'deny' => 'limit', 'satisfy' => 'authconfig'];
         $requires = null;
+        $compat = null;
         $nested = [];
 
         foreach ($nodes as $node) {
@@ -1147,6 +1150,22 @@ class ApacheSimulator
 
                     break;
 
+                case 'order':
+                case 'allow':
+                case 'deny':
+                case 'satisfy':
+                    // mod_access_compat (Apache 2.2 style): a section with any of these starts from the defaults
+                    // (checked against a real apache2), it doesn't add to the parent's lists.
+                    $compat ??= ['order' => 'deny,allow', 'allow' => [], 'deny' => [], 'satisfy' => 'all', 'where' => $where];
+
+                    match ($node->name) {
+                        'order' => $compat['order'] = strtolower(str_replace(' ', '', implode('', $node->args))),
+                        'satisfy' => $compat['satisfy'] = strtolower($node->arg()),
+                        default => array_push($compat[$node->name], ...array_slice($node->args, strtolower($node->arg()) === 'from' ? 1 : 0)),
+                    };
+
+                    break;
+
                 case 'redirect':
                 case 'redirectmatch':
                 case 'redirectpermanent':
@@ -1159,6 +1178,10 @@ class ApacheSimulator
 
         if ($requires !== null) {
             $config['require'] = ['nodes' => $requires, 'where' => $where];
+        }
+
+        if ($compat !== null) {
+            $config['compat'] = $compat;
         }
 
         foreach ($nested as $files) {
@@ -1233,28 +1256,75 @@ class ApacheSimulator
      */
     private function access(array $config, array $context): ?array
     {
-        if ($config['require'] === null) {
+        if ($config['require'] === null && $config['compat'] === null) {
             return null;
         }
 
         $unknown = [];
-        $granted = $this->authorize($config['require']['nodes'], 'any', $context, $unknown);
+        $require = $config['require'] === null ? null : $this->authorize($config['require']['nodes'], 'any', $context, $unknown);
+        $compat = $config['compat'] === null ? null : $this->compat($config['compat'], (string) $context['remote_addr'], $unknown);
+        $any = ($config['compat']['satisfy'] ?? 'all') === 'any';
 
-        if ($granted === true) {
-            $this->step('access', 'Require (' . $config['require']['where'] . '): allowed.');
+        if ($config['compat'] !== null) {
+            $this->step('access', 'Order ' . $config['compat']['order'] . ', Allow from ' . (implode(' ', $config['compat']['allow']) ?: '(nobody)') . ', Deny from ' . (implode(' ', $config['compat']['deny']) ?: '(nobody)')
+                . ' (' . $config['compat']['where'] . '): ' . ($compat === null ? 'depends on something not simulated' : ($compat ? 'allowed' : 'denied')) . ($any ? '; Satisfy Any' : '') . '.');
+        }
+
+        if ($config['require'] !== null) {
+            $this->step('access', 'Require (' . $config['require']['where'] . '): ' . ($require === null ? 'depends on something not simulated' : ($require ? 'allowed' : 'denied')) . '.');
+        }
+
+        // Satisfy All (default): both kinds must allow; Satisfy Any: either. A kind that isn't configured allows.
+        $results = array_values(array_filter([$config['require'] !== null ? $require : 'absent', $config['compat'] !== null ? $compat : 'absent'], fn ($r) => $r !== 'absent'));
+        $allowed = $any
+            ? (in_array(true, $results, true) ? true : (in_array(null, $results, true) ? null : false))
+            : (in_array(false, $results, true) ? false : (in_array(null, $results, true) ? null : true));
+
+        if ($allowed === null) {
+            $this->warnings[] = 'Access depends on "' . implode('", "', $unknown) . '", which the simulator doesn\'t judge; carrying on as if allowed.';
 
             return null;
         }
 
-        if ($granted === null) {
-            $this->warnings[] = 'Access depends on "Require ' . implode('", "', $unknown) . '" (' . $config['require']['where'] . '), which the simulator doesn\'t judge; carrying on as if allowed.';
+        return $allowed ? null : $this->result(403, 'forbidden');
+    }
 
+    /**
+     * Order / Allow from / Deny from (mod_access_compat). Hosts by name and env= can't be judged here: null.
+     *
+     * @param array{order: string, allow: list<string>, deny: list<string>} $compat
+     * @param list<string> $unknown
+     */
+    private function compat(array $compat, string $ip, array &$unknown): ?bool
+    {
+        $matches = function (array $entries) use ($ip, &$unknown): ?bool {
+            $result = false;
+
+            foreach ($entries as $entry) {
+                $lower = strtolower($entry);
+
+                if ($lower === 'all' || $this->ipMatches($ip, [$entry])) {
+                    return true;
+                }
+
+                if (str_starts_with($lower, 'env=') || str_starts_with($lower, 'env=!') || preg_match('/[a-z]/i', $entry) === 1 && !str_contains($entry, ':')) {
+                    $unknown[] = $entry;
+                    $result = null;
+                }
+            }
+
+            return $result;
+        };
+
+        $allow = $matches($compat['allow']);
+        $deny = $matches($compat['deny']);
+
+        if ($allow === null || $deny === null) {
             return null;
         }
 
-        $this->step('access', 'Require (' . $config['require']['where'] . '): denied.');
-
-        return $this->result(403, 'forbidden');
+        // deny,allow: allowed unless denied, and an Allow match wins; allow,deny and mutual-failure: must be allowed and not denied.
+        return $compat['order'] === 'deny,allow' ? (!$deny || $allow) : ($allow && !$deny);
     }
 
     /**

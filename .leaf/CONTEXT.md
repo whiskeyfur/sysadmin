@@ -102,6 +102,8 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Managing this machine's Apache (/admin/apache/local): through a small standalone root helper (bin/sys-apache-helper, installed with sudo, one sudoers rule), not by running the app as root — the user's choice; admins from this machine only, fresh check per change, configtest-and-undo, audit log (`LocalApacheService`, `apache_admin_log`).
 * 2026-09-29 — Rewrite rule editor (config sections and .htaccess, line-precise edits, helper v2 for .htaccess) and URL simulator (`ApacheConfigTree`, `ApacheSimulator`), verified against a real apache2 in the tests.
 * 2026-09-29 — Virtual host editor (fields or the block's text, values as written) for this machine and monitored servers; remote changes rely on the SSH user's sudo rules (checked with `sudo -n -l`, configtest then undo) — the user's choice over installing anything there. Simulator applies server/vhost-level DirectoryIndex etc. SSL checks complete a missing intermediate from AIA like browsers (public http only) and note it; severity is an SSL setting (Info/Warning/Danger).
+* 2026-09-29 — Simulator handles Order/Allow/Deny/Satisfy (section replaces, not merges — verified on real Apache); access lines editable per scope; collapsible sections on the Apache page.
+* 2026-09-29 — (feature/consolidated) The Apache page's Global/Sites/Vhosts/Snippets/Modules sections merged into one Config view: the full configuration with includes opened in place, as Apache reads it (`ApacheConfigService`), editable in place, hide-comments checkbox.
 
 ---
 
@@ -142,3 +144,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 ## Future Ideas
 
 * _agent: record ideas the user mentions but isn't building yet._
+* 2026-09-29 — Apache page: the sign-in check moved from a card at the top into a dialog opened by each change button.

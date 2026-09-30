@@ -27,7 +27,9 @@ function simulatorWorld(): array
     $files = [
         'a/index.html', 'a/target.html', 'a/new/x.html', 'a/items/7.html', 'a/blog/index.html', 'a/blog/real.html', 'a/shop/product.html',
         'a/sub/index.html', 'a/empty/nothing.txt', 'a/deny/f.html', 'a/noov/f.html', 'a/badov/f.html', 'static/s.css', 'b/index.html', 'b/landing',
-        'b/app/index.html', 'a/loop/start', 'a/end/b', 'a/end/c', 'static/app/page.html', 'a/script.html', 'a/phpidx/index.php', 'a/front/router.html', 'a/front/real.html', 'a/front/.env', 'a/inh/x.html', 'a/inh/target2.html', 'a/inh/keep/x.html', 'a/inh/drop/x.html', 'a/inh/own/x.html', 'a/inh/own/y.html',
+        'b/app/index.html', 'a/loop/start', 'a/end/b', 'a/end/c', 'static/app/page.html', 'a/script.html', 'a/phpidx/index.php', 'a/compat/d1/x.html', 'a/compat/d1/sub/x.html', 'a/compat/d1/opt/x.html', 'a/compat/d1/req/x.html', 'a/compat/d1/allow/x.html',
+        'a/compat/d2/x.html', 'a/compat/d3/x.html', 'a/compat/d4/x.html', 'a/compat/d5/x.html', 'a/compat/d6/x.html', 'a/compat/f1/c/x.html', 'a/compat/f2/x.html',
+        'a/compat/f2/c/x.html', 'a/compat/lim/x.html', 'a/front/router.html', 'a/front/real.html', 'a/front/.env', 'a/inh/x.html', 'a/inh/target2.html', 'a/inh/keep/x.html', 'a/inh/drop/x.html', 'a/inh/own/x.html', 'a/inh/own/y.html',
         'a/inh/both/x.html', 'a/inh/both/y.html', 'a/listing/one.txt', 'a/ci/Page.html', 'a/or/ok.html',
     ];
 
@@ -52,6 +54,20 @@ function simulatorWorld(): array
         'a/end' => "RewriteEngine On\nRewriteRule ^a$ b [END]\nRewriteRule ^b$ c [L]\n",
         'static/app' => "RewriteEngine On\nRewriteBase /static/app/\nRewriteRule ^go$ page.html [L]\n",
         'a/front' => "RewriteEngine On\nRewriteRule ^$ /target.html [R=302,L]\nFallbackResource /front/router.html\n<RequireAll>\n    Require all granted\n</RequireAll>\n<FilesMatch \"^\\.\">\n    Require all denied\n</FilesMatch>\nRedirectMatch 404 /\\.git\n",
+        'a/compat/d1' => "Order deny,allow\nDeny from all\n",
+        'a/compat/d1/opt' => "Options -Indexes\n",
+        'a/compat/d1/req' => "Require all granted\n",
+        'a/compat/d1/allow' => "Allow from all\n",
+        'a/compat/d2' => "Order deny,allow\nDeny from all\nAllow from 127.0.0.1\n",
+        'a/compat/d3' => "Order allow,deny\n",
+        'a/compat/d4' => "Require all denied\nOrder deny,allow\nAllow from 127.0.0.1\nSatisfy Any\n",
+        'a/compat/d5' => "Require all denied\nAllow from 127.0.0.1\n",
+        'a/compat/d6' => "Deny from 127.0.0.0/8\n",
+        'a/compat/f1' => "Order allow,deny\nAllow from 127.0.0.1\n",
+        'a/compat/f1/c' => "Allow from 10.0.0.1\n",
+        'a/compat/f2' => "Order deny,allow\nDeny from 127.0\n",
+        'a/compat/f2/c' => "Deny from 10.0.0.1\n",
+        'a/compat/lim' => "Order deny,allow\n",
         'a/or' => "RewriteEngine On\nRewriteCond %{QUERY_STRING} a=1 [OR]\nRewriteCond %{QUERY_STRING} b=1\nRewriteRule ^in$ ok.html [L]\n",
     ];
 
@@ -62,7 +78,7 @@ function simulatorWorld(): array
 
     $modules = '';
 
-    foreach (['mpm_prefork', 'authz_core', 'authz_host', 'mime', 'dir', 'alias', 'rewrite', 'autoindex'] as $module) {
+    foreach (['mpm_prefork', 'authz_core', 'authz_host', 'access_compat', 'mime', 'dir', 'alias', 'rewrite', 'autoindex'] as $module) {
         $modules .= "LoadModule {$module}_module /usr/lib/apache2/modules/mod_$module.so\n";
     }
 
@@ -96,6 +112,9 @@ function simulatorWorld(): array
         </Directory>
         <Directory $t/a/listing>
             Options +Indexes
+        </Directory>
+        <Directory $t/a/compat/lim>
+            AllowOverride AuthConfig
         </Directory>
         LoadModule status_module /usr/lib/apache2/modules/mod_status.so
         <Location /front/status>
@@ -235,6 +254,20 @@ test('the simulator agrees with a real apache2', function (string $host, string 
     ['a.test', '/nothere/deeper/x', 404],
     ['a.test', '/front/status', 200],
     ['a.test', '/front/.env', 403],
+    ['a.test', '/compat/d1/x.html', 403],
+    ['a.test', '/compat/d1/sub/x.html', 403],
+    ['a.test', '/compat/d1/opt/x.html', 403],
+    ['a.test', '/compat/d1/req/x.html', 403],
+    ['a.test', '/compat/d1/allow/x.html', 200],
+    ['a.test', '/compat/d2/x.html', 200],
+    ['a.test', '/compat/d3/x.html', 403],
+    ['a.test', '/compat/d4/x.html', 200],
+    ['a.test', '/compat/d5/x.html', 403],
+    ['a.test', '/compat/d6/x.html', 403],
+    ['a.test', '/compat/f1/c/x.html', 200],
+    ['a.test', '/compat/f2/x.html', 403],
+    ['a.test', '/compat/f2/c/x.html', 200],
+    ['a.test', '/compat/lim/x.html', 500],
     ['b.test', '/', 200],
     ['x.b.test', '/landing', 200],
     ['b.test', '/app/some/route', 200],

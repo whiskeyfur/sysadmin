@@ -6,7 +6,7 @@
 @section('content')
     @php($set = $scope['rules'])
     <div class="card">
-        <p class="muted"><a href="/admin/apache/local/rewrite">Rewrite rules</a> ›</p>
+        <p class="muted"><a href="/admin/apache/local/rewrite">Rewrite and access rules</a> ›</p>
         <h1>{{ $scope['title'] }}</h1>
         @if ($scope['kind'] === 'virtualhost' && $scope['block'])
             <p><a href="/admin/vhost?id={{ urlencode('local:' . $scope['block']->file . ':' . $scope['block']->line) }}">Edit this virtual host's definition</a></p>
@@ -70,6 +70,29 @@
                     </tbody>
                 </table>
                 </div>
+            @endif
+        </div>
+
+        <div class="card">
+            <h2>Access (Require, Order, Allow, Deny, Satisfy)</h2>
+            @if ($access === [])
+                <p class="muted">No access lines here: access is as the enclosing sections set it.</p>
+            @else
+                <p class="muted">Edit a line in place, or empty it to remove it. Old-style Order/Allow/Deny lines here replace the parent directory's (Apache starts from Order deny,allow with nobody listed), and both kinds must allow a request unless Satisfy Any.</p>
+                @foreach ($access as $item)
+                    <div class="inline-form" style="margin-bottom: 6px">
+                        <span class="muted" style="min-width: 60px"><code>:{{ $item['line'] }}</code></span>
+                        @if ($item['context'])
+                            <span class="muted"><code>{{ $item['context'] }}</code></span>
+                        @endif
+                        <input type="text" name="access_lines[{{ $item['line'] }}]" value="{{ $item['text'] }}" aria-label="Line {{ $item['line'] }}" autocapitalize="none" spellcheck="false" style="flex: 1; min-width: 260px" {{ $scope['editable'] ? '' : 'disabled' }}>
+                    </div>
+                @endforeach
+            @endif
+            @if ($scope['editable'])
+                <label for="access_add">Add lines</label>
+                <textarea id="access_add" name="access_add" rows="3" spellcheck="false" placeholder="Require all denied&#10;Require ip 10.0.0.0/8" style="font-family: ui-monospace, monospace; font-size: 13px"></textarea>
+                <div class="actions"><button type="submit" name="op" value="access" class="secondary">Save access lines</button></div>
             @endif
         </div>
 

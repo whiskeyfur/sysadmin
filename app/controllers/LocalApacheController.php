@@ -42,7 +42,7 @@ class LocalApacheController extends Controller
 
         $this->response->withHeader('Cache-Control', 'no-store');
         $this->response->view('apache.local', $this->common() + [
-            'vhosts' => $status['ready'] ? (new \App\Services\VhostEditorService())->localVhosts() : [],
+            'config' => $overview !== null ? (new \App\Services\ApacheConfigService())->rows($overview) : [],
             'status' => $status,
             'overview' => $overview,
             'errorLog' => $log,
@@ -141,6 +141,20 @@ class LocalApacheController extends Controller
 
                 return;
             }
+        }
+
+        if ($action === 'config') {
+            try {
+                $saved = (new \App\Services\ApacheConfigService())->save($this->authContext()->user, (array) $this->request->get('config', false), (array) $this->request->get('config_hash', false));
+            } catch (DomainException $e) {
+                $this->response->withFlash('error', $e->getMessage())->redirect('/admin/apache/local');
+
+                return;
+            }
+
+            $this->response->withFlash('notice', $saved === [] ? 'Nothing had changed.' : 'Saved ' . implode(', ', $saved) . '; the configuration test passed. Reload Apache to apply it.')->redirect('/admin/apache/local');
+
+            return;
         }
 
         try {

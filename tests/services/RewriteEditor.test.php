@@ -135,3 +135,30 @@ test('a change can be tried on a URL before saving it', function () {
         ->and($after['location'])->toBe('http://shop.test/elsewhere')
         ->and(file_get_contents("{$this->root}/sites-available/shop.conf"))->toContain('/new [R=301,L]');
 });
+
+test('access lines are listed where they are (inside <IfModule> too), edited in place, removed, added, and checked', function () {
+    file_put_contents("{$this->docs}/blog/.htaccess", "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\nRewriteEngine On\n");
+    $scope = $this->editor->scope("htaccess:{$this->docs}/blog");
+
+    expect($this->editor->access($scope))->toBe([
+        ['line' => 2, 'text' => 'Require all denied', 'context' => '<ifmodule mod_authz_core.c>'],
+        ['line' => 5, 'text' => 'Order deny,allow', 'context' => '<ifmodule !mod_authz_core.c>'],
+        ['line' => 6, 'text' => 'Deny from all', 'context' => '<ifmodule !mod_authz_core.c>'],
+    ]);
+
+    $text = $this->editor->withAccess($scope, [2 => 'Require ip 10.0.0.0/8', 5 => 'Order deny,allow', 6 => ''], "Allow from 10.0.0.0/8\n");
+
+    expect($text)->toBe("<IfModule mod_authz_core.c>\n    Require ip 10.0.0.0/8\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Allow from 10.0.0.0/8\n</IfModule>\nRewriteEngine On\n");
+
+    $empty = $this->editor->scope("htaccess:{$this->docs}/www-none");
+})->throws(DomainException::class, 'served');
+
+test('access lines added where there were none go at the top; nothing but access lines is accepted', function () {
+    $scope = $this->editor->scope("htaccess:{$this->docs}/blog");
+
+    expect($this->editor->withAccess($scope, [], "<RequireAll>\n    Require all granted\n    Require not ip 10.0.0.1\n</RequireAll>"))
+        ->toBe("<RequireAll>\nRequire all granted\nRequire not ip 10.0.0.1\n</RequireAll>\n")
+        ->and(fn () => $this->editor->withAccess($scope, [], "RewriteRule .* /x"))->toThrow(DomainException::class, "isn't an access line")
+        ->and(fn () => $this->editor->withAccess($scope, [], "<RequireAll>\nRequire all granted"))->toThrow(DomainException::class, 'closing line')
+        ->and(fn () => $this->editor->withAccess($scope, [99 => 'Require all denied'], ''))->toThrow(DomainException::class, 'Reload');
+});

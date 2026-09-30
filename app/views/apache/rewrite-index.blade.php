@@ -6,7 +6,7 @@
 @section('content')
     <div class="card">
         <div class="actions" style="margin-top: 0; justify-content: space-between">
-            <h1>Rewrite rules</h1>
+            <h1>Rewrite and access rules</h1>
             <div class="row-actions">
                 <a class="button" href="/admin/apache/local/simulate">URL simulator</a>
                 <a class="button secondary-link" href="/admin/apache/local">Apache on this server</a>
@@ -28,7 +28,7 @@
         </form>
         <div class="table-wrap">
         <table>
-            <thead><tr><th>Where</th><th>Kind</th><th>Rules</th><th>Engine</th><th>File</th></tr></thead>
+            <thead><tr><th>Where</th><th>Kind</th><th>Rules</th><th>Engine</th><th>Access lines</th><th>File</th></tr></thead>
             <tbody>
                 @foreach ($scopes as $scope)
                     <tr>
@@ -42,6 +42,7 @@
                                 <span class="badge unknown">Off</span>
                             @endif
                         </td>
+                        <td data-sort="{{ $scope['access'] }}">{{ $scope['access'] ?: '' }}</td>
                         <td class="muted"><code>{{ $scope['where'] }}</code>@unless ($scope['editable']) (read only)@endunless</td>
                     </tr>
                 @endforeach

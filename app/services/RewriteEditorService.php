@@ -63,7 +63,7 @@ class RewriteEditorService
      * Every place rules can be: virtual hosts and <Directory> sections of the enabled configuration,
      * and .htaccess files (existing ones, and the served directories that could have one).
      *
-     * @return list<array{id: string, kind: string, title: string, where: string, rules: int, engine: ?bool, exists: bool, editable: bool}>
+     * @return list<array{id: string, kind: string, title: string, where: string, rules: int, engine: ?bool, access: int, exists: bool, editable: bool}>
      */
     public function scopes(): array
     {
@@ -78,6 +78,7 @@ class RewriteEditorService
                 'where' => $block->where($this->root),
                 'rules' => count($set->rules),
                 'engine' => $set->engine,
+                'access' => count(array_filter($block->effective(), fn (ApacheNode $n) => $n->file === $block->file && in_array($n->name, self::ACCESS_DIRECTIVES, true))),
                 'exists' => true,
                 'editable' => $this->fileKind($block->file) !== null,
             ];
@@ -93,6 +94,7 @@ class RewriteEditorService
                     'where' => $exists ? 'file' : 'none yet',
                     'rules' => count($set->rules),
                     'engine' => $set->engine,
+                    'access' => $exists ? count($this->access(['file' => "$dir/.htaccess", 'text' => (string) $this->tree()->contents("$dir/.htaccess"), 'block' => null])) : 0,
                     'exists' => $exists,
                     'editable' => true,
                 ];
@@ -144,6 +146,126 @@ class RewriteEditorService
         }
 
         throw new DomainException('That section is gone (the configuration changed). Pick it again from the list.');
+    }
+
+    public const ACCESS_DIRECTIVES = ['require', 'order', 'allow', 'deny', 'satisfy'];
+
+    /**
+     * The access control lines of a scope (Require, Order, Allow, Deny, Satisfy, also inside <RequireAll/Any/None>
+     * and <IfModule>), in its own file, each with its line.
+     *
+     * @param array<string, mixed> $scope
+     * @return list<array{line: int, text: string, context: string}>
+     */
+    public function access(array $scope): array
+    {
+        $lines = ApacheConfigTree::lines($scope['text']);
+        $nodes = [];
+        $walk = function (ApacheNode $node, string $context) use (&$walk, &$nodes, $scope, $lines) {
+            foreach ($node->children as $child) {
+                if ($child->file !== $scope['file']) {
+                    continue;
+                }
+
+                if ($child->kind === 'block' && ($child->isBlock('requireall', 'requireany', 'requirenone') || $child->isBlock(...ApacheNode::CONDITIONALS))) {
+                    $walk($child, trim($context . ' <' . $child->name . ($child->args === [] ? '' : ' ' . implode(' ', $child->rawArgs)) . '>'));
+                } elseif ($child->kind === 'directive' && in_array($child->name, self::ACCESS_DIRECTIVES, true)) {
+                    $nodes[] = ['line' => $child->line, 'text' => trim($lines[$child->line - 1] ?? ''), 'context' => $context];
+                }
+            }
+        };
+
+        if ($scope['block'] instanceof ApacheNode) {
+            $walk($scope['block'], '');
+        } else {
+            $block = new ApacheNode('block', 'htaccess', [], $scope['file'], 0, 0);
+            $this->tree()->parseText($scope['text'], $scope['file'], $block);
+            $walk($block, '');
+        }
+
+        return $nodes;
+    }
+
+    /**
+     * The file's text with access lines changed in place (an empty one removed) and new ones added.
+     *
+     * @param array<string, mixed> $scope
+     * @param array<int, string> $changes line number => new text ('' removes it)
+     *
+     * @throws DomainException
+     */
+    public function withAccess(array $scope, array $changes, string $added): string
+    {
+        $known = array_column($this->access($scope), null, 'line');
+        $lines = ApacheConfigTree::lines($scope['text']);
+
+        foreach ($changes as $line => $text) {
+            if (!isset($known[$line])) {
+                throw new DomainException('That line isn\'t an access line any more. Reload the page.');
+            }
+
+            $this->checkAccessLine($text, true);
+        }
+
+        $new = array_values(array_filter(array_map('rtrim', preg_split('/\R/', $added) ?: []), fn ($l) => trim($l) !== ''));
+        $depth = 0;
+
+        foreach ($new as $text) {
+            $this->checkAccessLine(trim($text), false);
+            $depth += preg_match('#^\s*<Require(All|Any|None)>\s*$#i', $text) === 1 ? 1 : (preg_match('#^\s*</Require(All|Any|None)>\s*$#i', $text) === 1 ? -1 : 0);
+
+            if ($depth < 0) {
+                throw new DomainException('A </RequireAll>-style line closes nothing.');
+            }
+        }
+
+        if ($depth !== 0) {
+            throw new DomainException('Every <RequireAll>, <RequireAny> or <RequireNone> needs its closing line.');
+        }
+
+        krsort($changes);
+
+        foreach ($changes as $line => $text) {
+            $indent = preg_match('/^(\s*)/', $lines[$line - 1], $m) === 1 ? $m[1] : '';
+            array_splice($lines, $line - 1, 1, trim($text) === '' ? [] : [$indent . trim($text)]);
+        }
+
+        if ($new !== []) {
+            // After the scope's own settings (before its rewrite rules): the last existing access line, else where rules would go.
+            $remaining = array_diff_key($known, array_filter($changes, fn ($t) => trim($t) === ''));
+            $removedAbove = fn (int $line) => count(array_filter(array_keys($changes), fn ($l) => $l < $line && trim($changes[$l]) === ''));
+
+            if ($remaining !== []) {
+                $last = max(array_keys($remaining));
+                $at = $last - $removedAbove($last);
+                $indent = preg_match('/^(\s*)/', $lines[$at - 1], $m) === 1 ? $m[1] : '';
+            } elseif ($scope['block'] instanceof ApacheNode) {
+                // Right after the section's opening line.
+                $at = $scope['block']->line;
+                $indent = (preg_match('/^(\s*)/', $lines[$at - 1], $m) === 1 ? $m[1] : '') . '    ';
+            } else {
+                // The top of a .htaccess file.
+                [$at, $indent] = [0, ''];
+            }
+
+            array_splice($lines, $at, 0, array_map(fn ($l) => $indent . trim($l), $new));
+        }
+
+        return $this->ensureNewline(implode("\n", $lines));
+    }
+
+    private function checkAccessLine(string $text, bool $mayBeEmpty): void
+    {
+        $text = trim($text);
+
+        if ($text === '' && $mayBeEmpty) {
+            return;
+        }
+
+        if (preg_match('/[\x00-\x1f\x7f]/', $text) === 1
+            || preg_match('#^(Require\s+\S.*|Order\s+(deny,\s*allow|allow,\s*deny|mutual-failure)|(Allow|Deny)\s+from\s+\S.*|Satisfy\s+(All|Any)|</?Require(All|Any|None)>)$#i', $text) !== 1) {
+            throw new DomainException("\"$text\" isn't an access line (Require ..., Order deny,allow, Allow from ..., Deny from ..., Satisfy Any, <RequireAll>...).");
+        }
     }
 
     /**

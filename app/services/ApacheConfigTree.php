@@ -47,6 +47,14 @@ class ApacheConfigTree
      */
     public array $files = [];
 
+    /**
+     * What each Include/IncludeOptional brought in: "file:line" => the files it matched, in order (a file
+     * already read isn't read again, as in Apache).
+     *
+     * @var array<string, list<string>>
+     */
+    public array $included = [];
+
     private string $serverRoot;
 
     /**
@@ -231,6 +239,8 @@ class ApacheConfigTree
                 array_push($files, ...(is_dir($match) ? $this->filesUnder($match) : [$match]));
             }
         }
+
+        $this->included["$file:$line"] = $files;
 
         if ($files === [] && !$optional && !str_contains($pattern, '*')) {
             $this->notes[] = "$file:$line: Include $pattern matches nothing.";

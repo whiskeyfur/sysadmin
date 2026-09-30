@@ -159,3 +159,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — fail2ban protection: protected addresses in every jail's ignoreip (re-applied each read), can't be banned; banned ones can't be protected.
 * 2026-09-29 — Access log: banned IPs red, protected green (no badges); protected/not protected filter.
 * 2026-09-29 — Access log filters: status and banned/protected as checkboxes.
+* 2026-09-29 — extras/apache/enable-unique-id.sh: request IDs at the end of Apache log lines (fail2ban-safe placement, checked on real Apache).

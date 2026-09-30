@@ -155,3 +155,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — MariaDB report log paged over AJAX too; Apache access log filters: status, client, hide localhost.
 * 2026-09-29 — app:apache-history imports rotated Apache logs (idempotent); run for localhost.
 * 2026-09-29 — Chart legends hide/show lines with the scale refitting; access log banned/not-banned filter.
+* 2026-09-29 — Access log right-click: show only a client's requests (exact IP match), search for a URL.

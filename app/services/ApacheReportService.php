@@ -121,7 +121,7 @@ class ApacheReportService extends HistoryReport
     /**
      * One page of the access log in the period, newest first unless sorted otherwise. $search matches
      * client, host, request, referer or user agent (a 3-digit number: that status too). $filters:
-     * status ("4xx", "errors" for 4xx and 5xx, or a code), client (address from its start) and
+     * status ("4xx", "errors" for 4xx and 5xx, or a code), client (a whole address exactly, else from its start) and
      * hide_local (leave out 127.* and ::1) and banned ("yes": addresses fail2ban had banned at the last
      * read, in any jail; "no": the others).
      *
@@ -145,8 +145,10 @@ class ApacheReportService extends HistoryReport
             $query->where('status', (int) $status);
         }
 
-        // Client: from the start, so "10.0.0." matches a whole subnet.
-        if ($client !== '') {
+        // Client: a whole address exactly; anything else from its start, so "10.0.0." matches a subnet.
+        if (filter_var($client, FILTER_VALIDATE_IP) !== false) {
+            $query->where('client', $client);
+        } elseif ($client !== '') {
             $query->where('client', 'like', addcslashes($client, '%_\\') . '%');
         }
 

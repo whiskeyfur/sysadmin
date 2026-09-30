@@ -527,8 +527,11 @@ test('the access and error logs come a page at a time, searched and sorted in th
         ->and($page(1, '', 'time', 'desc', ['status' => 'errors'])['total'])->toBe(5)
         ->and($page(1, '', 'time', 'desc', ['status' => '200'])['total'])->toBe(245)
         ->and($page(1, '', 'time', 'desc', ['client' => '10.0.1.'])['total'])->toBe(100)
-        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.4'])['total'])->toBe(11)
-        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.4', 'status' => '5xx'])['total'])->toBe(0);
+        // A whole address matches exactly (10.0.2.4, not 10.0.2.40–49); a partial one from its start.
+        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.4'])['total'])->toBe(1)
+        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.4'])['rows'][0]->client)->toBe('10.0.2.4')
+        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.'])['total'])->toBe(50)
+        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.0', 'status' => '5xx'])['total'])->toBe(1);
 
     App\Models\ApacheAccessEntry::query()->insert([
         ['server_id' => $this->server->id, 'source' => 'x', 'requested_at' => $now->format('Y-m-d H:i:s'), 'client' => '127.0.0.1', 'status' => 200, 'bytes' => 0],

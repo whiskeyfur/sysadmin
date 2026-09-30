@@ -1,8 +1,8 @@
-// Right-click a client address in the access log to ban or unban it with fail2ban on the report's server
-// (reports/apache-data). The jails are read from the server when the dialog opens; the change is a JSON
+// Ban or unban a client address with fail2ban on the report's server, from the access log's right-click
+// menu (client-menu.js; reports/apache-data). The jails are read from the server when the dialog opens; the change is a JSON
 // POST with the page's CSRF token, like the passkey requests.
 (function () {
-    var menu = document.getElementById('ban-menu');
+    var menu = document.getElementById('client-menu');
     var dialog = document.getElementById('ban-dialog');
     if (!menu || !dialog || typeof dialog.showModal !== 'function') { return; }
 
@@ -18,30 +18,11 @@
         return input ? input.value : '';
     };
     var show = function (element, text) { element.textContent = text || ''; element.hidden = !text; };
-    var closeMenu = function () { menu.hidden = true; };
-
-    document.addEventListener('contextmenu', function (event) {
-        var cell = event.target.closest('.client-ip');
-        if (!cell) { closeMenu(); return; }
-        event.preventDefault();
-        current.ip = cell.getAttribute('data-ip');
-        current.jails = (cell.getAttribute('data-jails') || '').split(',').filter(Boolean);
-        menu.querySelectorAll('[data-ban-ip]').forEach(function (span) { span.textContent = current.ip; });
-        menu.hidden = false;
-        // Keep the menu on screen.
-        var x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 8);
-        var y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 8);
-        menu.style.left = Math.max(8, x) + 'px';
-        menu.style.top = Math.max(8, y) + 'px';
-        menu.querySelector('button').focus();
-    });
-    document.addEventListener('click', function (event) { if (!menu.contains(event.target)) { closeMenu(); } });
-    document.addEventListener('keydown', function (event) { if (event.key === 'Escape') { closeMenu(); } });
-    window.addEventListener('scroll', closeMenu, true);
-
+    // The menu (client-menu.js) says which address was right-clicked.
     menu.querySelectorAll('[data-ban-action]').forEach(function (button) {
         button.addEventListener('click', function () {
-            closeMenu();
+            current.ip = menu.dataset.ip;
+            current.jails = (menu.dataset.jails || '').split(',').filter(Boolean);
             open(button.getAttribute('data-ban-action'));
         });
     });

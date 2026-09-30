@@ -88,8 +88,9 @@ class ApacheSimulator
         ];
         $this->step('host', $vhost === null
             ? "No <VirtualHost> for port $port: the main server answers."
-            : '<VirtualHost ' . implode(' ', $vhost->args) . "> takes $host:$port" . ($context['server_name'] !== $host ? " (ServerName {$context['server_name']})" : '') . '.', $vhost?->where());
-        $this->step('host', "DocumentRoot {$context['document_root']}.");
+            : "Takes $host:$port" . ($context['server_name'] !== $host ? " (ServerName {$context['server_name']})" : '') . '.', $vhost);
+        $root = $this->lastNode($own, 'documentroot') ?? $this->lastNode($main, 'documentroot');
+        $this->step('host', $root === null ? "No DocumentRoot: Apache's default, {$context['document_root']}." : "Files come from {$context['document_root']}.", $root);
 
         $uri = $this->decode($rawPath);
         $ended = false;
@@ -228,7 +229,7 @@ class ApacheSimulator
             if (is_dir($file)) {
                 if (!str_ends_with($uri, '/') && $config['directory_slash']) {
                     $location = $this->absolute($uri . '/', $query, $context);
-                    $this->step('dir', "$file is a directory: mod_dir redirects to add the slash.");
+                    $this->step('dir', "$file is a directory: mod_dir redirects to add the slash.", $config['at']['directoryslash'] ?? null);
 
                     return $this->result(301, 'redirect', location: $location);
                 }
@@ -241,7 +242,7 @@ class ApacheSimulator
                     $candidate = str_starts_with($index, '/') ? $index : rtrim($uri, '/') . '/' . $index;
 
                     if (str_starts_with($index, '/') || is_file(rtrim($file, '/') . '/' . $index)) {
-                        $this->step('dir', "DirectoryIndex: $index.");
+                        $this->step('dir', "Index file: $index.", $config['at']['directoryindex'] ?? null, isset($config['at']['directoryindex']) ? null : 'DirectoryIndex index.html (default)');
                         $uri = $candidate;
 
                         continue 2;
@@ -249,12 +250,12 @@ class ApacheSimulator
                 }
 
                 if (isset($config['options']['indexes'])) {
-                    $this->step('dir', 'No index file; Options Indexes lists the directory.');
+                    $this->step('dir', 'No index file; Options Indexes lists the directory.', $config['at']['options'] ?? null);
 
                     return $this->result(200, 'listing', file: $file);
                 }
 
-                $this->step('dir', 'No index file and no Options Indexes: forbidden.');
+                $this->step('dir', 'No index file and no Options Indexes: forbidden.', $config['at']['options'] ?? null);
 
                 return $this->result(403, 'forbidden', file: $file);
             }
@@ -263,24 +264,24 @@ class ApacheSimulator
                 $handler = $config['handler'];
 
                 if ($pathInfo !== '' && $handler === null && $config['accept_path_info'] !== true) {
-                    $this->step('file', "$file with extra path $pathInfo: the default handler refuses path info (AcceptPathInfo).");
+                    $this->step('file', "$file with extra path $pathInfo: the default handler refuses path info (AcceptPathInfo).", $config['at']['acceptpathinfo'] ?? null);
 
                     return $this->result(404, 'not_found', file: $file);
                 }
 
-                $this->step('file', "Serves $file" . ($pathInfo !== '' ? " with PATH_INFO $pathInfo" : '') . ($handler !== null ? " through $handler" : '') . '.');
+                $this->step('file', "Serves $file" . ($pathInfo !== '' ? " with PATH_INFO $pathInfo" : '') . ($handler !== null ? " through $handler" : '') . '.', $handler !== null ? ($config['at']['sethandler'] ?? null) : null);
 
                 return $this->result(200, 'file', file: $file, pathInfo: $pathInfo === '' ? null : $pathInfo, handler: $handler);
             }
 
             if ($config['handler'] !== null && !self::needsFile($config['handler'])) {
-                $this->step('file', "SetHandler {$config['handler']} answers; no file needed.");
+                $this->step('file', "{$config['handler']} answers; no file needed.", $config['at']['sethandler'] ?? null);
 
                 return $this->result(200, 'handler', handler: $config['handler']);
             }
 
             if ($config['fallback'] !== null && $config['fallback'] !== 'disabled') {
-                $this->step('file', "$file doesn't exist: FallbackResource {$config['fallback']}.");
+                $this->step('file', "$file doesn't exist: falls back to {$config['fallback']}.", $config['at']['fallbackresource'] ?? null);
                 $uri = $config['fallback'];
 
                 continue;
@@ -344,11 +345,12 @@ class ApacheSimulator
                 $flags[$name] = $value ?? true;
             }
 
-            $label = $rule['node']->where() . ': RewriteRule ' . $rule['pattern'] . ' ' . $rule['substitution'] . ($rule['flags'] === [] ? '' : ' [' . implode(',', array_map(fn ($f) => $f[1] === null ? $f[0] : "{$f[0]}={$f[1]}", $rule['flags'])) . ']');
+            $at = $rule['node'];
+            $label = $at->where() . ': RewriteRule ' . $rule['pattern'] . ' ' . $rule['substitution'] . ($rule['flags'] === [] ? '' : ' [' . implode(',', array_map(fn ($f) => $f[1] === null ? $f[0] : "{$f[0]}={$f[1]}", $rule['flags'])) . ']');
 
             if ($skipChain) {
                 $skipChain = isset($flags['C']);
-                $this->step('rewrite', "$label: skipped (chained to a rule that didn't match).");
+                $this->step('rewrite', "Skipped (chained to a rule that didn't match).", $at);
 
                 continue;
             }
@@ -363,7 +365,7 @@ class ApacheSimulator
             }
 
             if (($matched === 1) === $negated) {
-                $this->step('rewrite', "$label: no match for \"$current\".");
+                $this->step('rewrite', "No match for \"$current\".", $at);
                 $skipChain = isset($flags['C']);
 
                 continue;
@@ -372,14 +374,22 @@ class ApacheSimulator
             $captures = $negated ? [] : $captures;
             $condCaptures = [];
 
-            if (!$this->conditions($rule['conds'], $captures, $condCaptures, $context + ['uri' => $uri, 'query' => $currentQuery])) {
-                $this->step('rewrite', "$label: matched, but its conditions didn't hold.");
-                $skipChain = isset($flags['C']);
+            $matches = "Matches \"$current\"" . ($captures !== [] && count($captures) > 1 ? ' ($1=' . ($captures[1] ?? '') . (count($captures) > 2 ? ', $2=' . $captures[2] : '') . ')' : '');
 
-                continue;
+            if ($rule['conds'] === []) {
+                $this->step('rewrite', "$matches.", $at);
+            } else {
+                $this->step('rewrite', "$matches; its conditions:", $at);
+
+                if (!$this->conditions($rule['conds'], $captures, $condCaptures, $context + ['uri' => $uri, 'query' => $currentQuery])) {
+                    $this->step('rewrite', "The conditions don't hold: the rule doesn't apply.", $at);
+                    $skipChain = isset($flags['C']);
+
+                    continue;
+                }
+
+                $this->step('rewrite', 'The conditions hold: the rule applies.', $at);
             }
-
-            $this->step('rewrite', "$label: matches \"$current\"" . ($captures !== [] && count($captures) > 1 ? ' ($1=' . ($captures[1] ?? '') . (count($captures) > 2 ? ', $2=' . $captures[2] : '') . ')' : '') . '.', $rule['node']->where());
 
             foreach ($flags as $name => $value) {
                 if ($name === 'E' && is_string($value) && str_contains($value, ':')) {
@@ -389,13 +399,13 @@ class ApacheSimulator
             }
 
             if (isset($flags['F'])) {
-                $this->step('rewrite', 'F: forbidden.');
+                $this->step('rewrite', 'F: forbidden.', $at);
 
                 return ['changed' => false, 'target' => $current, 'query' => $currentQuery, 'end' => true, 'pt' => false, 'result' => $this->result(403, 'forbidden')];
             }
 
             if (isset($flags['G'])) {
-                $this->step('rewrite', 'G: gone.');
+                $this->step('rewrite', 'G: gone.', $at);
 
                 return ['changed' => false, 'target' => $current, 'query' => $currentQuery, 'end' => true, 'pt' => false, 'result' => $this->result(410, 'gone')];
             }
@@ -424,18 +434,18 @@ class ApacheSimulator
                         $location = $this->absolute($path, $newQuery, $context, isset($flags['NE']));
                     }
 
-                    $this->step('rewrite', "Redirect ($code) to $location.");
+                    $this->step('rewrite', "Redirect ($code) to $location.", $at);
 
                     return ['changed' => true, 'target' => $path, 'query' => $newQuery, 'end' => true, 'pt' => false,
                         'result' => $code >= 300 && $code < 400 ? $this->result($code, 'redirect', location: $location) : $this->result($code, $code === 410 ? 'gone' : ($code === 403 ? 'forbidden' : 'not_found'))];
                 }
 
-                $this->step('rewrite', "Rewritten to $path" . ($newQuery === '' ? '' : "?$newQuery") . '.');
+                $this->step('rewrite', "Rewritten to $path" . ($newQuery === '' ? '' : "?$newQuery") . '.', $at);
                 $current = $path;
                 $currentQuery = $newQuery;
                 $changed = true;
             } else {
-                $this->step('rewrite', '"-": the URL stays as it is.');
+                $this->step('rewrite', '"-": the URL stays as it is.', $at);
             }
 
             $pt = $pt || isset($flags['PT']);
@@ -487,7 +497,7 @@ class ApacheSimulator
             $negate = str_starts_with($pattern, '!');
             $found = [];
             $result = $this->condition($test, $negate ? substr($pattern, 1) : $pattern, isset($cond['flags']['NC']), $found) !== $negate;
-            $this->step('cond', $cond['node']->where() . ': RewriteCond ' . $cond['test'] . ' ' . $cond['pattern'] . ' → "' . $test . '" ' . ($result ? 'holds' : 'fails') . '.');
+            $this->step('cond', '"' . $test . '" ' . ($result ? 'holds' : 'fails') . '.', $cond['node']);
 
             if ($result && !$negate && $found !== []) {
                 $condCaptures = array_filter($found, fn ($key) => is_int($key), ARRAY_FILTER_USE_KEY);
@@ -760,6 +770,22 @@ class ApacheSimulator
     /**
      * @param list<ApacheNode> $nodes
      */
+    private function lastNode(array $nodes, string $name): ?ApacheNode
+    {
+        $found = null;
+
+        foreach ($nodes as $node) {
+            if ($node->kind === 'directive' && $node->name === $name) {
+                $found = $node;
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * @param list<ApacheNode> $nodes
+     */
     private function first(array $nodes, string $name): ?string
     {
         $value = null;
@@ -865,7 +891,7 @@ class ApacheSimulator
         }
 
         if ($code < 300 || $code > 399 || $target === null) {
-            $this->step('alias', $node->where() . ': ' . $node->name . ' ' . implode(' ', $node->args) . " → $code.", $node->where());
+            $this->step('alias', "Matches: answers $code.", $node);
 
             return $this->result($code, match ($code) {
                 410 => 'gone', 403 => 'forbidden', 404 => 'not_found', default => 'error'
@@ -876,7 +902,7 @@ class ApacheSimulator
         $location = preg_match('#^[a-z]+://#i', $target) === 1 ? $target : $this->absolute($targetPath, (string) $targetQuery, $context);
         // mod_alias keeps the request's query string unless the target has its own.
         $location .= $query !== '' && $targetQuery === null ? "?$query" : '';
-        $this->step('alias', $node->where() . ': ' . $node->name . ' ' . implode(' ', $node->args) . " → $code to $location.", $node->where());
+        $this->step('alias', "Matches: redirect ($code) to $location.", $node);
 
         return $this->result($code, 'redirect', location: $location);
     }
@@ -898,7 +924,7 @@ class ApacheSimulator
             if (str_ends_with($node->name, 'match')) {
                 if (@preg_match(self::delimit($from), $uri, $m) === 1) {
                     $file = (string) preg_replace_callback('/\$(\d)/', fn ($x) => $m[(int) $x[1]] ?? '', $to);
-                    $this->step('alias', $node->where() . ": {$node->name} $from $to → $file", $node->where());
+                    $this->step('alias', "Matches: the file is $file.", $node);
 
                     return $file;
                 }
@@ -909,7 +935,7 @@ class ApacheSimulator
             // Alias /icons/ needs the slash; Alias /icons matches /icons and /icons/...
             if ($uri === $from || (str_ends_with($from, '/') ? str_starts_with($uri, $from) : str_starts_with($uri, $from . '/'))) {
                 $file = rtrim($to, '/') . substr($uri, strlen(rtrim($from, '/')));
-                $this->step('alias', $node->where() . ": {$node->name} $from $to → $file", $node->where());
+                $this->step('alias', "Matches: the file is $file.", $node);
 
                 return $file;
             }
@@ -965,7 +991,7 @@ class ApacheSimulator
         $config = [
             'allow_override' => ['none' => true], 'options' => ['followsymlinks' => true], 'require' => null, 'directory_index' => ['index.html'],
             'fallback' => null, 'directory_slash' => true, 'accept_path_info' => null, 'handler' => null, 'rewrite' => null, 'redirects' => [],
-            'compat' => null,
+            'compat' => null, 'at' => [],
         ];
         $sections = [...array_filter($main, fn ($n) => $n->kind === 'block'), ...($vhost !== null ? array_filter($vhost->effective(), fn ($n) => $n->kind === 'block') : [])];
         $directories = array_values(array_filter($sections, fn ($n) => $n->name === 'directory' && $n->arg() !== '~'));
@@ -1009,18 +1035,18 @@ class ApacheSimulator
 
                 if ($text !== null || is_file($htaccess)) {
                     if ($text === null) {
-                        $this->step('htaccess', "$htaccess can't be read: Apache answers 403.");
+                        $this->step('htaccess', "Can't be read: Apache answers 403.", $htaccess);
 
                         return ['result' => $this->result(403, 'forbidden')];
                     }
 
                     $block = new ApacheNode('block', 'htaccess', [], $htaccess, 0, 0);
                     $this->tree->parseText($text, $htaccess, $block);
-                    $this->step('htaccess', "Reads $htaccess.", $htaccess);
+                    $this->step('htaccess', 'Read: AllowOverride lets it change settings here.', $htaccess);
                     $refused = $this->merge($config, $block->effective(), $level, $htaccess, $context, true, basename($file));
 
                     if ($refused !== null) {
-                        $this->step('htaccess', "$refused: \"not allowed here\", Apache answers 500.");
+                        $this->step('htaccess', "$refused: \"not allowed here\", Apache answers 500.", $htaccess);
 
                         return ['result' => $this->result(500, 'error')];
                     }
@@ -1115,31 +1141,37 @@ class ApacheSimulator
                     break;
 
                 case 'options':
+                    $config['at']['options'] = $node;
                     $config['options'] = $this->options($config['options'], $node->args);
 
                     break;
 
                 case 'directoryindex':
+                    $config['at']['directoryindex'] = $node;
                     $config['directory_index'] = $node->args;
 
                     break;
 
                 case 'fallbackresource':
+                    $config['at']['fallbackresource'] = $node;
                     $config['fallback'] = $node->arg();
 
                     break;
 
                 case 'directoryslash':
+                    $config['at']['directoryslash'] = $node;
                     $config['directory_slash'] = strtolower($node->arg()) !== 'off';
 
                     break;
 
                 case 'acceptpathinfo':
+                    $config['at']['acceptpathinfo'] = $node;
                     $config['accept_path_info'] = strtolower($node->arg()) === 'on';
 
                     break;
 
                 case 'sethandler':
+                    $config['at']['sethandler'] = $node;
                     $config['handler'] = strtolower($node->arg()) === 'none' ? null : $node->arg();
 
                     break;
@@ -1156,7 +1188,8 @@ class ApacheSimulator
                 case 'satisfy':
                     // mod_access_compat (Apache 2.2 style): a section with any of these starts from the defaults
                     // (checked against a real apache2), it doesn't add to the parent's lists.
-                    $compat ??= ['order' => 'deny,allow', 'allow' => [], 'deny' => [], 'satisfy' => 'all', 'where' => $where];
+                    $compat ??= ['order' => 'deny,allow', 'allow' => [], 'deny' => [], 'satisfy' => 'all', 'where' => $where, 'nodes' => []];
+                    $compat['nodes'][] = $node;
 
                     match ($node->name) {
                         'order' => $compat['order'] = strtolower(str_replace(' ', '', implode('', $node->args))),
@@ -1266,12 +1299,26 @@ class ApacheSimulator
         $any = ($config['compat']['satisfy'] ?? 'all') === 'any';
 
         if ($config['compat'] !== null) {
-            $this->step('access', 'Order ' . $config['compat']['order'] . ', Allow from ' . (implode(' ', $config['compat']['allow']) ?: '(nobody)') . ', Deny from ' . (implode(' ', $config['compat']['deny']) ?: '(nobody)')
-                . ' (' . $config['compat']['where'] . '): ' . ($compat === null ? 'depends on something not simulated' : ($compat ? 'allowed' : 'denied')) . ($any ? '; Satisfy Any' : '') . '.');
+            $nodes = $config['compat']['nodes'];
+            $this->step(
+                'access',
+                'Order ' . $config['compat']['order'] . ', Allow from ' . (implode(' ', $config['compat']['allow']) ?: '(nobody)') . ', Deny from ' . (implode(' ', $config['compat']['deny']) ?: '(nobody)')
+                . ': ' . ($compat === null ? 'depends on something not simulated' : ($compat ? 'allowed' : 'denied')) . ($any ? '; Satisfy Any' : '') . '.',
+                $nodes[0],
+                implode("\n", array_map(fn (ApacheNode $n) => $this->written($n), $nodes)),
+                implode(', ', array_map(fn (ApacheNode $n) => $n->line, $nodes))
+            );
         }
 
         if ($config['require'] !== null) {
-            $this->step('access', 'Require (' . $config['require']['where'] . '): ' . ($require === null ? 'depends on something not simulated' : ($require ? 'allowed' : 'denied')) . '.');
+            $nodes = $config['require']['nodes'];
+            $this->step(
+                'access',
+                'Require: ' . ($require === null ? 'depends on something not simulated' : ($require ? 'allowed' : 'denied')) . '.',
+                $nodes[0],
+                implode("\n", array_map(fn (ApacheNode $n) => $this->written($n), $nodes)),
+                implode(', ', array_map(fn (ApacheNode $n) => $n->line, $nodes))
+            );
         }
 
         // Satisfy All (default): both kinds must allow; Satisfy Any: either. A kind that isn't configured allows.
@@ -1397,9 +1444,45 @@ class ApacheSimulator
         return false;
     }
 
-    private function step(string $phase, string $text, ?string $where = null): void
+    /**
+     * One step of the trace: what happened, and the directive that did it (as written, with its file and
+     * line) when there is one. $at is that directive's node, or a file (a .htaccess read); $lines lists
+     * several lines when a step comes from more than one directive.
+     */
+    private function step(string $phase, string $text, ApacheNode|string|null $at = null, ?string $directive = null, ?string $lines = null): void
     {
-        $this->steps[] = ['phase' => $phase, 'text' => $text, 'where' => $where];
+        $file = $at instanceof ApacheNode ? $at->file : $at;
+        $line = $at instanceof ApacheNode ? (string) $at->line : null;
+        $this->steps[] = [
+            'phase' => $phase,
+            'directive' => $directive ?? ($at instanceof ApacheNode ? $this->written($at) : null),
+            'file' => $file === null ? null : self::short($file),
+            'line' => $lines ?? $line,
+            'text' => $text,
+            'where' => $at instanceof ApacheNode ? $at->where() : $file,
+        ];
+    }
+
+    /**
+     * A directive's line as written in its file (a section's opening line; continued lines joined),
+     * or its name and arguments when the file can't be read.
+     */
+    private function written(ApacheNode $node): string
+    {
+        $lines = ApacheConfigTree::lines((string) $this->tree->contents($node->file));
+        $last = $node->kind === 'block' ? $node->line : max($node->line, $node->endLine);
+        $text = '';
+
+        for ($i = $node->line; $i <= $last && isset($lines[$i - 1]); $i++) {
+            $text .= ($text === '' ? '' : ' ') . trim(rtrim($lines[$i - 1], '\\'));
+        }
+
+        return $text !== '' ? $text : ($node->kind === 'block' ? '<' . $node->name . ' ' . implode(' ', $node->rawArgs ?: $node->args) . '>' : $node->name . ' ' . implode(' ', $node->rawArgs ?: $node->args));
+    }
+
+    private static function short(string $file): string
+    {
+        return str_starts_with($file, '/etc/apache2/') ? substr($file, strlen('/etc/apache2/')) : $file;
     }
 
     /**

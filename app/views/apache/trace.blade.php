@@ -20,15 +20,32 @@
 @foreach ($trace['warnings'] as $warning)
     <div class="alert error" role="alert">{{ $warning }}</div>
 @endforeach
-<ol class="sim-steps">
-    @foreach ($trace['steps'] as $step)
-        <li class="sim-{{ $step['phase'] }}"><span class="muted">{{ $step['phase'] }}</span> {{ $step['text'] }}</li>
-    @endforeach
-</ol>
+<div class="sim-wrap">
+    <table class="sim-steps top">
+        <thead><tr><th>#</th><th>Directive</th><th>File</th><th>Line</th><th>Explanation</th></tr></thead>
+        <tbody>
+            @foreach ($trace['steps'] as $i => $step)
+                <tr class="sim-{{ $step['phase'] }}">
+                    <td class="muted">{{ $i + 1 }}</td>
+                    <td>@if ($step['directive'] !== null)<code>{{ $step['directive'] }}</code>@else<span class="muted">—</span>@endif</td>
+                    <td>@if ($step['file'] !== null)<code>{{ $step['file'] }}</code>@endif</td>
+                    <td>{{ $step['line'] }}</td>
+                    <td><span class="sim-phase">{{ $step['phase'] }}</span> {{ $step['text'] }}</td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+</div>
 <style>
     .sim-result { display: flex; gap: 12px; align-items: center; margin: 12px 0; overflow-wrap: anywhere; }
-    .sim-steps { font-size: 13px; padding-left: 22px; }
-    .sim-steps li { padding: 3px 0; overflow-wrap: anywhere; }
-    .sim-steps li > span:first-child { display: inline-block; min-width: 70px; }
-    .sim-cond { padding-left: 16px !important; }
+    .sim-wrap { overflow-x: auto; }
+    .sim-steps { font-size: 13px; width: 100%; border-collapse: collapse; }
+    .sim-steps th, .sim-steps td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .sim-steps td { overflow-wrap: anywhere; }
+    .sim-steps td:nth-child(1), .sim-steps td:nth-child(4) { white-space: nowrap; }
+    .sim-steps td:nth-child(2) { min-width: 14em; max-width: 32em; }
+    .sim-steps td:nth-child(2) code { white-space: pre-wrap; }
+    .sim-steps td:nth-child(3) { white-space: nowrap; }
+    .sim-phase { display: inline-block; min-width: 62px; color: var(--muted); font-size: 12px; }
+    .sim-cond td:nth-child(2) { padding-left: 24px; }
 </style>

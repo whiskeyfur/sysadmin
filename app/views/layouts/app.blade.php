@@ -123,7 +123,7 @@
         p { margin: 0 0 12px; }
         .muted { color: var(--muted); }
         label { display: block; font-weight: 600; margin: 16px 0 6px; }
-        input[type=text], input[type=password], select, textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+        input[type=text], input[type=password], input[type=number], select, textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
         textarea { font: 12px/1.5 ui-monospace, monospace; }
         input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         .hint { font-size: 13px; color: var(--muted); margin-top: 4px; }
@@ -194,7 +194,7 @@
                 @php($menus = [
                     'SSL' => ['/ssl/reports' => 'Reports', '/ssl' => 'Test', '/admin/ssl/new' => 'Add', '/admin/settings/ssl' => 'Settings'],
                     'SSH' => ['/ssh/reports' => 'Reports', '/ssh' => 'Test', '/admin/ssh/new' => 'Add', '/admin/accounts/ssh' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
-                    'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/admin/settings/mariadb' => 'Settings'],
+                    'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/mariadb/query' => 'Query', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/admin/settings/mariadb' => 'Settings'],
                     'Apache' => ['/apache/reports' => 'Reports', '/apache' => 'Test', '/admin/apache/new' => 'Add', '/admin/settings/apache' => 'Settings']
                         // This machine's own Apache: only where the root helper is installed, for admins on this machine.
                         + (\App\Services\LocalApacheService::installed() && \App\Middleware\RequireLocalAdmin::fromThisMachine() ? ['/admin/apache/local' => 'This server', '/admin/apache/local/rewrite' => 'Rewrite rules', '/admin/apache/local/simulate' => 'URL simulator'] : []),
@@ -208,7 +208,7 @@
                         <summary @if ($current) class="current" @endif>{{ $menu }}</summary>
                         <div class="menu-items">
                             @foreach ($items as $href => $label)
-                                @if (in_array($label, ['Reports', 'Test', 'List'], true) || $auth->isAdmin())
+                                @if (in_array($label, ['Reports', 'Test', 'List', 'Query'], true) || $auth->isAdmin())
                                     @if ($label === 'Add')
                                         {{-- Viewing items above, admin tools below. --}}
                                         <hr class="menu-divider">

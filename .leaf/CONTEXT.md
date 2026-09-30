@@ -166,3 +166,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Section navigator (scrollspy) at the top right of every page with 3+ sections.
 * 2026-09-29 — Sticky header; section navigator always just under it; scroll padding follows the header's height.
 * 2026-09-29 — Phones: compact header (sys + ☰ Menu panel).
+* 2026-09-29 — MariaDB query tool: one statement on many servers, collated; own login kept encrypted in the session (admins may use stored accounts).

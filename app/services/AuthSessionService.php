@@ -49,6 +49,13 @@ class AuthSessionService
     private const CONFIRMED_KEY = 'passkey_confirmed';
 
     /**
+     * The MariaDB query tool's own database login (MariadbQueryController): the username, and the
+     * password encrypted with the app key (SecretCipher, bound to the user), so the session file on
+     * disk never holds it in plain text. Cleared by the tool's log out and whenever the app session ends.
+     */
+    private const DATABASE_LOGIN_KEY = 'mariadb_login';
+
+    /**
      * Harden the PHP session cookie. Called from public/index.php because
      * Leaf's CSRF module starts the session while the app is booting.
      */
@@ -241,9 +248,55 @@ class AuthSessionService
         return $now - $activeAt > $timeoutMinutes * 60;
     }
 
+    /**
+     * @param bool $stored an admin chose each server's stored account instead (no username or password)
+     */
+    public function rememberDatabaseLogin(User $user, string $username, string $password, bool $stored = false): void
+    {
+        Session::set(self::DATABASE_LOGIN_KEY, [
+            'user_id' => $user->id,
+            'stored' => $stored,
+            'username' => $stored ? '' : $username,
+            'password' => (new SecretCipher())->encrypt($stored ? '' : $password, 'mariadb-query-login:' . $user->id),
+            'since' => time(),
+        ]);
+    }
+
+    /**
+     * The query tool's database login for this user, or null (none, or one made by someone else).
+     *
+     * @return array{stored: bool, username: string, password: string, since: int}|null
+     */
+    public function databaseLogin(User $user): ?array
+    {
+        $entry = Session::get(self::DATABASE_LOGIN_KEY, null, false);
+
+        if (!is_array($entry) || ($entry['user_id'] ?? null) !== $user->id) {
+            $this->forgetDatabaseLogin();
+
+            return null;
+        }
+
+        try {
+            $password = (new SecretCipher())->decrypt((string) $entry['password'], 'mariadb-query-login:' . $user->id);
+        } catch (\Throwable) {
+            $this->forgetDatabaseLogin();
+
+            return null;
+        }
+
+        return ['stored' => (bool) ($entry['stored'] ?? false), 'username' => (string) $entry['username'], 'password' => $password, 'since' => (int) ($entry['since'] ?? 0)];
+    }
+
+    public function forgetDatabaseLogin(): void
+    {
+        Session::unset(self::DATABASE_LOGIN_KEY);
+    }
+
     public function end(): void
     {
         Session::unset(self::SESSION_KEY);
+        Session::unset(self::DATABASE_LOGIN_KEY);
         Session::unset(self::CHALLENGE_KEY);
         Session::unset(self::TOTP_KEY);
         Session::unset(self::CONFIRMED_KEY);

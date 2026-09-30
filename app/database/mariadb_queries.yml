@@ -1,0 +1,21 @@
+# The MariaDB multi-server query tool's log (MariadbQueryService): who ran which statement on which
+# servers, as which database user, and how it went. Never the password.
+# servers: JSON list of server ids. outcome: e.g. "3 ok, 1 failed". auth_failed: the first server refused
+# the login (the others weren't tried); counted to slow down password guessing.
+columns:
+  user_id:
+    type: integer
+    index: true
+  db_user:
+    type: string
+  servers: text
+  statement: mediumText
+  writes:
+    type: boolean
+    default: false
+  outcome:
+    type: string
+    nullable: true
+  auth_failed:
+    type: boolean
+    default: false

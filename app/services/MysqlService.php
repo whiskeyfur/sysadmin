@@ -31,19 +31,42 @@ class MysqlService
     }
 
     /**
+     * Log in with the server's own database account (see Tracked accounts).
+     *
      * @throws ServerConnectionException
      */
-    public function connect(Server $server): PDO
+    public function connect(Server $server, ?string $database = null): PDO
     {
         if (!$server->mysql_enabled) {
             throw new ServerConnectionException('MySQL is not configured for this server.');
         }
 
-        $dsn = sprintf('mysql:host=%s;port=%d;charset=utf8mb4', $server->mysqlHost(), $server->mysql_port);
+        $pdo = $this->connectAs($server, (string) $server->mysql_username, (string) $this->servers->mysqlPassword($server), $database);
+        $this->servers->recordMysqlUse($server);
+
+        return $pdo;
+    }
+
+    /**
+     * Log in as someone else (e.g. the query tool's user, with credentials typed for one request):
+     * the server's own host, port and TLS settings, one statement per call, optionally a default
+     * database. Nothing about the login is stored.
+     *
+     * @throws ServerConnectionException with the PDOException as previous (its errorInfo says why)
+     */
+    public function connectAs(Server $server, string $username, string $password, ?string $database = null): PDO
+    {
+        if (!$server->mysql_enabled) {
+            throw new ServerConnectionException('MySQL is not configured for this server.');
+        }
+
+        $dsn = sprintf('mysql:host=%s;port=%d;charset=utf8mb4', $server->mysqlHost(), $server->mysql_port)
+            . ($database !== null && $database !== '' ? ';dbname=' . $database : '');
         $options = [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_TIMEOUT => self::CONNECT_TIMEOUT,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            $this->attribute('MULTI_STATEMENTS') => false,
         ];
         $caFile = null;
 
@@ -60,7 +83,7 @@ class MysqlService
                 $options[$this->attribute('SSL_VERIFY_SERVER_CERT')] = $verify;
             }
 
-            $pdo = new PDO($dsn, (string) $server->mysql_username, (string) $this->servers->mysqlPassword($server), $options);
+            $pdo = new PDO($dsn, $username, $password, $options);
         } catch (PDOException $e) {
             throw new ServerConnectionException($this->explain($server, $e), 0, $e);
         } finally {
@@ -72,8 +95,6 @@ class MysqlService
         if ($server->mysql_tls !== Server::TLS_OFF && $this->tls($pdo) === null) {
             throw new ServerConnectionException('MySQL connected, but the session is not encrypted. Refusing to use it.');
         }
-
-        $this->servers->recordMysqlUse($server);
 
         return $pdo;
     }

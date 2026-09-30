@@ -24,7 +24,7 @@ beforeEach(function () {
     $this->mysql = new class ($this->servers) extends MysqlService {
         public bool $fails = false;
 
-        public function connect(Server $server): PDO
+        public function connect(Server $server, ?string $database = null): PDO
         {
             if ($this->fails) {
                 throw new ServerConnectionException('Connection refused');

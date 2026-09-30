@@ -47,6 +47,11 @@ abstract class HistoryReport
     public const MAX_POINTS = 300;
 
     /**
+     * Rows per page of the log tables the report pages fetch (see paginate()).
+     */
+    public const PAGE_SIZE = 100;
+
+    /**
      * Bucket widths to pick from, in minutes.
      */
     private const BUCKET_MINUTES = [5, 10, 15, 30, 60, 120, 240, 360, 720, 1440];
@@ -189,5 +194,30 @@ abstract class HistoryReport
         }
 
         return $averaged;
+    }
+
+    /**
+     * One page of a log table, sorted by $column (unless $ordered: the query is sorted already), ties
+     * in a stable order. A page past the end gives the last one.
+     *
+     * @template TModel of \Illuminate\Database\Eloquent\Model
+     *
+     * @param \Illuminate\Database\Eloquent\Builder<TModel> $query
+     * @return array{rows: list<mixed>, total: int, page: int, pages: int}
+     */
+    protected function paginate(\Illuminate\Database\Eloquent\Builder $query, string $column, string $direction, int $page, bool $ordered = false): array
+    {
+        $total = (clone $query)->count();
+        $pages = max(1, (int) ceil($total / self::PAGE_SIZE));
+        $page = min(max(1, $page), $pages);
+        $direction = $direction === 'asc' ? 'asc' : 'desc';
+
+        if (!$ordered) {
+            $query->orderBy($column, $direction);
+        }
+
+        $rows = $query->orderBy('id', $direction)->offset(($page - 1) * self::PAGE_SIZE)->limit(self::PAGE_SIZE)->get()->all();
+
+        return ['rows' => array_values($rows), 'total' => $total, 'page' => $page, 'pages' => $pages];
     }
 }

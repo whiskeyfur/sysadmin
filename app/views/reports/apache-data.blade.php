@@ -67,7 +67,7 @@
                     @endif
                 </p>
             @else
-                <p class="hint">Each request as logged, read in the format its CustomLog names; newest first, {{ \App\Services\ApacheReportService::PAGE_SIZE }} a page. Search matches client, host, request, referer, user agent or a status.
+                <p class="hint">Each request as logged, read in the format its CustomLog names; newest first, {{ \App\Services\ApacheReportService::PAGE_SIZE }} a page. Search matches client, host, request, referer, user agent or a status; the client box matches addresses from their start (e.g. 10.0.0.), and Hide localhost leaves out 127.* and ::1.
                     @if ($banServer?->fail2ban_checked_at)
                         Addresses fail2ban had banned at {{ \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) }} are marked.
                     @elseif ($banServer?->fail2ban_message)
@@ -78,7 +78,7 @@
                     @endif
                 </p>
                 <div class="paged" data-paged="/apache/reports/entries?kind=access&amp;{{ $pagedQuery }}">
-                    @include('reports.paged-controls', ['label' => 'Search requests'])
+                    @include('reports.paged-controls', ['label' => 'Search requests', 'statuses' => $report['access_statuses']])
                     <div class="paged-wrap">
                     <table class="top">
                         <thead>
@@ -120,16 +120,6 @@
             td.access-request, td.access-agent { overflow-wrap: anywhere; }
             td.access-request { min-width: 16em; }
             td.access-agent { font-size: 12px; min-width: 14em; max-width: 28em; }
-            .paged-wrap { overflow-x: auto; }
-            .paged-wrap table { width: 100%; }
-            .paged th[data-sort-key] { cursor: pointer; user-select: none; white-space: nowrap; }
-            .paged th[data-sort-key]::after { content: ' ↕'; opacity: .35; }
-            .paged th[aria-sort="ascending"]::after { content: ' ▲'; opacity: .8; }
-            .paged th[aria-sort="descending"]::after { content: ' ▼'; opacity: .8; }
-            .paged.loading tbody { opacity: .5; }
-            .paged-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-            .paged-controls input.table-filter { max-width: 320px; margin: 0; }
-            .paged-pager { display: flex; align-items: center; gap: 8px; font-size: 13px; }
         </style>
 
         <div class="card">

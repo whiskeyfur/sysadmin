@@ -55,7 +55,7 @@ class MariadbReportService extends HistoryReport
      *     io: array<string, list<array{0: int, 1: float}>>,
      *     rows: list<array<string, mixed>>,
      *     bucket_minutes: int|null,
-     *     log: list<MariadbLogEntry>,
+     *     log_total: int,
      *     log_counts: array<string, list<array{0: int, 1: float}>>,
      *     log_bucket_minutes: int
      * }
@@ -228,7 +228,7 @@ class MariadbReportService extends HistoryReport
             'io' => array_filter($io),
             'rows' => array_values($rows),
             'bucket_minutes' => $bucket,
-            'log' => $this->logEntries($server, $from, $to),
+            'log_total' => MariadbLogEntry::query()->where('server_id', $server->id)->whereBetween('logged_at', [$from, $to])->count(),
             'log_counts' => $this->logCounts($server, $from, $to, $logBucket = self::LOG_BUCKET_MINUTES[$range] ?? $this->logBucket($to->getTimestamp() - $from->getTimestamp())),
             'log_bucket_minutes' => $logBucket,
         ];
@@ -273,17 +273,32 @@ class MariadbReportService extends HistoryReport
     }
 
     /**
-     * Imported log entries in the period, newest first.
+     * One page of the imported log in the period, newest first unless sorted otherwise; $search matches
+     * the message, level or source (error log, journal, slow log).
      *
-     * @return list<MariadbLogEntry>
+     * @return array{rows: list<MariadbLogEntry>, total: int, page: int, pages: int}
      */
-    private function logEntries(Server $server, Carbon $from, Carbon $to, int $limit = 500): array
+    public function logPage(Server $server, string $range, int $page = 1, string $search = '', string $sort = 'time', string $direction = 'desc'): array
     {
-        /** @var list<MariadbLogEntry> $entries */
-        $entries = MariadbLogEntry::query()->where('server_id', $server->id)->whereBetween('logged_at', [$from, $to])
-            ->orderByDesc('logged_at')->orderByDesc('id')->limit($limit)->get()->all();
+        [$from, $to] = $this->window($range);
+        $query = MariadbLogEntry::query();
+        $query->where('server_id', $server->id)->whereBetween('logged_at', [$from, $to]);
+        $search = trim($search);
 
-        return $entries;
+        if ($search !== '') {
+            $like = '%' . addcslashes($search, '%_\\') . '%';
+            $query->where(fn ($q) => $q->orWhere('message', 'like', $like)->orWhere('level', 'like', $like)->orWhere('source', 'like', $like));
+        }
+
+        if ($sort === 'level') {
+            $query->orderByRaw("CASE level WHEN 'crash' THEN 4 WHEN 'error' THEN 3 WHEN 'warning' THEN 2 WHEN 'slow' THEN 1 ELSE 0 END " . ($direction === 'asc' ? 'ASC' : 'DESC'));
+        }
+
+        $result = $this->paginate($query, ['time' => 'logged_at', 'level' => 'level', 'source' => 'source'][$sort] ?? 'logged_at', $direction, $page, $sort === 'level');
+        /** @var list<MariadbLogEntry> $rows */
+        $rows = $result['rows'];
+
+        return ['rows' => $rows] + $result;
     }
 
     /**

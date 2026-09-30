@@ -144,7 +144,7 @@
                     @endif
                 </p>
             @endif
-            @if ($report['log'] === [])
+            @if ($report['log_total'] === 0)
                 <p class="muted">
                     No imported log entries in this period.
                     @if ($canImport && !$server->log_imported_at)
@@ -154,28 +154,23 @@
                     @endif
                 </p>
             @else
-                <p class="muted">From MariaDB's own logs on {{ $server->name }}.{{ count($report['log']) >= 500 ? ' Showing the newest 500.' : '' }}</p>
+                <p class="muted">From MariaDB's own logs on {{ $server->name }}: {{ number_format($report['log_total']) }} {{ $report['log_total'] === 1 ? 'entry' : 'entries' }} in this period, newest first, {{ \App\Services\HistoryReport::PAGE_SIZE }} a page. Search matches the message, level or source.</p>
                 @if ($report['log_counts'])
                     {!! \App\Utils\LineChart::render('Log entries per ' . ($report['log_bucket_minutes'] >= 1440 ? 'day' : ($report['log_bucket_minutes'] / 60) . ' hour' . ($report['log_bucket_minutes'] > 60 ? 's' : '')), $report['log_counts'], $report['from']->getTimestamp(), $report['to']->getTimestamp()) !!}
                 @endif
-                <div class="table-wrap" style="margin-top: 16px">
-                <table class="top">
-                    <thead>
-                        <tr><th>Logged</th><th>Level</th><th>Source</th><th>Message</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach ($report['log'] as $entry)
-                            @php($badge = ['crash' => 'critical', 'error' => 'critical', 'warning' => 'warning', 'slow' => 'warning', 'note' => 'unknown'][$entry->level] ?? 'unknown')
-                            <tr>
-                                <td data-sort="{{ $entry->logged_at->getTimestamp() }}" style="white-space: nowrap">{{ \App\Utils\LocalTime::format($entry->logged_at, 'Y-m-d H:i:s') }}</td>
-                                <td data-sort="{{ ['note' => 0, 'slow' => 1, 'warning' => 2, 'error' => 3, 'crash' => 4][$entry->level] ?? 0 }}"><span class="badge {{ $badge }}">{{ ucfirst($entry->level) }}</span></td>
-                                <td class="muted">{{ ['error' => 'Error log', 'journal' => 'Journal', 'slow' => 'Slow log'][$entry->source] ?? $entry->source }}</td>
-                                <td><pre class="log-message">{{ $entry->message }}</pre></td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
+                {{-- Paged in the browser (public/assets/js/paged-table.js), from /mariadb/reports/entries. --}}
+                <div class="paged" style="margin-top: 16px" data-paged="/mariadb/reports/entries?{{ http_build_query(['server' => $server->id, 'range' => $range]) }}">
+                    @include('reports.paged-controls', ['label' => 'Search the log'])
+                    <div class="paged-wrap">
+                    <table class="top">
+                        <thead>
+                            <tr><th data-sort-key="time" aria-sort="descending">Logged</th><th data-sort-key="level">Level</th><th data-sort-key="source">Source</th><th>Message</th></tr>
+                        </thead>
+                        <tbody><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+                    </table>
+                    </div>
                 </div>
+                <script src="/assets/js/paged-table.js"></script>
             @endif
         </div>
     @endif

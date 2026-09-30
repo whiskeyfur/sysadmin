@@ -39,6 +39,20 @@
         svg.chart .grid { stroke: currentColor; opacity: .12; }
         svg.chart .axis { fill: currentColor; opacity: .6; font-size: 12px; }
         figure.chart .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-size: 13px; }
+        /* Paged tables (public/assets/js/paged-table.js, reports/paged-controls). */
+        .paged-wrap { overflow-x: auto; }
+        .paged-wrap table { width: 100%; }
+        .paged th[data-sort-key] { cursor: pointer; user-select: none; white-space: nowrap; }
+        .paged th[data-sort-key]::after { content: ' ↕'; opacity: .35; }
+        .paged th[aria-sort="ascending"]::after { content: ' ▲'; opacity: .8; }
+        .paged th[aria-sort="descending"]::after { content: ' ▼'; opacity: .8; }
+        .paged.loading tbody { opacity: .5; }
+        .paged-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .paged-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+        .paged-filters input.table-filter { max-width: 260px; margin: 0; }
+        .paged-filters select, .paged-filters input[type=text] { width: auto; margin: 0; }
+        .paged-filters label.check { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: normal; font-size: 14px; white-space: nowrap; }
+        .paged-pager { display: flex; align-items: center; gap: 8px; font-size: 13px; }
         figure.chart .legend .chart-hint { margin-left: auto; color: var(--muted); font-size: 12px; }
         svg.chart[data-from] { cursor: crosshair; touch-action: pan-y; user-select: none; }
         svg.chart .zoom-band { fill: var(--accent, #2563eb); fill-opacity: .15; stroke: var(--accent, #2563eb); stroke-opacity: .6; }

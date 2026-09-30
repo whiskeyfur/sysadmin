@@ -19,11 +19,6 @@ use Carbon\Carbon;
 class ApacheReportService extends HistoryReport
 {
     /**
-     * Rows per page of the access and error log tables (fetched by the page, see accessPage()/errorPage()).
-     */
-    public const PAGE_SIZE = 100;
-
-    /**
      * Sortable columns of those tables => database column.
      */
     private const ACCESS_SORTS = ['time' => 'requested_at', 'client' => 'client', 'host' => 'vhost', 'request' => 'path', 'status' => 'status', 'size' => 'bytes', 'took' => 'duration_ms'];
@@ -39,6 +34,7 @@ class ApacheReportService extends HistoryReport
      *     bucket_minutes: int,
      *     access_total: int,
      *     log_total: int,
+     *     access_statuses: list<int>,
      *     requests: array<string, list<array{0: int, 1: float}>>,
      *     traffic: array<string, list<array{0: int, 1: float}>>,
      *     workers: array<string, list<array{0: int, 1: float}>>,
@@ -113,6 +109,7 @@ class ApacheReportService extends HistoryReport
             'bucket_minutes' => $bucket,
             'access_total' => $this->accessQuery($server, $from, $to, $vhost, $logs)->count(),
             'log_total' => $this->entries($server, $logs)->whereBetween('logged_at', [$from, $to])->count(),
+            'access_statuses' => array_map('intval', $this->accessQuery($server, $from, $to, $vhost, $logs)->distinct()->orderBy('status')->pluck('status')->all()),
             'requests' => array_filter($requests),
             'traffic' => array_filter($traffic),
             'workers' => $workers === [] ? [] : ['Busy workers' => $workers],
@@ -123,15 +120,38 @@ class ApacheReportService extends HistoryReport
 
     /**
      * One page of the access log in the period, newest first unless sorted otherwise. $search matches
-     * client, host, request, referer or user agent (a 3-digit number: that status too).
+     * client, host, request, referer or user agent (a 3-digit number: that status too). $filters:
+     * status ("4xx", "errors" for 4xx and 5xx, or a code), client (address from its start) and
+     * hide_local (leave out 127.* and ::1).
      *
+     * @param array{status?: string, client?: string, hide_local?: bool} $filters
      * @return array{rows: list<ApacheAccessEntry>, total: int, page: int, pages: int}
      */
-    public function accessPage(Server $server, string $range, ?ApacheVhost $vhost = null, int $page = 1, string $search = '', string $sort = 'time', string $direction = 'desc'): array
+    public function accessPage(Server $server, string $range, ?ApacheVhost $vhost = null, int $page = 1, string $search = '', string $sort = 'time', string $direction = 'desc', array $filters = []): array
     {
         [$from, $to] = $this->window($range);
         $query = $this->accessQuery($server, $from, $to, $vhost, $vhost === null ? null : $this->vhostLogs($server, $vhost));
         $search = trim($search);
+        $status = (string) ($filters['status'] ?? '');
+        $client = trim((string) ($filters['client'] ?? ''));
+
+        // Status: a class (4xx), client and server errors together, or one code.
+        if (preg_match('/^([1-5])xx$/', $status, $m) === 1) {
+            $query->whereBetween('status', [(int) $m[1] * 100, (int) $m[1] * 100 + 99]);
+        } elseif ($status === 'errors') {
+            $query->where('status', '>=', 400);
+        } elseif (preg_match('/^\d{3}$/', $status) === 1) {
+            $query->where('status', (int) $status);
+        }
+
+        // Client: from the start, so "10.0.0." matches a whole subnet.
+        if ($client !== '') {
+            $query->where('client', 'like', addcslashes($client, '%_\\') . '%');
+        }
+
+        if (!empty($filters['hide_local'])) {
+            $query->where(fn ($q) => $q->whereNull('client')->orWhere(fn ($q) => $q->where('client', 'not like', '127.%')->whereNotIn('client', ['::1', 'localhost'])));
+        }
 
         if ($search !== '') {
             $like = '%' . addcslashes($search, '%_\\') . '%';
@@ -180,27 +200,6 @@ class ApacheReportService extends HistoryReport
         $rows = $result['rows'];
 
         return ['rows' => $rows] + $result;
-    }
-
-    /**
-     * @param \Illuminate\Database\Eloquent\Builder<ApacheAccessEntry>|\Illuminate\Database\Eloquent\Builder<ApacheLogEntry> $query
-     * @return array{rows: list<mixed>, total: int, page: int, pages: int}
-     */
-    private function paginate(\Illuminate\Database\Eloquent\Builder $query, string $column, string $direction, int $page, bool $ordered = false): array
-    {
-        $total = (clone $query)->count();
-        $pages = max(1, (int) ceil($total / self::PAGE_SIZE));
-        $page = min(max(1, $page), $pages);
-        $direction = $direction === 'asc' ? 'asc' : 'desc';
-
-        if (!$ordered) {
-            $query->orderBy($column, $direction);
-        }
-
-        // Ties (same second) in a stable order.
-        $rows = $query->orderBy('id', $direction)->offset(($page - 1) * self::PAGE_SIZE)->limit(self::PAGE_SIZE)->get()->all();
-
-        return ['rows' => array_values($rows), 'total' => $total, 'page' => $page, 'pages' => $pages];
     }
 
     /**

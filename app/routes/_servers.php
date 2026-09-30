@@ -10,6 +10,7 @@ app()->get('/servers', ['middleware' => Authenticate::class, 'ServerController@i
 app()->get('/ssl/reports', ['middleware' => Authenticate::class, 'ReportController@ssl']);
 app()->get('/ssh/reports', ['middleware' => Authenticate::class, 'ReportController@ssh']);
 app()->get('/mariadb/reports', ['middleware' => Authenticate::class, 'ReportController@mariadb']);
+app()->get('/mariadb/reports/entries', ['middleware' => Authenticate::class, 'ReportController@mariadbEntries']);
 app()->get('/apache/reports', ['middleware' => Authenticate::class, 'ReportController@apache']);
 app()->get('/apache/reports/entries', ['middleware' => Authenticate::class, 'ReportController@apacheEntries']);
 app()->get('/ssh', ['middleware' => Authenticate::class, 'ServerController@ssh']);

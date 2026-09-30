@@ -71,6 +71,15 @@ beforeEach(function () {
                 }
             }
 
+            // Rotated copies: the listing, and zcat (the fake's .gz files are plain text).
+            if (preg_match('#for f in \W*(/[^\'\\\\]+)#', $command, $m) === 1) {
+                return implode('', array_map(fn ($f) => "$f\n", array_filter(array_keys($this->files), fn ($f) => preg_match('/^' . preg_quote($m[1], '/') . '\\.\\d+(\\.gz)?$/', $f) === 1)));
+            }
+
+            if (preg_match("/^zcat -f -- '([^']+)' \\| head -c \\d+$/", $command, $m) === 1) {
+                return $this->files[$m[1]] ?? throw new ServerConnectionException("The command exited with status 1: {$m[1]}: No such file");
+            }
+
             if (preg_match("/^(?:cat|tail -c \\+(\\d+)|\\{ ls -di) -- '([^']+)'/", $command, $m) === 1) {
                 $path = $m[2];
 
@@ -512,7 +521,24 @@ test('the access and error logs come a page at a time, searched and sorted in th
         ->and($page(1, '%')['total'])->toBe(0)
         // Sorted by size, smallest first; an unknown column sorts by time.
         ->and($page(1, '', 'size', 'asc')['rows'][0]->bytes)->toBe(0)
-        ->and($page(1, '', 'size; drop table x', 'asc')['rows'][0]->path)->toBe('/item/0');
+        ->and($page(1, '', 'size; drop table x', 'asc')['rows'][0]->path)->toBe('/item/0')
+        // Filters: status class, errors, one code; client from its start; localhost hidden.
+        ->and($page(1, '', 'time', 'desc', ['status' => '5xx'])['total'])->toBe(5)
+        ->and($page(1, '', 'time', 'desc', ['status' => 'errors'])['total'])->toBe(5)
+        ->and($page(1, '', 'time', 'desc', ['status' => '200'])['total'])->toBe(245)
+        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.1.'])['total'])->toBe(100)
+        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.4'])['total'])->toBe(11)
+        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.4', 'status' => '5xx'])['total'])->toBe(0);
+
+    App\Models\ApacheAccessEntry::query()->insert([
+        ['server_id' => $this->server->id, 'source' => 'x', 'requested_at' => $now->format('Y-m-d H:i:s'), 'client' => '127.0.0.1', 'status' => 200, 'bytes' => 0],
+        ['server_id' => $this->server->id, 'source' => 'x', 'requested_at' => $now->format('Y-m-d H:i:s'), 'client' => '::1', 'status' => 200, 'bytes' => 0],
+        ['server_id' => $this->server->id, 'source' => 'x', 'requested_at' => $now->format('Y-m-d H:i:s'), 'client' => '127.4.4.4', 'status' => 200, 'bytes' => 0],
+    ]);
+
+    expect($page()['total'])->toBe(253)
+        ->and($page(1, '', 'time', 'desc', ['hide_local' => true])['total'])->toBe(250)
+        ->and($reports->report($this->server, '24h')['access_statuses'])->toBe([200, 500]);
 
     foreach (['note', 'crash', 'error', 'warning'] as $i => $level) {
         ApacheLogEntry::query()->create(['server_id' => $this->server->id, 'source' => '/var/log/apache2/error.log', 'level' => $level, 'logged_at' => $now->copy()->subMinutes(10 - $i), 'message' => "m$i", 'hash' => "h$i"]);
@@ -520,4 +546,38 @@ test('the access and error logs come a page at a time, searched and sorted in th
 
     expect(collect($reports->errorPage($this->server, '24h', null, 1, '', 'level')['rows'])->pluck('level')->all())->toBe(['crash', 'error', 'warning', 'note'])
         ->and(collect($reports->errorPage($this->server, '24h', null, 1, 'crash')['rows'])->pluck('message')->all())->toBe(['m1']);
+});
+
+test('rotated copies of the logs are imported once, only what\'s older than what\'s stored', function () {
+    $this->ssh->files['/var/log/apache2/shop.log'] = ($this->accessLine)(10, 200);
+    $this->ssh->files['/var/log/apache2/error.log'] = ($this->errorLine)(10, 'error', 'today');
+    ($this->apache)()->run($this->server);
+
+    expect((int) ApacheTraffic::query()->sum('requests'))->toBe(1);
+
+    // Yesterday's and older copies, one compressed; the copy overlapping today's file is cut at what's stored.
+    $this->ssh->files['/var/log/apache2/shop.log.1'] = ($this->accessLine)(60 * 24, 404) . ($this->accessLine)(60 * 20, 200) . ($this->accessLine)(10, 200);
+    $this->ssh->files['/var/log/apache2/shop.log.2.gz'] = ($this->accessLine)(60 * 24 * 3, 500);
+    $this->ssh->files['/var/log/apache2/shop.log.40.gz'] = ($this->accessLine)(60 * 24 * 40, 200); // older than kept
+    $this->ssh->files['/var/log/apache2/error.log.1'] = ($this->errorLine)(60 * 24, 'error', 'yesterday') . ($this->errorLine)(10, 'error', 'today');
+
+    $report = ($this->apache)()->importRotated($this->server->fresh());
+
+    expect($report[0])->toBe('/var/log/apache2/error.log.1: 1 new error log entry.')
+        ->and(implode("\n", $report))->toContain('/var/log/apache2/shop.log.40.gz: 0 request(s)')
+        ->and(implode("\n", $report))->toContain('/var/log/apache2/shop.log.1: 2 request(s) added to the traffic figures, 2 stored.')
+        ->and((int) ApacheTraffic::query()->sum('requests'))->toBe(4)
+        ->and((int) ApacheTraffic::query()->sum('status_5xx'))->toBe(1)
+        ->and(App\Models\ApacheAccessEntry::count())->toBe(4)
+        ->and(ApacheLogEntry::query()->orderBy('logged_at')->pluck('message')->all())->toBe(['yesterday', 'today']);
+
+    // Again: nothing twice.
+    ($this->apache)()->importRotated($this->server->fresh());
+    expect((int) ApacheTraffic::query()->sum('requests'))->toBe(4)
+        ->and(App\Models\ApacheAccessEntry::count())->toBe(4)
+        ->and(ApacheLogEntry::count())->toBe(2);
+});
+
+test('rotated logs need the logs found first', function () {
+    expect(fn () => ($this->apache)()->importRotated($this->server))->toThrow(DomainException::class, 'run its checks first');
 });

@@ -85,3 +85,27 @@ test('disk space, database sizes and I/O throughput read through MariaDB', funct
         ->and(array_column($report['io']['Read'], 1))->toBe([60.0])
         ->and($report['rows'][1])->toMatchArray(['disk' => 70.0, 'db_size_mb' => 20.0, 'io_read' => 60.0]);
 });
+
+test('the imported log comes a page at a time, searched and sorted in the database', function () {
+    $now = Carbon::instance($this->clock->now());
+    $rows = [];
+
+    foreach (range(0, 229) as $i) {
+        $rows[] = ['server_id' => $this->server->id, 'source' => $i % 10 === 0 ? 'slow' : 'error', 'level' => $i === 5 ? 'crash' : ($i % 10 === 0 ? 'slow' : 'note'),
+            'logged_at' => $now->copy()->subSeconds(230 - $i)->format('Y-m-d H:i:s'), 'message' => $i === 5 ? 'mariadbd got signal 11' : "line $i", 'hash' => "h$i"];
+    }
+
+    App\Models\MariadbLogEntry::query()->insert($rows);
+
+    $page = fn (...$args) => $this->reports->logPage($this->server, '24h', ...$args);
+
+    expect($page()['total'])->toBe(230)
+        ->and($page()['pages'])->toBe(3)
+        ->and($page()['rows'][0]->message)->toBe('line 229')
+        ->and(count($page(3)['rows']))->toBe(30)
+        ->and($page(1, 'signal')['rows'][0]->level)->toBe('crash')
+        ->and($page(1, 'slow')['total'])->toBe(23)
+        ->and($page(1, '', 'level')['rows'][0]->level)->toBe('crash')
+        ->and($page(1, '', 'level')['rows'][1]->level)->toBe('slow')
+        ->and($this->reports->report($this->server, '24h')['log_total'])->toBe(230);
+});

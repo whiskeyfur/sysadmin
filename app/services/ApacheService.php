@@ -46,6 +46,11 @@ class ApacheService
 {
     public const SCAN_MINUTES = 60;
 
+    /**
+     * The most read from one rotated copy of a log (decompressed).
+     */
+    public const ROTATED_MAX_BYTES = 32 * 1024 * 1024;
+
     public const BUCKET_SECONDS = 300;
 
     /**
@@ -148,6 +153,148 @@ class ApacheService
         $this->prune();
 
         return $this->evaluate($server, $config, $status, $problems);
+    }
+
+    /**
+     * Import the rotated copies of a server's Apache logs (error.log.1, access.log.2.gz, ...), which the
+     * regular import never reads: history from before monitoring started. Each log's copies are read
+     * over one SSH login (compressed ones with zcat), in the log's own format. Only what's older than
+     * what's stored for that log already is added, so running it again adds nothing twice (error
+     * entries are de-duplicated anyway); retention applies as for the regular import.
+     *
+     * @return list<string> one line per file: what was added, or why not
+     *
+     * @throws DomainException when the server can't be reached or Apache hasn't been found yet
+     */
+    public function importRotated(Server $server): array
+    {
+        $config = $server->apache_config;
+
+        if (!$server->apache_enabled || !is_array($config) || ($config['error_logs'] ?? []) === [] && ($config['access_logs'] ?? []) === []) {
+            throw new DomainException("Apache's logs on {$server->name} aren't known yet: run its checks first.");
+        }
+
+        try {
+            $connection = $this->ssh->connect($server);
+        } catch (ServerConnectionException $e) {
+            throw new DomainException("Can't connect to {$server->name} over SSH: {$e->getMessage()}");
+        }
+
+        $report = [];
+
+        try {
+            $this->shell = ContainerShell::fromReference($this->ssh, $config['container'] ?? null) ?? $this->ssh;
+            $this->remote = new RemoteLogs($this->shell);
+            $streams = $config['streams'] ?? [];
+            $zone = $this->remote()->zone($connection);
+            $now = Carbon::instance($this->clock->now());
+            $cutoff = $now->copy()->subDays(HealthCheckService::RETENTION_DAYS);
+            $keepDays = (new SettingsService())->integer(SettingsService::APACHE_ACCESS_KEEP_DAYS);
+            $keepFrom = $keepDays > 0 ? $now->copy()->subDays($keepDays)->getTimestamp() : PHP_INT_MAX;
+
+            foreach (['error' => array_keys($config['error_logs'] ?? []), 'access' => array_keys($config['access_logs'] ?? [])] as $kind => $paths) {
+                foreach ($paths as $path) {
+                    $path = (string) $path;
+
+                    if (isset($streams[$path])) {
+                        continue; // a container's output, not a file
+                    }
+
+                    // Before what's stored already: rotated copies hold older lines.
+                    $trafficBefore = $kind === 'access' ? ApacheTraffic::query()->where('server_id', $server->id)->where('log', $path)->min('bucket_at') : null;
+                    $requestsBefore = $kind === 'access' ? ApacheAccessEntry::query()->where('server_id', $server->id)->where('source', $path)->min('requested_at') : null;
+                    $trafficBefore = $trafficBefore === null ? PHP_INT_MAX : Carbon::parse((string) $trafficBefore, 'UTC')->getTimestamp();
+                    $requestsBefore = $requestsBefore === null ? PHP_INT_MAX : Carbon::parse((string) $requestsBefore, 'UTC')->getTimestamp();
+                    [$formats, $owner] = $kind === 'access' ? $this->accessContext($config, $path) : [[], null];
+
+                    foreach ($this->rotatedCopies($connection, $path) as $file) {
+                        try {
+                            $text = $this->shell->exec($connection, 'zcat -f -- ' . escapeshellarg($file) . ' | head -c ' . self::ROTATED_MAX_BYTES);
+                        } catch (ServerConnectionException $e) {
+                            $report[] = $this->readProblem($file, $e);
+
+                            continue;
+                        }
+
+                        if ($kind === 'error') {
+                            $entries = [];
+                            $repeats = ['second' => null, 'counts' => []];
+                            $added = 0;
+
+                            foreach ($this->logs->errorEntries($text, $zone) as $entry) {
+                                if ($entry['time']->greaterThanOrEqualTo($cutoff)) {
+                                    $entries[] = $entry;
+                                }
+
+                                if (count($entries) >= 500) {
+                                    $added += $this->remote()->store(ApacheLogEntry::class, $server, $path, $entries, $repeats);
+                                    $entries = [];
+                                }
+                            }
+
+                            $added += $this->remote()->store(ApacheLogEntry::class, $server, $path, $entries, $repeats);
+                            $report[] = "$file: $added new error log " . ($added === 1 ? 'entry' : 'entries') . '.';
+
+                            continue;
+                        }
+
+                        $buckets = [];
+                        $rows = [];
+                        $counted = 0;
+                        $stored = 0;
+                        $skipped = 0;
+
+                        foreach ($this->logs->accessLines($text, $skipped, $formats) as $line) {
+                            if ($line['time'] < $cutoff->getTimestamp()) {
+                                continue;
+                            }
+
+                            if ($line['time'] < $trafficBefore) {
+                                $this->countLine($buckets, $line);
+                                $counted++;
+                            }
+
+                            if ($line['time'] >= $keepFrom && $line['time'] < $requestsBefore) {
+                                $rows[] = $this->requestRow($server, $path, $owner, $line);
+                                $stored++;
+
+                                if (count($rows) >= 500) {
+                                    ApacheAccessEntry::query()->insert($rows);
+                                    $rows = [];
+                                }
+                            }
+                        }
+
+                        if ($rows !== []) {
+                            ApacheAccessEntry::query()->insert($rows);
+                        }
+
+                        $this->addTraffic($server, $path, $buckets);
+                        $report[] = "$file: $counted request(s) added to the traffic figures, $stored stored" . ($skipped > 0 ? ", $skipped line(s) in another format skipped" : '') . '.';
+                    }
+                }
+            }
+        } finally {
+            $connection->disconnect();
+        }
+
+        $this->prune();
+
+        return $report === [] ? ['No rotated copies of the logs were found.'] : $report;
+    }
+
+    /**
+     * A log's rotated copies (path.1, path.2.gz, ...), oldest first.
+     *
+     * @return list<string>
+     */
+    private function rotatedCopies(SSH2 $connection, string $path): array
+    {
+        $output = $this->remote()->run($connection, 'for f in ' . escapeshellarg($path) . '.[0-9]*; do [ -f "$f" ] && printf "%s\\n" "$f"; done; exit 0');
+        $files = array_values(array_filter(array_map('trim', preg_split('/\R/', $output) ?: []), fn ($f) => preg_match('/^' . preg_quote($path, '/') . '\.(\d+)(?:\.gz)?$/', $f) === 1));
+        usort($files, fn ($a, $b) => (int) substr($b, strlen($path) + 1) <=> (int) substr($a, strlen($path) + 1));
+
+        return $files;
     }
 
     /**
@@ -823,21 +970,12 @@ class ApacheService
         $cutoff = $now->copy()->subDays(HealthCheckService::RETENTION_DAYS)->getTimestamp();
         $keepDays = (new SettingsService())->integer(SettingsService::APACHE_ACCESS_KEEP_DAYS);
         $keepFrom = $keepDays > 0 ? $now->copy()->subDays($keepDays)->getTimestamp() : PHP_INT_MAX;
-        $formats = array_map(fn ($f) => new AccessLogFormat((string) $f), array_values((array) ($config['access_formats'][$path] ?? [])));
-        // A file only one virtual host writes to is that host's, whatever the format logs.
-        $writers = array_values(array_filter((array) ($config['vhosts'] ?? []), fn ($v) => in_array($path, (array) ($v['access_logs'] ?? []), true)));
-        $owner = count($writers) === 1 && !in_array('main server', (array) ($config['access_logs'][$path] ?? []), true) ? ($writers[0]['name'] ?? null) : null;
+        [$formats, $owner] = $this->accessContext($config, $path);
         $buckets = [];
         $skipped = 0;
         $batch = [];
-        $cut = fn (?string $value, int $length) => $value === null ? null : mb_substr($value, 0, $length);
-        $keep = function (array $line) use (&$batch, $server, $path, $owner, $cut): void {
-            $batch[] = [
-                'server_id' => $server->id, 'source' => $path, 'requested_at' => Carbon::createFromTimestamp($line['time'])->format('Y-m-d H:i:s'),
-                'client' => $cut($line['client'], 255), 'vhost' => $cut($line['vhost'] ?? $owner, 255), 'method' => $cut($line['method'], 32),
-                'path' => $cut($line['path'], 8000), 'protocol' => $cut($line['protocol'], 32), 'status' => $line['status'], 'bytes' => $line['bytes'],
-                'referer' => $cut($line['referer'], 4000), 'agent' => $cut($line['agent'], 4000), 'duration_ms' => $line['duration_ms'],
-            ];
+        $keep = function (array $line) use (&$batch, $server, $path, $owner): void {
+            $batch[] = $this->requestRow($server, $path, $owner, $line);
 
             if (count($batch) >= 500) {
                 ApacheAccessEntry::query()->insert($batch);
@@ -857,17 +995,7 @@ class ApacheService
                 $keep($line);
             }
 
-            $bucket = intdiv($line['time'], self::BUCKET_SECONDS) * self::BUCKET_SECONDS;
-            $counts = $buckets[$bucket] ?? ['requests' => 0, 'bytes' => 0, 'status_2xx' => 0, 'status_3xx' => 0, 'status_4xx' => 0, 'status_5xx' => 0];
-            $counts['requests']++;
-            $counts['bytes'] += $line['bytes'];
-            $class = 'status_' . intdiv($line['status'], 100) . 'xx';
-
-            if (isset($counts[$class])) {
-                $counts[$class]++;
-            }
-
-            $buckets[$bucket] = $counts;
+            $this->countLine($buckets, $line);
         }
 
         // Once per log: the requests already read before requests were stored (the log's tail, as a first
@@ -899,6 +1027,69 @@ class ApacheService
             $problems['access'][] = "$path: $skipped line(s) in a format without the usual [time] \"request\" status bytes.";
         }
 
+        $this->addTraffic($server, $path, $buckets);
+    }
+
+    /**
+     * How an access log is read: its formats (from its CustomLog), and the virtual host a request is
+     * credited to when the format doesn't log one (the only one writing to the file).
+     *
+     * @param array<string, mixed> $config
+     * @return array{0: list<AccessLogFormat>, 1: ?string}
+     */
+    private function accessContext(array $config, string $path): array
+    {
+        $formats = array_map(fn ($f) => new AccessLogFormat((string) $f), array_values((array) ($config['access_formats'][$path] ?? [])));
+        $writers = array_values(array_filter((array) ($config['vhosts'] ?? []), fn ($v) => in_array($path, (array) ($v['access_logs'] ?? []), true)));
+        $owner = count($writers) === 1 && !in_array('main server', (array) ($config['access_logs'][$path] ?? []), true) ? ($writers[0]['name'] ?? null) : null;
+
+        return [$formats, $owner];
+    }
+
+    /**
+     * @param array<string, mixed> $line a parsed request (ApacheLogParser::accessLines())
+     * @return array<string, mixed> an apache_access_entries row
+     */
+    private function requestRow(Server $server, string $path, ?string $owner, array $line): array
+    {
+        $text = fn (string $key, int $length) => is_string($line[$key] ?? null) ? mb_substr($line[$key], 0, $length) : null;
+
+        return [
+            'server_id' => $server->id, 'source' => $path, 'requested_at' => Carbon::createFromTimestamp((int) $line['time'])->format('Y-m-d H:i:s'),
+            'client' => $text('client', 255), 'vhost' => $text('vhost', 255) ?? ($owner === null ? null : mb_substr($owner, 0, 255)), 'method' => $text('method', 32),
+            'path' => $text('path', 8000), 'protocol' => $text('protocol', 32), 'status' => (int) $line['status'], 'bytes' => (int) $line['bytes'],
+            'referer' => $text('referer', 4000), 'agent' => $text('agent', 4000), 'duration_ms' => is_int($line['duration_ms'] ?? null) ? $line['duration_ms'] : null,
+        ];
+    }
+
+    /**
+     * Count one request into its 5-minute bucket.
+     *
+     * @param array<int, array<string, int>> $buckets
+     * @param array{time: int, status: int, bytes: int, ...} $line
+     */
+    private function countLine(array &$buckets, array $line): void
+    {
+        $bucket = intdiv($line['time'], self::BUCKET_SECONDS) * self::BUCKET_SECONDS;
+        $counts = $buckets[$bucket] ?? ['requests' => 0, 'bytes' => 0, 'status_2xx' => 0, 'status_3xx' => 0, 'status_4xx' => 0, 'status_5xx' => 0];
+        $counts['requests']++;
+        $counts['bytes'] += $line['bytes'];
+        $class = 'status_' . intdiv($line['status'], 100) . 'xx';
+
+        if (isset($counts[$class])) {
+            $counts[$class]++;
+        }
+
+        $buckets[$bucket] = $counts;
+    }
+
+    /**
+     * Add bucket counts to apache_traffic (to the row already there for that log and bucket).
+     *
+     * @param array<int, array<string, int>> $buckets
+     */
+    private function addTraffic(Server $server, string $path, array $buckets): void
+    {
         foreach ($buckets as $bucket => $counts) {
             $at = Carbon::createFromTimestamp($bucket)->format('Y-m-d H:i:s');
             $row = ApacheTraffic::query()->where('server_id', $server->id)->where('log', $path)->where('bucket_at', $at)->first();

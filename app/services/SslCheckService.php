@@ -342,10 +342,20 @@ class SslCheckService
         $context = stream_context_create(['http' => ['timeout' => 5, 'follow_location' => 0, 'ignore_errors' => true, 'header' => 'Host: ' . $parts['host'] . "\r\nUser-Agent: sys-ssl-check\r\n"]]);
 
         set_error_handler(fn () => true);
+        $body = false;
+        $headers = [];
 
         try {
             // The address checked above, so a DNS answer changing in between can't point it elsewhere.
-            $body = file_get_contents("http://{$ips[0]}:$port$path", false, $context, 0, 20000);
+            $stream = fopen("http://{$ips[0]}:$port$path", 'rb', false, $context);
+
+            if (is_resource($stream)) {
+                $body = stream_get_contents($stream, 20000);
+                // The response headers from the stream itself: $http_response_header is deprecated as of PHP 8.4,
+                // and http_get_last_response_headers() doesn't exist before it.
+                $headers = (array) (stream_get_meta_data($stream)['wrapper_data'] ?? []);
+                fclose($stream);
+            }
         } finally {
             restore_error_handler();
         }
@@ -354,7 +364,7 @@ class SslCheckService
             return null;
         }
 
-        return str_contains(implode("\n", $http_response_header), ' 200 ') ? $body : null;
+        return str_contains(implode("\n", array_map('strval', $headers)), ' 200 ') ? $body : null;
     }
 
     /**

@@ -40,6 +40,17 @@ require "$appPath/vendor/autoload.php";
 
 /*
 |--------------------------------------------------------------------------
+| Record every error
+|--------------------------------------------------------------------------
+|
+| Each uncaught error is kept in storage/errors/<request id>/ with the whole
+| request (secrets masked); the error page shows the ID.
+|
+*/
+crash()->reportTo(new \App\Services\ErrorRecorder());
+
+/*
+|--------------------------------------------------------------------------
 | Harden the session cookie
 |--------------------------------------------------------------------------
 |

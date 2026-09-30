@@ -26,6 +26,7 @@ compiled
 hot
 storage/framework
 storage/logs
+storage/errors
 storage/database
 public/storage
 

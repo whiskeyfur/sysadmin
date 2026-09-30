@@ -180,3 +180,4 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-30 — Database users: a blank password on create makes a socket login (unix_socket / auth_socket), host localhost or % only.
 * 2026-09-30 — Query tool and browser: logins let in by socket identity (unix_socket/auth_socket over the local socket, i.e. www-data) are admins only.
 * 2026-09-30 — Runs in a subdirectory of another site (BasePath: router base, output rewriting, top-level .htaccess into public/, own session cookie; local Apache helper off there). XSRF-TOKEN cookie off.
+* 2026-09-30 — Uncaught errors recorded in storage/errors/<request id>/ (report.json + report.md, whole request, secrets masked, 30 days); the error page shows the ID. storage/app/db/connection.json no longer tracked in git.

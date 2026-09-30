@@ -28,6 +28,11 @@ declare(strict_types=1);
 // app()->setErrorHandler(function() {
 //     response()->markup('An error occurred', 500);
 // });
+// Leaf's production page with the request's ID (the error itself is kept by App\Services\ErrorRecorder,
+// registered in public/index.php); with APP_DEBUG on, Leaf's debug page shows instead.
+app()->setErrorHandler(function () {
+    echo \App\Services\ErrorRecorder::page();
+});
 /*
 |--------------------------------------------------------------------------
 | Set middleware for all routes

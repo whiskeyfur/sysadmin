@@ -12,6 +12,8 @@
 #     LogFormats as apache2.conf has them, plus the ID at the end (%{UNIQUE_ID}e), and sets an
 #     ErrorLogFormat identical to Apache's default plus " [id ...]" at the end for lines that belong to
 #     a request (%L, which mod_unique_id sets to the same ID);
+#   - sends the same ID back in every response as an X-Request-ID header (mod_headers, enabled if it
+#     isn't), so a user can quote it and it shows in the browser's developer tools;
 #   - checks the configuration, and undoes everything if Apache refuses it; then reloads Apache.
 #
 # Why at the end of the line: fail2ban's stock Apache filters read these lines. apache-auth and
@@ -30,8 +32,9 @@ set -eu
 ETC=${APACHE_ETC:-/etc/apache2}
 NAME=unique-id-logs
 CONF="$ETC/conf-available/$NAME.conf"
-# Present when this script enabled mod_unique_id (so --undo only disables what it enabled).
+# Present when this script enabled mod_unique_id / mod_headers (so --undo only disables what it enabled).
 MARK="$ETC/conf-available/.$NAME.module"
+HEADERS_MARK="$ETC/conf-available/.$NAME.headers"
 FORCE=no
 UNDO=no
 
@@ -55,13 +58,22 @@ undo() {
         a2dismod -q unique_id >/dev/null 2>&1 || true
         rm -f "$MARK"
     fi
+    if [ -e "$HEADERS_MARK" ]; then
+        # Other configuration may have come to use mod_headers since: keep it then.
+        a2dismod -q headers >/dev/null 2>&1 || true
+        if ! apache2ctl configtest >/dev/null 2>&1; then
+            a2enmod -q headers >/dev/null 2>&1 || true
+            echo "mod_headers stays enabled: other configuration uses it now."
+        fi
+        rm -f "$HEADERS_MARK"
+    fi
 }
 
 if [ "$UNDO" = yes ]; then
     undo
     if apache2ctl configtest; then
         systemctl reload apache2
-        echo "Request IDs are out of Apache's logs again."
+        echo "Request IDs are out of Apache's logs and responses again."
     else
         echo "Apache refuses its configuration now; see above." >&2
         exit 1
@@ -116,6 +128,10 @@ cat > "$CONF" <<EOF
 <IfModule unique_id_module>
 $formats
     ErrorLogFormat "[%{u}t] [%-m:%l] $PID %7F: %E: [client\ %a] %M% ,\ referer:\ %{Referer}i% \ [id\ %L]"
+    # The same ID in every response (errors and redirects too), to quote or find in the logs.
+    <IfModule headers_module>
+        Header always set X-Request-ID "%{UNIQUE_ID}e"
+    </IfModule>
 </IfModule>
 EOF
 chmod 644 "$CONF"
@@ -123,6 +139,11 @@ chmod 644 "$CONF"
 if [ ! -e "$ETC/mods-enabled/unique_id.load" ]; then
     a2enmod -q unique_id
     touch "$MARK"
+fi
+
+if [ ! -e "$ETC/mods-enabled/headers.load" ]; then
+    a2enmod -q headers
+    touch "$HEADERS_MARK"
 fi
 
 a2enconf -q "$NAME"
@@ -135,7 +156,7 @@ fi
 
 systemctl reload apache2
 echo "Done: new requests get an ID at the end of their access log line, and error log lines that belong"
-echo "to a request end with [id ...], the same ID."
+echo "to a request end with [id ...], the same ID; responses carry it as an X-Request-ID header."
 
 # Vhosts that keep their own formats.
 own=$(grep -rlE '^[[:space:]]*LogFormat[[:space:]]+.*[[:space:]](vhost_combined|combined|common)[[:space:]]*$' \

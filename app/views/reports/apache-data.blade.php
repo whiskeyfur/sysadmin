@@ -24,29 +24,22 @@
             </div>
         @endif
 
+        @php($pagedQuery = http_build_query(['range' => $range] + $pagedParams))
         @if ($report['rows'] !== [])
-            <div class="card">
+            {{-- A day per row, its hours folded out under it; paged in the browser (public/assets/js/paged-table.js). --}}
+            <div class="card" id="requests">
                 <h2>Requests</h2>
-                <p class="hint">Totals per {{ rtrim($per, 's') }}, newest first.</p>
-                <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr><th>From</th><th>Requests</th><th>2xx</th><th>3xx</th><th>4xx</th><th>5xx</th><th>Served</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach ($report['rows'] as $row)
-                            <tr>
-                                <td data-sort="{{ $row['time']->getTimestamp() }}">{{ \App\Utils\LocalTime::format($row['time']) }}</td>
-                                <td>{{ $row['requests'] }}</td>
-                                <td>{{ $row['status_2xx'] }}</td>
-                                <td>{{ $row['status_3xx'] }}</td>
-                                <td>{{ $row['status_4xx'] }}</td>
-                                <td>{{ $row['status_5xx'] }}</td>
-                                <td data-sort="{{ $row['bytes'] }}">{{ \App\Services\Checks\FileIoCheck::size($row['bytes']) }}</td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
+                <p class="hint">Totals per day ({{ \App\Utils\LocalTime::zone()->getName() }}), newest first, {{ \App\Services\ApacheReportService::DAYS_PAGE_SIZE }} days a page; click a day for its hours. Search matches the date or the weekday.</p>
+                <div class="paged" id="request-days" data-paged-sort="date" data-paged="/apache/reports/entries?kind=days&amp;{{ $pagedQuery }}">
+                    @include('reports.paged-controls', ['label' => 'Search days'])
+                    <div class="paged-wrap">
+                        <table>
+                            <thead>
+                                <tr><th data-sort-key="date" aria-sort="descending">Day</th><th data-sort-key="requests">Requests</th><th data-sort-key="2xx">2xx</th><th data-sort-key="3xx">3xx</th><th data-sort-key="4xx">4xx</th><th data-sort-key="5xx">5xx</th><th data-sort-key="served">Served</th></tr>
+                            </thead>
+                            <tbody><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         @endif
@@ -55,7 +48,6 @@
         @php($canBan = $banServer !== null && ($auth ?? null)?->isAdmin() && $banServer->sshReady())
         {{-- Paged in the browser (public/assets/js/paged-table.js): each page, search and sort is fetched
              from /apache/reports/entries, since these logs grow large. --}}
-        @php($pagedQuery = http_build_query(['range' => $range] + $pagedParams))
         <div class="card">
             <h2>Access log <span class="muted">({{ number_format($report['access_total']) }})</span></h2>
             @if ($report['access_total'] === 0)
@@ -146,6 +138,12 @@
             table.error-fold-table td:not(:last-child) { width: 1%; white-space: nowrap; padding-right: 14px; }
             .error-fold-more { margin-top: 4px; font-size: 12px; }
             .error-fold-more button.log-link { margin-left: 0; }
+            button.day-toggle { font: inherit; }
+            tr.day-row { cursor: pointer; }
+            tr.day-row:hover > td { background: var(--code-bg); }
+            tr.hour-fold > td { background: var(--code-bg); padding: 6px 12px 10px; }
+            table.hour-table { width: auto; min-width: 60%; border-collapse: collapse; font-size: 13px; }
+            table.hour-table th, table.hour-table td { padding: 3px 18px 3px 0; border: 0; }
             td.access-agent { font-size: 12px; min-width: 14em; max-width: 28em; }
         </style>
 

@@ -638,3 +638,34 @@ test('requests and their error log lines are linked by mod_unique_id\'s request 
         ->and(collect($reports->accessPage($this->server->fresh(), '24h', null, 1, 'aryaaq1F4K9U-StYXZTaqgAAAEA')['rows'])->pluck('status')->all())->toBe([403])
         ->and(collect($reports->errorPage($this->server->fresh(), '24h', null, 1, 'aryaaq1F4K9U-StYXZTaqgAAAEA')['rows'])->pluck('message')->all())->toBe(['AH01630: client denied by server configuration: /srv/x']);
 });
+
+test('the requests table has a row per local day, with every hour of it folded under', function () {
+    $zone = App\Utils\LocalTime::zone();
+    $now = Carbon::instance($this->clock->now());
+    $add = fn (Carbon $at, int $requests, int $s4xx = 0) => App\Models\ApacheTraffic::query()->create([
+        'server_id' => $this->server->id, 'log' => '/var/log/apache2/access.log', 'bucket_at' => $at,
+        'requests' => $requests, 'bytes' => $requests * 1000, 'status_2xx' => $requests - $s4xx, 'status_3xx' => 0, 'status_4xx' => $s4xx, 'status_5xx' => 0,
+    ]);
+    // Two 5-minute buckets in one hour today, one two days ago.
+    $hour = $now->copy()->setTimezone($zone)->subHour()->startOfHour();
+    $add($hour->copy()->utc(), 10, 2);
+    $add($hour->copy()->addMinutes(5)->utc(), 5);
+    $old = $now->copy()->setTimezone($zone)->subDays(2)->setTime(3, 0);
+    $add($old->copy()->utc(), 7);
+
+    $reports = new ApacheReportService($this->clock);
+    $page = $reports->dailyPage($this->server->fresh(), '7d');
+    $today = collect($page['rows'])->firstWhere('date', $hour->format('Y-m-d'));
+    $busy = collect($today['hours'])->first(fn ($h) => $h['hour']->equalTo($hour));
+
+    expect($page['rows'][0]['date'])->toBe($now->copy()->setTimezone($zone)->format('Y-m-d')) // newest first
+        ->and($page['total'])->toBeGreaterThanOrEqual(3)
+        ->and($today['requests'])->toBe(15)->and($today['status_4xx'])->toBe(2)->and($today['bytes'])->toBe(15000)
+        ->and($busy['requests'])->toBe(15)
+        ->and(collect($today['hours'])->sum('requests'))->toBe(15)
+        // Every hour of a whole day in the period is there, quiet ones zero.
+        ->and(count(collect($page['rows'])->firstWhere('date', $old->format('Y-m-d'))['hours']))->toBe(24)
+        ->and($reports->dailyPage($this->server->fresh(), '7d', sort: 'requests', direction: 'desc')['rows'][0]['requests'])->toBe(15)
+        ->and(array_column($reports->dailyPage($this->server->fresh(), '7d', search: $old->format('Y-m-d'))['rows'], 'date'))->toBe([$old->format('Y-m-d')])
+        ->and(array_column($reports->dailyPage($this->server->fresh(), '7d', search: $old->format('l'))['rows'], 'date'))->toContain($old->format('Y-m-d'));
+});

@@ -135,6 +135,8 @@
         .hint { font-size: 13px; color: var(--muted); margin-top: 4px; }
         button, .button { display: inline-block; padding: 9px 16px; border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
         button:hover, .button:hover { background: var(--accent-hover); }
+        /* Link-style buttons stay links on hover (the rule above would fill them in). */
+        button.link:hover { background: none; text-decoration: underline; }
         button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--line); }
         button.danger, .button.danger-link { background: transparent; color: var(--error); border: 1px solid var(--line); }
         button.danger-solid { background: var(--error); color: var(--panel); }

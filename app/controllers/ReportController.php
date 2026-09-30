@@ -95,7 +95,7 @@ class ReportController extends Controller
     /**
      * One page of an Apache report's access or error log, as JSON {html (table rows), total, page, pages},
      * for the paged tables (public/assets/js/paged-table.js):
-     * ?kind=access|errors&server=<id> or &vhost=<id>&range=&page=&q=&sort=&dir=asc|desc; for the access
+     * ?kind=access|errors|days&server=<id> or &vhost=<id>&range=&page=&q=&sort=&dir=asc|desc; for the access
      * log also &s2xx=..&s5xx=, &banned=, &protected=, &listed=, &local= (each in|out)&client=<start of address>
      */
     public function apacheEntries()
@@ -120,6 +120,14 @@ class ReportController extends Controller
             (string) $this->request->get('dir', false) === 'asc' ? 'asc' : 'desc',
         ];
         $reports = new ApacheReportService();
+
+        if ($this->request->get('kind') === 'days') {
+            $page = $reports->dailyPage(...$args);
+            $this->response->json(['html' => $this->view('reports.day-rows', ['rows' => $page['rows']]), 'total' => $page['total'], 'page' => $page['page'], 'pages' => $page['pages']]);
+
+            return;
+        }
+
         $access = $this->request->get('kind') !== 'errors';
         // Tri-state filters: "in" (only), "out" (not), anything else: any.
         $state = fn (string $name) => in_array($v = (string) $this->request->get($name, false), ['in', 'out'], true) ? $v : '';

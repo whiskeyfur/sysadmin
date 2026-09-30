@@ -10,6 +10,7 @@ use App\Models\BlocklistIp;
 use App\Models\Fail2banProtection;
 use App\Models\HealthCheck as StoredCheck;
 use App\Models\Server;
+use App\Utils\LocalTime;
 use Carbon\Carbon;
 
 /**
@@ -27,6 +28,11 @@ class ApacheReportService extends HistoryReport
      * The most error log entries an access log row folds out.
      */
     public const ERRORS_PER_REQUEST = 20;
+
+    /**
+     * Days per page of the requests table.
+     */
+    public const DAYS_PAGE_SIZE = 10;
 
     private const ACCESS_SORTS = ['time' => 'requested_at', 'client' => 'client', 'host' => 'vhost', 'request' => 'path', 'status' => 'status', 'size' => 'bytes', 'took' => 'duration_ms'];
 
@@ -121,6 +127,69 @@ class ApacheReportService extends HistoryReport
             'log_counts' => $this->logCounts($server, $logs, $from, $to, max(60, $bucket)),
             'rows' => array_reverse($rows),
         ];
+    }
+
+    /**
+     * The requests table: one row per day (in the app's time zone) of the period, newest first unless
+     * sorted otherwise, each with its totals and its hours (every hour of the day inside the period, quiet
+     * ones zero), from the stored 5-minute counts. $search matches the date as written (2026-09-30) or
+     * its weekday; $sort is date, requests, 2xx, 3xx, 4xx, 5xx or served. DAYS_PAGE_SIZE days a page.
+     *
+     * @return array{rows: list<array{date: string, day: Carbon, requests: int, bytes: int, status_2xx: int, status_3xx: int, status_4xx: int, status_5xx: int, hours: list<array{hour: Carbon, requests: int, bytes: int, status_2xx: int, status_3xx: int, status_4xx: int, status_5xx: int}>}>, total: int, page: int, pages: int}
+     */
+    public function dailyPage(Server $server, string $range = self::DEFAULT_RANGE, ?ApacheVhost $vhost = null, int $page = 1, string $search = '', string $sort = 'date', string $direction = 'desc'): array
+    {
+        $logs = $vhost === null ? null : $this->vhostLogs($server, $vhost);
+        [$from, $to] = $this->window($range);
+        $zone = LocalTime::zone();
+        $fields = ['requests', 'bytes', 'status_2xx', 'status_3xx', 'status_4xx', 'status_5xx'];
+        $empty = array_fill_keys($fields, 0);
+        $hours = [];
+
+        $traffic = ApacheTraffic::query()->where('server_id', $server->id)->whereBetween('bucket_at', [$from, $to]);
+
+        foreach (($logs === null ? $traffic : $traffic->whereIn('log', $logs['access']))->get(['bucket_at', ...$fields]) as $row) {
+            $hour = Carbon::instance($row->bucket_at)->setTimezone($zone)->startOfHour()->getTimestamp();
+            $hours[$hour] ??= $empty;
+
+            foreach ($fields as $field) {
+                $hours[$hour][$field] += (int) $row->{$field};
+            }
+        }
+
+        // Every hour of the period (quiet ones zero), grouped into its day.
+        $days = [];
+
+        if ($hours !== []) {
+            $first = Carbon::instance($from)->setTimezone($zone)->startOfHour();
+            $last = Carbon::instance($to)->setTimezone($zone)->startOfHour();
+
+            for ($hour = $first->copy(); $hour <= $last; $hour->addHour()) {
+                $totals = $hours[$hour->getTimestamp()] ?? $empty;
+                $date = $hour->format('Y-m-d');
+                $days[$date] ??= ['date' => $date, 'day' => $hour->copy()->startOfDay()] + $empty + ['hours' => []];
+                $days[$date]['hours'][] = ['hour' => $hour->copy()] + $totals;
+
+                foreach ($fields as $field) {
+                    $days[$date][$field] += $totals[$field];
+                }
+            }
+        }
+
+        $days = array_values($days);
+
+        if ($search !== '') {
+            $days = array_values(array_filter($days, fn ($d) => stripos($d['date'] . ' ' . $d['day']->format('l D'), $search) !== false));
+        }
+
+        $key = ['date' => 'date', 'requests' => 'requests', '2xx' => 'status_2xx', '3xx' => 'status_3xx', '4xx' => 'status_4xx', '5xx' => 'status_5xx', 'served' => 'bytes'][$sort] ?? 'date';
+        usort($days, fn ($a, $b) => ($direction === 'asc' ? 1 : -1) * ($a[$key] <=> $b[$key] ?: strcmp($a['date'], $b['date'])));
+
+        $total = count($days);
+        $pages = max(1, (int) ceil($total / self::DAYS_PAGE_SIZE));
+        $page = min(max(1, $page), $pages);
+
+        return ['rows' => array_slice($days, ($page - 1) * self::DAYS_PAGE_SIZE, self::DAYS_PAGE_SIZE), 'total' => $total, 'page' => $page, 'pages' => $pages];
     }
 
     /**

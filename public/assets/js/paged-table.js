@@ -18,15 +18,21 @@
     });
 
     // Fold-outs: <button data-fold-toggle> opens or closes the tr.fold-row right after its row (e.g. an
-    // access log request's error log entries). The arrow in the label follows.
+    // access log request's error log entries); in a <tr data-fold-row> a click anywhere on the row does
+    // (except on its other links and buttons). The arrow in the button's label follows.
     document.addEventListener('click', function (event) {
         var button = event.target.closest('[data-fold-toggle]');
-        if (!button) { return; }
-        var fold = button.closest('tr').nextElementSibling;
+        var row = button ? button.closest('tr') : event.target.closest('tr[data-fold-row]');
+        if (!row || (!button && event.target.closest('a, button, input, select, textarea'))) { return; }
+        if (!button && window.getSelection && String(window.getSelection()).length > 0) { return; } // selecting text
+        var fold = row.nextElementSibling;
         if (!fold || !fold.classList.contains('fold-row')) { return; }
         fold.hidden = !fold.hidden;
-        button.setAttribute('aria-expanded', fold.hidden ? 'false' : 'true');
-        button.textContent = button.textContent.replace(/^[▸▾]/, fold.hidden ? '▸' : '▾');
+        button = button || row.querySelector('[data-fold-toggle]');
+        if (button) {
+            button.setAttribute('aria-expanded', fold.hidden ? 'false' : 'true');
+            button.textContent = button.textContent.replace(/^[▸▾]/, fold.hidden ? '▸' : '▾');
+        }
     });
 
     document.querySelectorAll('.paged[data-paged]').forEach(function (box) {
@@ -37,7 +43,8 @@
         var next = box.querySelector('[data-paged-next]');
         var status = box.querySelector('[data-paged-status]');
         var error = box.querySelector('[data-paged-error]');
-        var state = { page: 1, q: '', sort: 'time', dir: 'desc', pages: 1 };
+        // Newest first by default; data-paged-sort names the column that means ("time" unless set).
+        var state = { page: 1, q: '', sort: box.getAttribute('data-paged-sort') || 'time', dir: 'desc', pages: 1 };
         var request = 0;
 
         function load() {

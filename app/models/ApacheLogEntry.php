@@ -14,6 +14,7 @@ use Carbon\Carbon;
  * @property Carbon $logged_at
  * @property string $message
  * @property string $hash
+ * @property string|null $request_id the request it belongs to (mod_unique_id's ID, from "[id ...]")
  */
 class ApacheLogEntry extends Model
 {
@@ -22,7 +23,7 @@ class ApacheLogEntry extends Model
     /**
      * @var list<string>
      */
-    protected $fillable = ['server_id', 'source', 'level', 'logged_at', 'message', 'hash'];
+    protected $fillable = ['server_id', 'source', 'level', 'logged_at', 'message', 'hash', 'request_id'];
 
     /**
      * @var array<string, string>

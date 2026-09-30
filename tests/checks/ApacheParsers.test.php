@@ -115,3 +115,27 @@ test('access log formats: the fields each one logs, in its own order and time fo
 test('a line in another format doesn\'t parse', function () {
     expect((new App\Services\AccessLogFormat('%h %t "%r" %>s %b'))->parse('garbage line'))->toBeNull();
 });
+
+test('request IDs: read from the access log format or a trailing ID, and taken out of error messages', function () {
+    $id = 'arya5LNEQ_6DuP3m_vCtTAAAAAE';
+    $line = "198.51.100.4 - - [29/Sep/2026:22:15:16 -0700] \"GET /x HTTP/1.1\" 403 437 \"-\" \"Mozilla/5.0 (X)\" $id";
+    $parser = new App\Services\ApacheLogParser();
+    $fallback = iterator_to_array($parser->accessLines($line));
+    $extra = iterator_to_array($parser->accessLines('1.2.3.4 - - [29/Sep/2026:22:15:16 -0700] "GET /y HTTP/1.1" 200 5 "-" "curl" 250000 more'));
+    $errors = iterator_to_array($parser->errorEntries(
+        "[Tue Sep 29 22:15:16.496724 2026] [authz_core:error] [pid 3] [client 127.0.0.1:5] AH01630: client denied: /x, referer: http://x/ [id $id]\n"
+        . "[Tue Sep 29 22:15:17.100000 2026] [core:error] [pid 3] AH00000: no request here\n",
+        new DateTimeZone('UTC'),
+    ));
+
+    expect((new App\Services\AccessLogFormat('%h %l %u %t "%r" %>s %O "%{Referer}i" "%{User-Agent}i" %{UNIQUE_ID}e'))->parse($line)['request_id'])->toBe($id)
+        ->and((new App\Services\AccessLogFormat('%h %t "%r" %>s %b %L'))->parse('1.2.3.4 [29/Sep/2026:22:15:16 -0700] "GET / HTTP/1.1" 200 5 -')['request_id'])->toBeNull()
+        ->and($fallback[0]['request_id'])->toBe($id)
+        ->and($fallback[0]['agent'])->toBe('Mozilla/5.0 (X)')
+        // Other fields after the user agent: still read, no ID made up.
+        ->and($extra[0]['request_id'])->toBeNull()
+        ->and($extra[0]['path'])->toBe('/y')
+        ->and($errors[0]['request_id'])->toBe($id)
+        ->and($errors[0]['message'])->toBe('AH01630: client denied: /x, referer: http://x/')
+        ->and($errors[1]['request_id'])->toBeNull();
+});

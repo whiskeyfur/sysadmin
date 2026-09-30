@@ -119,29 +119,39 @@ class ApacheReportService extends HistoryReport
 
     /**
      * One page of the access log in the period, newest first unless sorted otherwise. $search matches
-     * client, host, request, referer or user agent (a 3-digit number: that status too). $filters:
-     * status ("4xx", "errors" for 4xx and 5xx, or a code), client (a whole address exactly, else from its start) and
-     * hide_local (leave out 127.* and ::1), banned (only addresses fail2ban had banned at the last read,
-     * in any jail) and protected (only those protected from banning); both: either kind.
+     * client, host, request, referer, user agent or request ID (a 3-digit number: that status too).
+     * $filters, each "in" (only those), "out" (not those) or absent (any):
+     *   statuses: class => in/out (2 for 2xx ... 5; the "in" ones any of them),
+     *   banned: addresses fail2ban had banned at the last read, in any jail,
+     *   protected: addresses protected from banning,
+     *   local: 127.* and ::1;
+     * and client: a whole address exactly, else from its start. Different filters all apply.
      *
-     * @param array{statuses?: list<int>, client?: string, hide_local?: bool, banned?: bool, protected?: bool} $filters
-     * @return array{rows: list<ApacheAccessEntry>, total: int, page: int, pages: int}
+     * @param array{statuses?: array<int, string>, client?: string, banned?: string, protected?: string, local?: string} $filters
+     * @return array{rows: list<ApacheAccessEntry>, errors: array<string, int>, total: int, page: int, pages: int} errors: per request ID on the page, its error log entries
      */
     public function accessPage(Server $server, string $range, ?ApacheVhost $vhost = null, int $page = 1, string $search = '', string $sort = 'time', string $direction = 'desc', array $filters = []): array
     {
         [$from, $to] = $this->window($range);
         $query = $this->accessQuery($server, $from, $to, $vhost, $vhost === null ? null : $this->vhostLogs($server, $vhost));
         $search = trim($search);
-        $classes = array_values(array_intersect([2, 3, 4, 5], array_map('intval', (array) ($filters['statuses'] ?? []))));
         $client = trim((string) ($filters['client'] ?? ''));
+        $statuses = array_intersect_key((array) ($filters['statuses'] ?? []), array_flip([2, 3, 4, 5]));
+        $in = array_keys(array_filter($statuses, fn ($state) => $state === 'in'));
+        $out = array_keys(array_filter($statuses, fn ($state) => $state === 'out'));
+        $class = fn (int $c) => [$c * 100, $c * 100 + 99];
 
-        // Status classes ticked (2 = 2xx, ...): any of them; none ticked: every status.
-        if ($classes !== []) {
-            $query->where(function ($q) use ($classes) {
-                foreach ($classes as $class) {
-                    $q->orWhereBetween('status', [$class * 100, $class * 100 + 99]);
+        // Status classes: any of those included; none of those excluded.
+        if ($in !== []) {
+            $query->where(function ($q) use ($in, $class) {
+                foreach ($in as $c) {
+                    $q->orWhereBetween('status', $class($c));
                 }
             });
+        }
+
+        foreach ($out as $c) {
+            $query->whereNotBetween('status', $class($c));
         }
 
         // Client: a whole address exactly; anything else from its start, so "10.0.0." matches a subnet.
@@ -151,25 +161,26 @@ class ApacheReportService extends HistoryReport
             $query->where('client', 'like', addcslashes($client, '%_\\') . '%');
         }
 
-        // fail2ban: only the addresses it had banned at the last read (in any jail), and/or only those
-        // protected from banning (both: either kind; none: everyone).
-        if (!empty($filters['banned']) || !empty($filters['protected'])) {
-            $ips = array_values(array_unique([
-                ...(!empty($filters['banned']) ? array_merge([], ...array_values(array_map(fn ($list) => (array) $list, $server->fail2ban_bans ?? []))) : []),
-                ...(!empty($filters['protected']) ? Fail2banProtection::ipsFor($server) : []),
-            ]));
+        // fail2ban: banned (in any jail, at the last read) and protected addresses, each in or out.
+        $lists = [
+            'banned' => fn () => array_values(array_unique(array_merge([], ...array_values(array_map(fn ($list) => (array) $list, $server->fail2ban_bans ?? []))))),
+            'protected' => fn () => Fail2banProtection::ipsFor($server),
+        ];
 
-            // In chunks: databases limit how many values one IN () takes.
-            $query->where(function ($q) use ($ips) {
-                $q->whereRaw('1 = 0');
+        foreach ($lists as $name => $list) {
+            $state = $filters[$name] ?? '';
 
-                foreach (array_chunk($ips, 1000) as $chunk) {
-                    $q->orWhereIn('client', $chunk);
-                }
-            });
+            if ($state === 'in' || $state === 'out') {
+                $this->clientIn($query, $list(), $state === 'in');
+            }
         }
 
-        if (!empty($filters['hide_local'])) {
+        // Localhost: 127.* and ::1.
+        $local = fn ($q) => $q->where('client', 'like', '127.%')->orWhereIn('client', ['::1', 'localhost']);
+
+        if (($filters['local'] ?? '') === 'in') {
+            $query->where($local);
+        } elseif (($filters['local'] ?? '') === 'out') {
             $query->where(fn ($q) => $q->whereNull('client')->orWhere(fn ($q) => $q->where('client', 'not like', '127.%')->whereNotIn('client', ['::1', 'localhost'])));
         }
 
@@ -179,6 +190,8 @@ class ApacheReportService extends HistoryReport
                 foreach (['client', 'vhost', 'method', 'path', 'referer', 'agent'] as $column) {
                     $q->orWhere($column, 'like', $like);
                 }
+
+                $q->orWhere('request_id', $search);
 
                 if (preg_match('/^\d{3}$/', $search) === 1) {
                     $q->orWhere('status', (int) $search);
@@ -190,7 +203,7 @@ class ApacheReportService extends HistoryReport
         /** @var list<ApacheAccessEntry> $rows */
         $rows = $result['rows'];
 
-        return ['rows' => $rows] + $result;
+        return ['rows' => $rows, 'errors' => $this->errorCounts($server, $rows)] + $result;
     }
 
     /**
@@ -210,7 +223,7 @@ class ApacheReportService extends HistoryReport
             // Notices are stored as "note": "notice" (or its start) finds them too.
             $notice = str_starts_with('notice', strtolower($search)) && strlen($search) >= 3;
             $query->where(fn ($q) => $q->orWhere('message', 'like', $like)->orWhere('level', 'like', $like)->orWhere('source', 'like', $like)
-                ->when($notice, fn ($q) => $q->orWhere('level', 'note')));
+                ->orWhere('request_id', $search)->when($notice, fn ($q) => $q->orWhere('level', 'note')));
         }
 
         if ($sort === 'level') {
@@ -223,6 +236,50 @@ class ApacheReportService extends HistoryReport
         $rows = $result['rows'];
 
         return ['rows' => $rows] + $result;
+    }
+
+    /**
+     * Only requests from these addresses ($in), or none from them. In chunks: databases limit how many
+     * values one IN () takes.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder<ApacheAccessEntry> $query
+     * @param list<string> $ips
+     */
+    private function clientIn(\Illuminate\Database\Eloquent\Builder $query, array $ips, bool $in): void
+    {
+        if ($in) {
+            $query->where(function ($q) use ($ips) {
+                $q->whereRaw('1 = 0');
+
+                foreach (array_chunk($ips, 1000) as $chunk) {
+                    $q->orWhereIn('client', $chunk);
+                }
+            });
+        } elseif ($ips !== []) {
+            $query->where(fn ($q) => $q->whereNull('client')->orWhere(function ($q) use ($ips) {
+                foreach (array_chunk($ips, 1000) as $chunk) {
+                    $q->whereNotIn('client', $chunk);
+                }
+            }));
+        }
+    }
+
+    /**
+     * How many error log entries each request on a page has (by mod_unique_id's request ID).
+     *
+     * @param list<ApacheAccessEntry> $rows
+     * @return array<string, int>
+     */
+    private function errorCounts(Server $server, array $rows): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map(fn (ApacheAccessEntry $r) => $r->request_id, $rows))));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        return array_map('intval', ApacheLogEntry::query()->where('server_id', $server->id)->whereIn('request_id', $ids)
+            ->groupBy('request_id')->selectRaw('request_id, COUNT(*) AS n')->pluck('n', 'request_id')->all());
     }
 
     /**

@@ -67,7 +67,7 @@
                     @endif
                 </p>
             @else
-                <p class="hint">Each request as logged, read in the format its CustomLog names; newest first, {{ \App\Services\ApacheReportService::PAGE_SIZE }} a page. Search matches client, host, request, referer, user agent or a status; the client box matches a whole address exactly, or a partial one from its start (e.g. 10.0.0.), and Hide localhost leaves out 127.* and ::1.
+                <p class="hint">Each request as logged, read in the format its CustomLog names; newest first, {{ \App\Services\ApacheReportService::PAGE_SIZE }} a page. Search matches client, host, request, referer, user agent or a status; the client box matches a whole address exactly, or a partial one from its start (e.g. 10.0.0.). The status, fail2ban and Localhost boxes each cycle through any, only these (✓) and not these (✗); local requests (127.* and ::1) start excluded.
                     @if ($banServer?->fail2ban_checked_at)
                         Addresses fail2ban had banned at {{ \App\Utils\LocalTime::format($banServer->fail2ban_checked_at) }} are <code class="ip-banned">red</code>, protected ones <code class="ip-protected">green</code> (hover for details).
                     @elseif ($banServer?->fail2ban_message)
@@ -75,7 +75,7 @@
                     @endif
                     Right-click a client address to show only its requests{{ $canBan ? ', to ban or unban it with fail2ban on ' . $banServer->name . ', or to protect it from banning' : '' }}; right-click a URL to search for it.
                 </p>
-                <div class="paged" data-paged="/apache/reports/entries?kind=access&amp;{{ $pagedQuery }}">
+                <div class="paged" id="access-log" data-paged="/apache/reports/entries?kind=access&amp;{{ $pagedQuery }}">
                     @include('reports.paged-controls', ['label' => 'Search requests', 'accessFilters' => true, 'banFilter' => $banServer?->fail2ban_bans !== null])
                     <div class="paged-wrap">
                     <table class="top">
@@ -134,6 +134,8 @@
             .ban-dialog h2 { margin-top: 0; }
             td.access-request, td.access-agent { overflow-wrap: anywhere; }
             td.access-request { min-width: 16em; }
+            button.log-link { font-size: 12px; margin-left: 6px; white-space: nowrap; border: 0; background: none; padding: 0; }
+            button.log-link.log-errors { color: var(--error); }
             td.access-agent { font-size: 12px; min-width: 14em; max-width: 28em; }
         </style>
 
@@ -143,7 +145,7 @@
                 <p class="muted">No error log entries in this period.</p>
             @else
                 <p class="hint">Notices, warnings, errors and crashes (info and debug lines aren't kept); newest first, {{ \App\Services\ApacheReportService::PAGE_SIZE }} a page. Search matches the message, level or log file.</p>
-                <div class="paged" data-paged="/apache/reports/entries?kind=errors&amp;{{ $pagedQuery }}">
+                <div class="paged" id="error-log" data-paged="/apache/reports/entries?kind=errors&amp;{{ $pagedQuery }}">
                     @include('reports.paged-controls', ['label' => 'Search error log'])
                     <div class="paged-wrap">
                     <table class="top">

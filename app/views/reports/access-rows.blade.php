@@ -1,6 +1,6 @@
 {{-- One page of access log rows (ApacheReportService::accessPage()), for the paged table in
-     reports/apache-data. Needs $rows, $banServer (or null), $canBan and $protected (addresses protected
-     from banning). --}}
+     reports/apache-data. Needs $rows, $banServer (or null), $canBan, $protected (addresses protected
+     from banning) and $errors (request ID => its error log entries). --}}
 @forelse ($rows as $request)
     @php($badge = $request->status >= 500 ? 'critical' : ($request->status >= 400 ? 'warning' : ($request->status >= 300 ? 'unknown' : 'ok')))
     @php($jails = $banServer?->bannedIn($request->client) ?? [])
@@ -17,7 +17,11 @@
             @endif
         </td>
         <td class="muted">{{ $request->vhost ?? basename($request->source) }}</td>
-        <td class="access-request"><code @if ($request->path) class="request-path" data-path="{{ $request->path }}" title="Right-click to search for this URL" @endif>{{ trim(($request->method ?? '') . ' ' . ($request->path ?? '—')) }}</code>@if ($request->protocol) <span class="muted">{{ $request->protocol }}</span>@endif</td>
+        <td class="access-request"><code @if ($request->path) class="request-path" data-path="{{ $request->path }}" title="Right-click to search for this URL" @endif>{{ trim(($request->method ?? '') . ' ' . ($request->path ?? '—')) }}</code>@if ($request->protocol) <span class="muted">{{ $request->protocol }}</span>@endif
+            @if ($request->request_id && ($count = $errors[$request->request_id] ?? 0) > 0)
+                <button type="button" class="link log-link log-errors" data-paged-find="#error-log" data-value="{{ $request->request_id }}" title="Show the error log entries of this request ({{ $request->request_id }})">{{ $count }} {{ $count === 1 ? 'error' : 'errors' }}</button>
+            @endif
+        </td>
         <td><span class="badge {{ $badge }}">{{ $request->status ?: '—' }}</span></td>
         <td style="white-space: nowrap">{{ \App\Services\Checks\FileIoCheck::size($request->bytes) }}</td>
         <td style="white-space: nowrap">{{ $request->duration_ms === null ? '' : $request->duration_ms . ' ms' }}</td>

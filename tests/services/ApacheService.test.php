@@ -523,15 +523,15 @@ test('the access and error logs come a page at a time, searched and sorted in th
         ->and($page(1, '', 'size', 'asc')['rows'][0]->bytes)->toBe(0)
         ->and($page(1, '', 'size; drop table x', 'asc')['rows'][0]->path)->toBe('/item/0')
         // Filters: status class, errors, one code; client from its start; localhost hidden.
-        ->and($page(1, '', 'time', 'desc', ['statuses' => [5]])['total'])->toBe(5)
-        ->and($page(1, '', 'time', 'desc', ['statuses' => [4, 5]])['total'])->toBe(5)
-        ->and($page(1, '', 'time', 'desc', ['statuses' => [2]])['total'])->toBe(245)
+        ->and($page(1, '', 'time', 'desc', ['statuses' => [5 => 'in']])['total'])->toBe(5)
+        ->and($page(1, '', 'time', 'desc', ['statuses' => [4 => 'in', 5 => 'in']])['total'])->toBe(5)
+        ->and($page(1, '', 'time', 'desc', ['statuses' => [2 => 'in']])['total'])->toBe(245)
         ->and($page(1, '', 'time', 'desc', ['client' => '10.0.1.'])['total'])->toBe(100)
         // A whole address matches exactly (10.0.2.4, not 10.0.2.40–49); a partial one from its start.
         ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.4'])['total'])->toBe(1)
         ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.4'])['rows'][0]->client)->toBe('10.0.2.4')
         ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.'])['total'])->toBe(50)
-        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.0', 'statuses' => [5]])['total'])->toBe(1);
+        ->and($page(1, '', 'time', 'desc', ['client' => '10.0.2.0', 'statuses' => [5 => 'in']])['total'])->toBe(1);
 
     App\Models\ApacheAccessEntry::query()->insert([
         ['server_id' => $this->server->id, 'source' => 'x', 'requested_at' => $now->format('Y-m-d H:i:s'), 'client' => '127.0.0.1', 'status' => 200, 'bytes' => 0],
@@ -540,25 +540,32 @@ test('the access and error logs come a page at a time, searched and sorted in th
     ]);
 
     expect($page()['total'])->toBe(253)
-        ->and($page(1, '', 'time', 'desc', ['hide_local' => true])['total'])->toBe(250)
-        ->and($page(1, '', 'time', 'desc', ['statuses' => [3]])['total'])->toBe(0)
-        ->and($page(1, '', 'time', 'desc', ['statuses' => [9]])['total'])->toBe(253);
+        ->and($page(1, '', 'time', 'desc', ['local' => 'out'])['total'])->toBe(250)
+        ->and($page(1, '', 'time', 'desc', ['statuses' => [3 => 'in']])['total'])->toBe(0)
+        ->and($page(1, '', 'time', 'desc', ['statuses' => [9 => 'in']])['total'])->toBe(253);
 
     // Banned (any jail, at the last read) and/or protected; none ticked: everyone.
-    expect($page(1, '', 'time', 'desc', ['banned' => true])['total'])->toBe(0);
+    expect($page(1, '', 'time', 'desc', ['banned' => 'in'])['total'])->toBe(0);
 
     $this->server->fail2ban_bans = ['sshd' => ['10.0.0.5', '127.0.0.1'], 'web-abusers' => ['10.0.1.7', '10.0.0.5'], 'empty' => []];
     $this->server->save();
 
-    expect($page(1, '', 'time', 'desc', ['banned' => true])['total'])->toBe(3)
-        ->and($page(1, '', 'time', 'desc', ['banned' => true, 'hide_local' => true])['total'])->toBe(2)
-        ->and($page(1, '', 'time', 'desc', ['protected' => true])['total'])->toBe(0)
-        ->and($page(1, '', 'time', 'desc', ['banned' => false, 'protected' => false])['total'])->toBe(253);
+    expect($page(1, '', 'time', 'desc', ['banned' => 'in'])['total'])->toBe(3)
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'in', 'local' => 'out'])['total'])->toBe(2)
+        ->and($page(1, '', 'time', 'desc', ['protected' => 'in'])['total'])->toBe(0)
+        ->and($page(1, '', 'time', 'desc', ['banned' => '', 'protected' => ''])['total'])->toBe(253);
 
     App\Models\Fail2banProtection::query()->create(['server_id' => $this->server->id, 'ip' => '10.0.1.9']);
 
-    expect(collect($page(1, '', 'time', 'desc', ['protected' => true])['rows'])->pluck('client')->all())->toBe(['10.0.1.9'])
-        ->and($page(1, '', 'time', 'desc', ['banned' => true, 'protected' => true])['total'])->toBe(4);
+    expect(collect($page(1, '', 'time', 'desc', ['protected' => 'in'])['rows'])->pluck('client')->all())->toBe(['10.0.1.9'])
+        // Boxes combine: nobody is banned and protected at once; excluded ones leave the rest.
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'in', 'protected' => 'in'])['total'])->toBe(0)
+        ->and($page(1, '', 'time', 'desc', ['banned' => 'out'])['total'])->toBe(250)
+        ->and($page(1, '', 'time', 'desc', ['protected' => 'out', 'banned' => 'out'])['total'])->toBe(249)
+        ->and($page(1, '', 'time', 'desc', ['local' => 'in'])['total'])->toBe(3)
+        // Status: 4xx and 5xx out leaves the 2xx; 5xx in and out is none.
+        ->and($page(1, '', 'time', 'desc', ['statuses' => [4 => 'out', 5 => 'out']])['total'])->toBe(248)
+        ->and($page(1, '', 'time', 'desc', ['statuses' => [5 => 'in', 2 => 'out']])['total'])->toBe(5);
 
     foreach (['note', 'crash', 'error', 'warning'] as $i => $level) {
         ApacheLogEntry::query()->create(['server_id' => $this->server->id, 'source' => '/var/log/apache2/error.log', 'level' => $level, 'logged_at' => $now->copy()->subMinutes(10 - $i), 'message' => "m$i", 'hash' => "h$i"]);
@@ -602,4 +609,23 @@ test('rotated copies of the logs are imported once, only what\'s older than what
 
 test('rotated logs need the logs found first', function () {
     expect(fn () => ($this->apache)()->importRotated($this->server))->toThrow(DomainException::class, 'run its checks first');
+});
+
+test('requests and their error log lines are linked by mod_unique_id\'s request ID', function () {
+    $this->ssh->files['/etc/apache2/apache2.conf'] .= "LogFormat \"%h %l %u %t \\\"%r\\\" %>s %O \\\"%{Referer}i\\\" \\\"%{User-Agent}i\\\" %{UNIQUE_ID}e\" combined\n";
+    $this->ssh->files['/var/log/apache2/shop.log'] = rtrim(($this->accessLine)(5, 403)) . " aryaaq1F4K9U-StYXZTaqgAAAEA\n" . rtrim(($this->accessLine)(4, 200)) . " arybbq1F4K9U-StYXZTaqgAAAEB\n";
+    $this->ssh->files['/var/log/apache2/error.log'] = rtrim(($this->errorLine)(5, 'error', '[client 10.0.0.1:5] AH01630: client denied by server configuration: /srv/x')) . " [id aryaaq1F4K9U-StYXZTaqgAAAEA]\n"
+        . ($this->errorLine)(3, 'error', 'no request');
+
+    ($this->apache)()->run($this->server);
+    $reports = new ApacheReportService($this->clock);
+    $requests = $reports->accessPage($this->server->fresh(), '24h');
+
+    expect(App\Models\ApacheAccessEntry::query()->orderBy('requested_at')->pluck('request_id')->all())->toBe(['aryaaq1F4K9U-StYXZTaqgAAAEA', 'arybbq1F4K9U-StYXZTaqgAAAEB'])
+        ->and(ApacheLogEntry::query()->orderBy('logged_at')->pluck('request_id')->all())->toBe(['aryaaq1F4K9U-StYXZTaqgAAAEA', null])
+        ->and(ApacheLogEntry::query()->orderBy('logged_at')->value('message'))->toBe('AH01630: client denied by server configuration: /srv/x')
+        // The page knows which requests have errors; each log finds the other's ID.
+        ->and($requests['errors'])->toBe(['aryaaq1F4K9U-StYXZTaqgAAAEA' => 1])
+        ->and(collect($reports->accessPage($this->server->fresh(), '24h', null, 1, 'aryaaq1F4K9U-StYXZTaqgAAAEA')['rows'])->pluck('status')->all())->toBe([403])
+        ->and(collect($reports->errorPage($this->server->fresh(), '24h', null, 1, 'aryaaq1F4K9U-StYXZTaqgAAAEA')['rows'])->pluck('message')->all())->toBe(['AH01630: client denied by server configuration: /srv/x']);
 });

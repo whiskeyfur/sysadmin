@@ -8,7 +8,8 @@ namespace App\Services;
  * read with the one its CustomLog names (see ApacheService::logFormats()).
  *
  * Fields it knows are captured (client, time, request or its parts, status, size, referer, user agent,
- * virtual host, port, time taken); anything else in the format is matched and ignored.
+ * virtual host, port, time taken, mod_unique_id's request ID); anything else in the format is matched
+ * and ignored.
  */
 class AccessLogFormat
 {
@@ -37,7 +38,7 @@ class AccessLogFormat
     /**
      * The fields of one line; null if it isn't in this format.
      *
-     * @return array{time: int, status: int, bytes: int, client: ?string, vhost: ?string, method: ?string, path: ?string, protocol: ?string, referer: ?string, agent: ?string, duration_ms: ?int}|null
+     * @return array{time: int, status: int, bytes: int, client: ?string, vhost: ?string, method: ?string, path: ?string, protocol: ?string, referer: ?string, agent: ?string, duration_ms: ?int, request_id: ?string}|null
      */
     public function parse(string $line): ?array
     {
@@ -91,6 +92,7 @@ class AccessLogFormat
             'referer' => $field('referer'),
             'agent' => $field('agent'),
             'duration_ms' => $duration,
+            'request_id' => $field('request_id'),
         ];
     }
 
@@ -165,6 +167,9 @@ class AccessLogFormat
             'i' => match ($param) {
                 'referer' => 'referer', 'user-agent' => 'agent', default => 'other'
             },
+            // mod_unique_id's ID, and the request's log ID (the same ID when mod_unique_id sets it).
+            'e' => $param === 'unique_id' ? 'request_id' : 'other',
+            'L' => 'request_id',
             default => 'other',
         };
     }

@@ -75,8 +75,7 @@
     window.addEventListener('scroll', close, true);
     menu.addEventListener('click', function (event) { if (event.target.closest('button')) { close(); } });
 
-    // Show only this address: the table's client filter (a whole address matches exactly). "Hide
-    // localhost" would hide every row of a loopback address, so that's turned off for one.
+    // Show only this address: the table's client filter (a whole address matches exactly).
     var only = menu.querySelector('[data-client-action="filter"]');
     if (only) {
         only.addEventListener('click', function () {
@@ -84,8 +83,9 @@
             var client = box && box.querySelector('[data-paged-param="client"]');
             if (!client) { return; }
             var ip = menu.dataset.ip;
-            var local = box.querySelector('[data-paged-param="hide_local"]');
-            if (local && local.checked && (/^127\./.test(ip) || ip === '::1')) { local.checked = false; }
+            // Localhost excluded (the default) would hide every row of a loopback address.
+            var local = box.querySelector('[data-paged-param="local"]');
+            if (local && local.getAttribute('data-state') === 'out' && (/^127\./.test(ip) || ip === '::1')) { local.click(); } // out → any
             client.value = ip;
             client.dispatchEvent(new Event('input'));
             client.scrollIntoView({ block: 'nearest' });

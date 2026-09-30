@@ -21,6 +21,7 @@ use Carbon\Carbon;
  * @property string|null $referer
  * @property string|null $agent
  * @property int|null $duration_ms
+ * @property string|null $request_id mod_unique_id's ID, shared with the request's error log lines
  */
 class ApacheAccessEntry extends Model
 {
@@ -29,7 +30,7 @@ class ApacheAccessEntry extends Model
     /**
      * @var list<string>
      */
-    protected $fillable = ['server_id', 'source', 'requested_at', 'client', 'vhost', 'method', 'path', 'protocol', 'status', 'bytes', 'referer', 'agent', 'duration_ms'];
+    protected $fillable = ['server_id', 'source', 'requested_at', 'client', 'vhost', 'method', 'path', 'protocol', 'status', 'bytes', 'referer', 'agent', 'duration_ms', 'request_id'];
 
     /**
      * @var array<string, string>

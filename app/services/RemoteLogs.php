@@ -79,7 +79,7 @@ class RemoteLogs
      * Store log entries not stored before, in batches.
      *
      * @param class-string<Model> $model a table with server_id, source, level, logged_at, message and a unique hash
-     * @param list<array{time: Carbon, level: string, message: string}> $entries
+     * @param list<array{time: Carbon, level: string, message: string, request_id?: ?string}> $entries
      * @param array{second: int|null, counts: array<string, int>} $repeats identical messages in the current second, across batches
      * @return int how many were new
      */
@@ -107,6 +107,11 @@ class RemoteLogs
                 'message' => $entry['message'],
                 'hash' => $hash,
             ];
+
+            // Apache error lines carry their request's ID (a column only that table has).
+            if (array_key_exists('request_id', $entry)) {
+                $rows[$hash]['request_id'] = $entry['request_id'];
+            }
         }
 
         $new = 0;

@@ -25,7 +25,7 @@ class ApacheLogParser
     ];
 
     /**
-     * @return \Generator<int, array{time: Carbon, level: string, message: string}>
+     * @return \Generator<int, array{time: Carbon, level: string, message: string, request_id: ?string}>
      */
     public function errorEntries(string $text, DateTimeZone $zone): \Generator
     {
@@ -50,12 +50,20 @@ class ApacheLogParser
 
                 // Drop the pid/tid and client prefixes: "[pid 12] [client 1.2.3.4:5] message".
                 $message = trim((string) preg_replace('/^(?:\[(?:pid|client|remote) [^\]]*\] )+/', '', $m[3]));
+                // The request's ID (mod_unique_id, " [id ...]" from extras/apache/enable-unique-id.sh; also
+                // accepted where other formats put it) goes to its own field.
+                $requestId = null;
+
+                if (preg_match('/(?:^| )\[id ([A-Za-z0-9@_\-]{8,64})\](?= |$)/', $message, $id) === 1) {
+                    $requestId = $id[1];
+                    $message = trim((string) preg_replace('/(?:^| )\[id ' . preg_quote($id[1], '/') . '\](?= |$)/', '', $message, 1));
+                }
 
                 if (preg_match('/\bexit signal\b|\bSegmentation fault\b/i', $message) === 1) {
                     $level = 'crash';
                 }
 
-                $pending = ['time' => $time, 'level' => $level, 'message' => mb_substr($message, 0, self::MAX_MESSAGE)];
+                $pending = ['time' => $time, 'level' => $level, 'message' => mb_substr($message, 0, self::MAX_MESSAGE), 'request_id' => $requestId];
             } elseif ($pending !== null && !$skipping && trim($line) !== '' && mb_strlen($pending['message']) < self::MAX_MESSAGE) {
                 // A line without a timestamp continues the entry above (e.g. a PHP stack trace).
                 $pending['message'] = mb_substr($pending['message'] . "\n" . rtrim($line), 0, self::MAX_MESSAGE);
@@ -74,7 +82,7 @@ class ApacheLogParser
      *
      * @param int $skipped lines that didn't match
      * @param list<AccessLogFormat> $formats
-     * @return \Generator<int, array{time: int, status: int, bytes: int, client: ?string, vhost: ?string, method: ?string, path: ?string, protocol: ?string, referer: ?string, agent: ?string, duration_ms: ?int}> time as a unix timestamp
+     * @return \Generator<int, array{time: int, status: int, bytes: int, client: ?string, vhost: ?string, method: ?string, path: ?string, protocol: ?string, referer: ?string, agent: ?string, duration_ms: ?int, request_id: ?string}> time as a unix timestamp
      */
     public function accessLines(string $text, int &$skipped = 0, array $formats = []): \Generator
     {
@@ -105,11 +113,11 @@ class ApacheLogParser
      * A line in an unknown format, by its [time] "request" status bytes core; what's before is taken as
      * [vhost:port] client, what's after as "referer" "agent" when it looks like that (combined).
      *
-     * @return array{time: int, status: int, bytes: int, client: ?string, vhost: ?string, method: ?string, path: ?string, protocol: ?string, referer: ?string, agent: ?string, duration_ms: ?int}|null
+     * @return array{time: int, status: int, bytes: int, client: ?string, vhost: ?string, method: ?string, path: ?string, protocol: ?string, referer: ?string, agent: ?string, duration_ms: ?int, request_id: ?string}|null
      */
     private function accessCore(string $line): ?array
     {
-        if (preg_match('#^(.*?)\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\] "((?:[^"\\\\]|\\\\.)*)" (\d{3}) (\d+|-)(?: "((?:[^"\\\\]|\\\\.)*)" "((?:[^"\\\\]|\\\\.)*)")?#', $line, $m) !== 1) {
+        if (preg_match('#^(.*?)\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\] "((?:[^"\\\\]|\\\\.)*)" (\d{3}) (\d+|-)(?: "((?:[^"\\\\]|\\\\.)*)" "((?:[^"\\\\]|\\\\.)*)")?(?: ([A-Za-z0-9@_\-]{19,64})(?=\s|$))?#', $line, $m) !== 1) {
             return null;
         }
 
@@ -136,6 +144,7 @@ class ApacheLogParser
             'referer' => $value($m[6] ?? null),
             'agent' => $value($m[7] ?? null),
             'duration_ms' => null,
+            'request_id' => ($m[8] ?? '') === '' ? null : $m[8],
         ];
     }
 

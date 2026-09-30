@@ -1059,6 +1059,7 @@ class ApacheService
             'client' => $text('client', 255), 'vhost' => $text('vhost', 255) ?? ($owner === null ? null : mb_substr($owner, 0, 255)), 'method' => $text('method', 32),
             'path' => $text('path', 8000), 'protocol' => $text('protocol', 32), 'status' => (int) $line['status'], 'bytes' => (int) $line['bytes'],
             'referer' => $text('referer', 4000), 'agent' => $text('agent', 4000), 'duration_ms' => is_int($line['duration_ms'] ?? null) ? $line['duration_ms'] : null,
+            'request_id' => $text('request_id', 64),
         ];
     }
 

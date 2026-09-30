@@ -96,7 +96,7 @@ class ReportController extends Controller
      * One page of an Apache report's access or error log, as JSON {html (table rows), total, page, pages},
      * for the paged tables (public/assets/js/paged-table.js):
      * ?kind=access|errors&server=<id> or &vhost=<id>&range=&page=&q=&sort=&dir=asc|desc; for the access
-     * log also &s2xx=1..&s5xx=1 (status classes)&client=<start of address>&hide_local=1&banned=1&protected=1
+     * log also &s2xx=..&s5xx=, &banned=, &protected=, &local= (each in|out)&client=<start of address>
      */
     public function apacheEntries()
     {
@@ -121,16 +121,18 @@ class ReportController extends Controller
         ];
         $reports = new ApacheReportService();
         $access = $this->request->get('kind') !== 'errors';
+        // Tri-state filters: "in" (only), "out" (not), anything else: any.
+        $state = fn (string $name) => in_array($v = (string) $this->request->get($name, false), ['in', 'out'], true) ? $v : '';
         $filters = [
-            'statuses' => array_values(array_filter([2, 3, 4, 5], fn (int $class) => (string) $this->request->get("s{$class}xx", false) === '1')),
+            'statuses' => array_filter([2 => $state('s2xx'), 3 => $state('s3xx'), 4 => $state('s4xx'), 5 => $state('s5xx')]),
             'client' => mb_substr(trim((string) $this->request->get('client', false)), 0, 64),
-            'hide_local' => (string) $this->request->get('hide_local', false) === '1',
-            'banned' => (string) $this->request->get('banned', false) === '1',
-            'protected' => (string) $this->request->get('protected', false) === '1',
+            'banned' => $state('banned'),
+            'protected' => $state('protected'),
+            'local' => $state('local'),
         ];
         $page = $access ? $reports->accessPage(...$args, filters: $filters) : $reports->errorPage(...$args);
         $html = $access
-            ? $this->view('reports.access-rows', ['rows' => $page['rows'], 'banServer' => $server, 'canBan' => $this->authContext()->isAdmin() && $server->sshReady(), 'protected' => \App\Models\Fail2banProtection::ipsFor($server)])
+            ? $this->view('reports.access-rows', ['rows' => $page['rows'], 'errors' => $page['errors'] ?? [], 'banServer' => $server, 'canBan' => $this->authContext()->isAdmin() && $server->sshReady(), 'protected' => \App\Models\Fail2banProtection::ipsFor($server)])
             : $this->view('reports.error-rows', ['rows' => $page['rows']]);
 
         $this->response->json(['html' => $html, 'total' => $page['total'], 'page' => $page['page'], 'pages' => $page['pages']]);

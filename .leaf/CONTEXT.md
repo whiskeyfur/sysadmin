@@ -160,3 +160,5 @@ _agent: when the user adopts a provider, replace this line with a yaml block map
 * 2026-09-29 — Access log: banned IPs red, protected green (no badges); protected/not protected filter.
 * 2026-09-29 — Access log filters: status and banned/protected as checkboxes.
 * 2026-09-29 — extras/apache/enable-unique-id.sh: request IDs at the end of Apache log lines (fail2ban-safe placement, checked on real Apache).
+* 2026-09-29 — Request IDs stored for Apache requests and errors; Show request / N errors links between the two logs.
+* 2026-09-29 — Access log filters are tri-state (any / only ✓ / not ✗): status, banned, protected, localhost.

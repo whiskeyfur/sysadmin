@@ -21,3 +21,10 @@ columns:
   hash:
     type: string
     unique: true
+  # mod_unique_id's ID for the request (%{UNIQUE_ID}e / %L; see extras/apache/enable-unique-id.sh), linking
+  # requests and error log lines; null when the log doesn't carry one.
+  request_id:
+    type: string
+    length: 64
+    nullable: true
+    index: true

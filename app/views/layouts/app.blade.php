@@ -53,6 +53,13 @@
         .paged-filters select, .paged-filters input[type=text] { width: auto; margin: 0; }
         .paged-filters .check-group { display: inline-flex; gap: 10px; align-items: center; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; }
         .paged-filters label.check { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: normal; font-size: 14px; white-space: nowrap; }
+        .paged-filters button.tri { display: inline-flex; gap: 6px; align-items: center; background: none; border: 0; padding: 2px 0; margin: 0; font: inherit; font-size: 14px; color: var(--text); cursor: pointer; white-space: nowrap; }
+        .paged-filters .tri-box { width: 15px; height: 15px; border: 1.5px solid var(--muted); border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; font-weight: 700; }
+        .paged-filters .tri[data-state="in"] .tri-box { border-color: var(--notice); background: var(--notice-bg); color: var(--notice); }
+        .paged-filters .tri[data-state="in"] .tri-box::after { content: '✓'; }
+        .paged-filters .tri[data-state="out"] .tri-box { border-color: var(--error); background: var(--error-bg); color: var(--error); }
+        .paged-filters .tri[data-state="out"] .tri-box::after { content: '✗'; }
+        .paged-filters .tri:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
         .paged-pager { display: flex; align-items: center; gap: 8px; font-size: 13px; }
         figure.chart .legend .legend-item { background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; }
         figure.chart .legend .legend-item[aria-pressed="false"] { text-decoration: line-through; opacity: .45; }

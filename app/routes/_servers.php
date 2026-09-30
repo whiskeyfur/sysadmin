@@ -51,6 +51,17 @@ app()->post('/ssl/check-all', ['middleware' => Authenticate::class, 'SslControll
 app()->post('/ssl/{id}/check', ['middleware' => Authenticate::class, 'SslController@check']);
 
 // Managing certificates and where they're served: admins.
+// The CSR tool: a request to replace a certificate, with a new private key if needed (admins).
+app()->group('/admin/csr', ['middleware' => RequireAdmin::class, function () {
+    app()->get('/', 'CsrController@index');
+    app()->post('/', 'CsrController@create');
+    app()->post('/read', 'CsrController@read');
+    app()->get('/{id}', 'CsrController@details');
+    app()->get('/{id}/csr', 'CsrController@downloadCsr');
+    app()->post('/{id}/key', 'CsrController@downloadKey');
+    app()->post('/{id}/delete', 'CsrController@delete');
+}]);
+
 app()->group('/admin/ssl', ['middleware' => RequireAdmin::class, function () {
     app()->get('/new', 'SslController@create');
     app()->post('/', 'SslController@store');

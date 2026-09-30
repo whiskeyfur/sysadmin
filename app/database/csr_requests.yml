@@ -1,0 +1,27 @@
+# Certificate signing requests made by the CSR tool (CsrService). names: JSON list of the names asked for
+# (SAN; the common name first). subject: JSON of the subject fields (O, OU, L, ST, C, emailAddress).
+# key_source: "new" (generated here; private_key holds it, encrypted with SecretCipher, context
+# csr-private-key:<id>) or "provided" (an existing key was used and isn't kept). certificate_id: the
+# monitored certificate it replaces, if it came from one.
+timestamps: false
+columns:
+  user_id:
+    type: integer
+    index: true
+  certificate_id:
+    type: integer
+    nullable: true
+    index: true
+  common_name: string
+  names: mediumText
+  subject: text
+  key_type: string
+  key_size: integer
+  key_source: string
+  csr: text
+  private_key:
+    type: mediumText
+    nullable: true
+  created_at:
+    type: timestamp
+    index: true

@@ -27,6 +27,7 @@
                     @csrf
                     <button type="submit" class="secondary">Add an entry per name on the certificate</button>
                 </form>
+                <a class="button secondary-link" href="/admin/csr?certificate={{ $certificate->id }}">Request a replacement (CSR)</a>
             @endif
         </div>
 

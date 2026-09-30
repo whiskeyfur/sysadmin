@@ -53,6 +53,7 @@ uses()->beforeEach(function () {
     Schema::migrate('app/database/mariadb_queries.yml');
     Schema::migrate('app/database/query_accounts.yml');
     Schema::migrate('app/database/db_user_changes.yml');
+    Schema::migrate('app/database/csr_requests.yml');
     Schema::migrate('app/database/apache_vhosts.yml');
     Schema::migrate('app/database/ssl_checks.yml');
     Schema::migrate('app/database/settings.yml');

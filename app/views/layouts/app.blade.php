@@ -202,7 +202,7 @@
             @isset($auth)
                 {{-- Each area is a menu: reports and its test page (everyone), then add, accounts and settings (admins). --}}
                 @php($menus = [
-                    'SSL' => ['/ssl/reports' => 'Reports', '/ssl' => 'Test', '/admin/ssl/new' => 'Add', '/admin/settings/ssl' => 'Settings'],
+                    'SSL' => ['/ssl/reports' => 'Reports', '/ssl' => 'Test', '/admin/ssl/new' => 'Add', '/admin/csr' => 'CSR', '/admin/settings/ssl' => 'Settings'],
                     'SSH' => ['/ssh/reports' => 'Reports', '/ssh' => 'Test', '/admin/ssh/new' => 'Add', '/admin/accounts/ssh' => 'Accounts', '/admin/settings/ssh' => 'Settings'],
                     'MariaDB' => ['/mariadb/reports' => 'Reports', '/mariadb' => 'Test', '/mariadb/query' => 'Query', '/mariadb/browse' => 'Browse', '/admin/mariadb/new' => 'Add', '/admin/accounts/mariadb' => 'Accounts', '/mariadb/users' => 'Database users', '/admin/settings/mariadb' => 'Settings'],
                     'Apache' => ['/apache/reports' => 'Reports', '/apache' => 'Test', '/admin/apache/new' => 'Add', '/admin/settings/apache' => 'Settings']

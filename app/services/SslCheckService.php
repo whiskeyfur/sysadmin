@@ -120,6 +120,17 @@ class SslCheckService
     }
 
     /**
+     * The certificate a server presents for $host (PEM), unverified: for reading its details (e.g. to
+     * request its replacement), not for trusting it. Null when nothing answered.
+     */
+    public function certificatePem(string $host, int $port = 443, ?string $connectTo = null): ?string
+    {
+        [$info] = $this->connect($connectTo ?? $host, $host, $port, false);
+
+        return $info === null || $info['pem'] === '' ? null : $info['pem'];
+    }
+
+    /**
      * Whether a certificate name (possibly "*.example.com") covers a hostname.
      * A wildcard covers exactly one label, as browsers apply it.
      */

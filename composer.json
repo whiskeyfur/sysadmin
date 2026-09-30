@@ -71,7 +71,8 @@
             "App\\Exceptions\\": "app/exceptions/"
         },
         "exclude-from-classmap": [
-            "app/database/migrations"
+            "app/database/migrations",
+            "tests/"
         ]
     },
     "scripts": {

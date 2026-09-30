@@ -2,12 +2,14 @@
 
 namespace App\Console;
 
+use App\Utils\DatabaseConfig;
 use Leaf\Sprout\Command;
 use Leaf\Sprout\Process;
 
 /**
  * `php leaf app:update`: bring a copy of the app up to date in one step:
- * git pull (fast-forward only), composer install, db:migrate. Stops at the
+ * git pull (fast-forward only), composer install, db:migrate (skipped, with a
+ * hint, while no database is set up). Stops at the
  * first failure. Works the same on Windows, Linux and macOS.
  */
 class AppUpdateCommand extends Command
@@ -37,7 +39,12 @@ class AppUpdateCommand extends Command
             return 1;
         }
 
-        if (!$this->step('Applying database changes', "$php leaf db:migrate")) {
+        // Without a database there's nothing to migrate (db:migrate would only trip over the "not set up
+        // yet" placeholder connection): say how to set one up instead.
+        if (!DatabaseConfig::isConfigured()) {
+            $this->comment('No database is set up yet (' . DatabaseConfig::path() . ' is missing), so skipping database changes.');
+            $this->comment('Open the site to run the setup page, or run `php leaf app:db-setup`. Restoring a backup of that file works too.');
+        } elseif (!$this->step('Applying database changes', "$php leaf db:migrate")) {
             return 1;
         }
 

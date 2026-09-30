@@ -9,7 +9,9 @@
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
-    # Redirect Trailing Slashes If Not A Folder...
+    # Redirect Trailing Slashes If Not A Folder... (only for requests that came here directly: sent in by the
+    # top-level .htaccess of a subdirectory install, REQUEST_URI is already the rewritten public/... path)
+    RewriteCond %{ENV:REDIRECT_STATUS} ^$
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_URI} (.+)/$
     RewriteRule ^ %1 [L,R=301]

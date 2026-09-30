@@ -33,6 +33,9 @@ public/storage
 npm-debug.log
 yarn-error.log
 
+# The app's saved database connection (its password encrypted with APP_KEY): per install, never shared
+storage/app/db/connection.json
+
 # SQLite databases (encrypted, but still live data)
 *.sqlite
 *.sqlite3

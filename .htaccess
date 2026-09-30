@@ -16,6 +16,12 @@
 
     RewriteEngine On
 
+    # A trailing slash on a page (/sysadmin/ssh/) redirects to the page, as public/.htaccess does for a
+    # site of its own; real folders keep theirs (Apache adds it to them).
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} (.+)/$
+    RewriteRule ^ %1 [L,R=301]
+
     # Everything into public/, whose own .htaccess routes it (a file there, else index.php).
     RewriteRule ^(.*)$ public/$1 [L]
 </IfModule>

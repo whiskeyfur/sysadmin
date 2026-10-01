@@ -20,7 +20,7 @@ class LocalTime
     public static function zone(): DateTimeZone
     {
         try {
-            return new DateTimeZone((string) _env('APP_TIMEZONE', 'UTC'));
+            return new DateTimeZone((string) _envUncached('APP_TIMEZONE', 'UTC'));
         } catch (Throwable) {
             return new DateTimeZone('UTC');
         }
